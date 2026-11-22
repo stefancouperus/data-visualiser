@@ -1,4 +1,6 @@
 import "./style.css";
+import { labelledSurvey } from "./survey-labels.js";
+import { isDocked, toggleDock, layoutBot } from "./bot-panel.js";
 import { combineTables } from "./combine.js";
 import { uid, filteredRows, corpus, texts } from "./import.js";
 import { importFiles } from "./import-ui.js";
@@ -71,9 +73,9 @@ const modeNames = [
 ];
 const botURL = (import.meta.env.VITE_BOT_URL || "").replace(/\/$/, "");
 function botBox() {
-  return `<section class="bot ${step === 3 ? "botbelow" : ""}"><div class="topline"><h2>Data bot</h2>${b("closebot", "Close", "plain")}</div><label>Help mode<select id="mode">${opts(modeNames, project.mode)}</select></label><div class="bar">${b("scope", "What the bot can see")}</div>${!botURL ? "<p>Live help will be available when the workshop service is connected. You can explore, compare and export your data now.</p>" : !sessionStorage.getItem("dv-session") ? '<label>Workshop course code<input id="course" type="password" autocomplete="off"></label>' + b("unlock", "Unlock the bot") : ""}<div class="chatlog">${history.map((t) => `<div class="msg"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`).join("")}</div>${requesting ? '<p role="status">Waiting for the university model…</p>' : ""}
+  return `<section id="data-bot" aria-label="Data bot workspace" class="bot ${isDocked() ? "docked" : "floating"}"><header class="bothead" data-window-handle="move"><h2 title="Drag the title bar to move the floating window">Data bot</h2><div class="bottools">${innerWidth >= 900 ? b("dockbot", isDocked() ? "Float window" : "Dock right") : ""}${b("closebot", "Close", "plain")}</div></header><div class="botbody"><details class="botprefs"><summary>Help settings</summary><label>Help mode<select id="mode">${opts(modeNames, project.mode)}</select></label>${b("scope", "What the bot can see")}</details>${!history.length && !requesting ? "<p>Ask about a pattern or ask me to make a chart.</p>" : ""}${!botURL ? "<p>Live help will be available when the workshop service is connected. You can explore, compare and export your data now.</p>" : !sessionStorage.getItem("dv-session") ? '<label>Workshop course code<input id="course" type="password" autocomplete="off"></label>' + b("unlock", "Unlock the bot") : ""}<div class="chatlog">${history.map((t) => `<div class="msg"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`).join("")}</div>${requesting ? '<p role="status">Waiting for the university model…</p>' : ""}
  ${proposal ? b("botdraw", "Make this chart", "primary") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
- <label>Ask about your project<textarea id="question" maxlength="4000" placeholder="Ask a question or describe a chart…">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></section>`;
+ <label>Ask about your project<textarea id="question" maxlength="4000" placeholder="Ask a question or describe a chart…">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></div><div class="botsize" data-window-handle="resize" title="Drag to resize"></div></section>`;
 }
 function render() {
   const expanded = [
@@ -102,9 +104,17 @@ function render() {
         )}</div>${step === 3 ? b("askboth", "Compare these views") : ""} ${undoViews.length ? b("undo", "Undo view change", "plain") : ""}<div id="hint"></div>`;
     else content += saveScreen(project);
   }
-  const asideBot = bot && step !== 3;
+  const previousBody = document.querySelector(".botbody");
+  const scroll = previousBody?.scrollTop || 0;
+  const settingsOpen = previousBody?.querySelector(".botprefs")?.open;
+  const asideBot = bot && isDocked();
   get("app").innerHTML =
-    `<div class="shell ${compact ? "compact" : ""}"><aside class="rail"><div class="brand">${mark}<span>Data<br>visualiser</span></div><nav class="nav" aria-label="Workflow">${steps.map((s, i) => `<button title="${s}" aria-label="${s}" data-act="nav" data-i="${i}" ${step === i ? 'aria-current="step"' : ""} ${(i > 0 && !d) || (i > 1 && !confirmed) ? "disabled" : ""}>${icon(icons[i])}<span>${s}</span></button>`).join("")}</nav><div class="rail-bottom">${b("compact", icon("menu") + "<span>Collapse sidebar</span>", "plain", 'aria-label="Toggle sidebar"')}</div></aside><main class="main" id="workspace"><header class="top"><span>${esc(project.name)} &nbsp; / &nbsp; ${steps[step]}</span>${b("bot", icon("bot") + " Data bot")}</header><div class="content"><div class="${asideBot ? "withbot" : ""}"><div>${content}</div>${asideBot ? botBox() : ""}</div>${bot && step === 3 ? botBox() : ""}</div></main></div>`;
+    `<div class="shell ${compact ? "compact" : ""}"><aside class="rail"><div class="brand">${mark}<span>Data<br>visualiser</span></div><nav class="nav" aria-label="Workflow">${steps.map((s, i) => `<button title="${s}" aria-label="${s}" data-act="nav" data-i="${i}" ${step === i ? 'aria-current="step"' : ""} ${(i > 0 && !d) || (i > 1 && !confirmed) ? "disabled" : ""}>${icon(icons[i])}<span>${s}</span></button>`).join("")}${b("bot", icon("bot") + "<span>Data bot</span>", "botnav", 'aria-label="Data bot" title="Data bot" aria-expanded="' + bot + '"')}</nav><div class="rail-bottom">${b("compact", icon("menu") + "<span>Collapse sidebar</span>", "plain", 'aria-label="Toggle sidebar"')}</div></aside><main class="main" id="workspace"><header class="top"><span>${esc(project.name)} &nbsp; / &nbsp; ${steps[step]}</span></header><div class="content"><div class="${asideBot ? "withbot" : ""}"><div>${content}</div>${asideBot ? botBox() : ""}</div>${bot && !asideBot ? botBox() : ""}</div></main></div>`;
+  if (bot) {
+    layoutBot();
+    document.querySelector(".botprefs").open = !!settingsOpen;
+    document.querySelector(".botbody").scrollTop = scroll;
+  }
   for (const i of expanded) {
     const options = document.querySelector(
       `details[data-chart-options="${i}"]`,
@@ -192,11 +202,17 @@ function draw(i) {
 }
 function tidy(v, key) {
   const d = getData(),
-    fs = d.fields?.filter((f) => f.type !== "metadata") || [];
+    fs =
+      d.fields?.filter((f) => f.type !== "metadata" && f.levels.length) || [];
   if (key === "task") {
     if (v.task === "model") {
       v.chart = "model";
-      v.outcome = fs.find((f) => f.type === "number")?.id || v.x;
+      v.outcome =
+        fs.find((f) => f.type === "number")?.id ||
+        fs.find(
+          (f) =>
+            ["ordered", "category"].includes(f.type) && f.levels.length === 2,
+        )?.id;
       v.predictors = [];
     } else {
       v.chart =
@@ -205,12 +221,20 @@ function tidy(v, key) {
           : v.task === "two" && d.kind === "table"
             ? "grid"
             : "bars";
+      if (v.task === "two" && d.kind === "text" && !v.x) v.x = allCodes(d)[0];
       v.y =
         v.task === "one"
           ? ""
           : d.kind === "text"
             ? allCodes(d).find((c) => c !== v.x) || ""
-            : fs.find((f) => f.id !== v.x)?.id;
+            : (
+                fs.find(
+                  (f) =>
+                    f.id !== v.x &&
+                    f.levels.length > 1 &&
+                    ["category", "ordered"].includes(f.type),
+                ) || fs.find((f) => f.id !== v.x)
+              )?.id;
     }
   }
   if (key === "outcome" || key === "task") {
@@ -230,7 +254,14 @@ function tidy(v, key) {
     v.y =
       d.kind === "text"
         ? allCodes(d).find((c) => c !== v.x)
-        : fs.find((f) => f.id !== v.x)?.id;
+        : (
+            fs.find(
+              (f) =>
+                f.id !== v.x &&
+                f.levels.length > 1 &&
+                ["category", "ordered"].includes(f.type),
+            ) || fs.find((f) => f.id !== v.x)
+          )?.id;
 }
 function goto(i) {
   if (
@@ -269,7 +300,7 @@ function snapshotViews() {
 }
 function openBot(question = "") {
   bot = true;
-  lastQuestion = question;
+  if (question) lastQuestion = question;
   render();
   get("question")?.focus();
 }
@@ -1025,6 +1056,33 @@ async function action(act, el) {
       );
       return;
     }
+    case "surveylabels":
+      chooseFiles(".qsf", false, async ([file]) => {
+        const result = labelledSurvey(d, JSON.parse(await file.text()));
+        const replace = !project.confirmed.includes(d.id) && !d.rules.length;
+        modal(
+          "Check the questionnaire labels",
+          `<p>${result.matched} question headings matched. Answer codes could be translated for ${result.decoded} questions.</p>` +
+            table(["Question", "Example answers"], result.samples) +
+            (replace
+              ? ""
+              : "<p>This creates a labelled copy with fresh views. Your existing analysis stays available.</p>"),
+          () => {
+            if (replace)
+              project.datasets[project.datasets.indexOf(d)] = result.copy;
+            else {
+              result.copy.id = uid();
+              result.copy.name += " (labelled)";
+              result.copy.rules = [];
+              project.datasets.push(result.copy);
+            }
+            activate(result.copy.id);
+            goto(1);
+          },
+          "Use these labels",
+        );
+      });
+      return;
     case "confirm":
       if (!project.confirmed.includes(d.id)) {
         project.confirmed.push(d.id);
@@ -1042,11 +1100,22 @@ async function action(act, el) {
     case "answers":
       evidence(i);
       return;
+    case "dockbot":
+      toggleDock();
+      render();
+      document.querySelector('[data-act="dockbot"]')?.focus();
+      return;
     case "closebot":
       bot = false;
-      break;
+      render();
+      document.querySelector('[data-act="bot"]').focus();
+      return;
     case "bot":
-      bot = !bot;
+      if (!bot) {
+        openBot(lastQuestion);
+        return;
+      }
+      bot = false;
       break;
     case "botdraw":
       applyProposal();
@@ -1253,6 +1322,22 @@ document.addEventListener("click", async (e) => {
   } catch (err) {
     notice(err.message);
   }
+});
+document.addEventListener("input", (e) => {
+  if (e.target.id === "question") lastQuestion = e.target.value;
+});
+document.addEventListener("keydown", (e) => {
+  if (
+    e.key === "Escape" &&
+    bot &&
+    !get("dialog").open &&
+    e.target.closest("#data-bot")
+  ) {
+    document.querySelector('[data-act="closebot"]').click();
+  }
+});
+matchMedia("(min-width: 900px)").addEventListener("change", () => {
+  if (bot) render();
 });
 document.addEventListener("change", (e) => {
   const t = e.target;

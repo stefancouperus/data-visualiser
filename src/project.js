@@ -1,3 +1,4 @@
+import { applyAnswerLabels } from "./survey-labels.js";
 export const fresh = () => ({
   format: "data-visualiser",
   version: 1,
@@ -92,6 +93,11 @@ export function reattach(settings, actual) {
         saved.fields.some((f, i) => f.raw !== d.fields[i].raw)
       )
         throw Error("Columns differ in " + d.name);
+      for (const [index, field] of d.fields.entries()) {
+        const entries = saved.fields[index].answerLabels;
+        if (entries && !field.answerLabels)
+          applyAnswerLabels(d, field, entries);
+      }
       d.fields = d.fields.map((f, i) => ({
         ...f,
         ...saved.fields[i],

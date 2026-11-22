@@ -104,3 +104,51 @@ test("settings reattach to matching data and duplicate metadata keys are rejecte
     /Repeated/,
   );
 });
+
+test("QSF recodes use the instrument and settings-only projects restore the same labels", async () => {
+  const { labelledSurvey } = await import("../src/survey-labels.js");
+  const original = makeTable(
+    [
+      ["Q1", "Age"],
+      ["10", "19"],
+      ["20", "20"],
+      ["", "21"],
+    ],
+    "Survey",
+  );
+  const definition = {
+    SurveyElements: [
+      {
+        Element: "SQ",
+        Payload: {
+          QuestionID: "QID1",
+          DataExportTag: "Q1",
+          QuestionText: "Will you vote?",
+          QuestionType: "MC",
+          Selector: "SAVR",
+          Choices: { 1: { Display: "Yes" }, 2: { Display: "No" } },
+          RecodeValues: { 1: "20", 2: "10" },
+        },
+      },
+    ],
+  };
+  const { copy } = labelledSurvey(original, definition);
+  assert.deepEqual(
+    copy.rows.map((r) => r.c0),
+    ["No", "Yes", ""],
+  );
+  assert.deepEqual(
+    copy.rows.map((r) => r.c1),
+    ["19", "20", "21"],
+  );
+  assert.equal(original.rows[0].c0, "10");
+  const restored = reattach(settingsProject({ ...fresh(), datasets: [copy] }), [
+    original,
+  ]);
+  assert.deepEqual(restored.datasets[0].rows, copy.rows);
+  const unfamiliar = makeTable(
+    [["Q1"], ["10"], ["99"]],
+    "Other response codes",
+  );
+  assert.equal(labelledSurvey(unfamiliar, definition).decoded, 0);
+});

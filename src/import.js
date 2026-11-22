@@ -38,7 +38,16 @@ export function qualtricsHeaders(rows) {
         str(rows[1]?.[i]).trim().toLowerCase() === label.toLowerCase(),
     ),
   );
-  return matches.length >= 2 ? 2 : 0;
+  if (matches.length >= 2) return 2;
+  const idColumns = (rows[0] || [])
+    .map((v, i) => (/^Q(?:ID)?\d+(?:_\w+)*$/i.test(str(v)) ? i : -1))
+    .filter((i) => i >= 0);
+  const wordedHeaders = idColumns.filter(
+    (i) => str(rows[1]?.[i]).trim().split(/\s+/).length >= 4,
+  );
+  return rows.length >= 3 && matches.length >= 1 && wordedHeaders.length >= 1
+    ? 2
+    : 0;
 }
 export function makeTable(grid, name) {
   const rows = grid.filter((row) => row.some((v) => str(v).trim() !== ""));

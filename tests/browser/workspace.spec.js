@@ -77,7 +77,7 @@ test("Word comments and highlights map to the same source passage", async ({
     .getByRole("button", { name: "Mark reviewed / apply code" })
     .click();
   await expect(
-    page.getByRole("combobox", { name: "Code", exact: true }),
+    page.getByRole("combobox", { name: "Choose a theme or code", exact: true }),
   ).toContainText("Barriers");
 });
 
@@ -183,4 +183,86 @@ test("a recognised two-header survey opens immediately and the tutor draws sugge
   await expect(page.locator('[data-key="chart"]')).toHaveValue("dots");
   await page.getByRole("button", { name: "Undo view change" }).click();
   await expect(page.locator('[data-key="chart"]')).toHaveValue("grid");
+});
+
+test("questionnaire labels reach charts and the bot can move, resize and dock", async ({
+  page,
+}) => {
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "example.csv",
+    "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Q1,Age\n2026,2026,7,20\n2026,2026,9,23\n",
+  );
+  await page
+    .getByText("Seeing question codes or numbers", { exact: false })
+    .click();
+  const picker = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Add questionnaire labels" }).click();
+  const question = {
+    QuestionID: "QID1",
+    DataExportTag: "Q1",
+    QuestionType: "MC",
+    Selector: "SAVR",
+    QuestionText: "Would you vote?",
+    Choices: { 1: { Display: "Definitely" }, 2: { Display: "Possibly" } },
+    RecodeValues: { 1: 7, 2: 9 },
+  };
+  await (
+    await picker
+  ).setFiles({
+    name: "example.qsf",
+    mimeType: "application/json",
+    buffer: Buffer.from(
+      JSON.stringify({
+        SurveyElements: [{ Element: "SQ", Payload: question }],
+      }),
+    ),
+  });
+  await page.getByRole("button", { name: "Use these labels" }).click();
+  await page.getByRole("button", { name: "Confirm and explore" }).click();
+  await expect(page.locator("#graphic0")).toContainText("Definitely");
+  await expect(page.locator("#graphic0")).toContainText("Would you vote?");
+  await page
+    .getByLabel("What would you like to find out?")
+    .selectOption("group");
+  await expect(
+    page.getByLabel("Which question defines the groups?"),
+  ).toBeVisible();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Data bot" })
+    .click();
+  const bot = page.locator("#data-bot");
+  await page.locator("#question").fill("Make a chart");
+  const start = await bot.boundingBox();
+  const drag = async (handle, x, y) => {
+    const r = await handle.boundingBox();
+    await page.mouse.move(r.x + 8, r.y + 6);
+    await page.mouse.down();
+    await page.mouse.move(r.x + 8 + x, r.y + 6 + y);
+    await page.mouse.up();
+  };
+  await drag(bot.locator(".bothead"), -150, 30);
+  expect((await bot.boundingBox()).x).toBeCloseTo(start.x - 150, 0);
+  await drag(bot.locator(".botsize"), 50, 40);
+  expect((await bot.boundingBox()).width).toBeCloseTo(start.width + 50, 0);
+  await page.getByRole("button", { name: "Dock right" }).click();
+  await expect(bot).toHaveClass(/docked/);
+  await page.getByRole("button", { name: "Float window" }).click();
+  await expect(page.locator("#question")).toHaveValue("Make a chart");
+  await bot.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(bot).toHaveCount(0);
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Data bot" })
+    .click();
+  expect((await bot.boundingBox()).width).toBeCloseTo(start.width + 50, 0);
+  await page.setViewportSize({ width: 375, height: 680 });
+  await expect
+    .poll(async () => {
+      const mobile = await bot.boundingBox();
+      return mobile ? mobile.x + mobile.width : Infinity;
+    })
+    .toBeLessThanOrEqual(375);
 });

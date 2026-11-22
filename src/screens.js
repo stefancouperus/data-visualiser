@@ -56,7 +56,7 @@ export function check(d) {
       .filter((f) => f.type !== "metadata" && f.levels.length > 0)
       .slice(0, 3)
       .map((f) => [f.label, f.levels.slice(0, 3).join(" · ")]),
-  )}<details><summary>Review fields and import settings</summary>${d.fields.map((f) => `<details class="check-item"><summary>${esc(f.label)} <small> · ${esc(f.type)}</small></summary><p>Original column: ${esc(f.raw)}. Example values: ${esc(f.levels.slice(0, 5).join(" · "))}</p>${b("field", "Edit field", "", 'data-field="' + f.id + '"')}</details>`).join("")}<div class="bar">${b("combinetables", "Combine with another table")}${b("exclude", "Exclude records by value")}${b("multi", "Group multiple-answer columns")}${b("tocorpus", "Use a column as written responses")}</div>${d.rules.map((r, i) => `<p>Exclude ${esc(d.fields.find((f) => f.id === r.field)?.label)} = ${esc(r.value)} ${b("delrule", "Remove", "plain", 'data-i="' + i + '"')}</p>`).join("")}</details></section>`;
+  )}${"<details><summary>Seeing question codes or numbers instead of answer text?</summary><p>Use a Qualtrics export with choice text, or add the questionnaire (.qsf) that belongs to this export. Measurements such as age stay numerical.</p>" + b("surveylabels", "Add questionnaire labels") + "</details>"}<details><summary>Review fields and import settings</summary>${d.fields.map((f) => `<details class="check-item"><summary>${esc(f.label)} <small> · ${esc(f.type)}</small></summary><p>Original column: ${esc(f.raw)}. Example values: ${esc(f.levels.slice(0, 5).join(" · "))}</p>${b("field", "Edit field", "", 'data-field="' + f.id + '"')}</details>`).join("")}<div class="bar">${b("combinetables", "Combine with another table")}${b("exclude", "Exclude records by value")}${b("multi", "Group multiple-answer columns")}${b("tocorpus", "Use a column as written responses")}</div>${d.rules.map((r, i) => `<p>Exclude ${esc(d.fields.find((f) => f.id === r.field)?.label)} = ${esc(r.value)} ${b("delrule", "Remove", "plain", 'data-i="' + i + '"')}</p>`).join("")}</details></section>`;
 }
 export function available(d, v) {
   if (v.task === "model") return ["model"];
@@ -80,23 +80,38 @@ export function available(d, v) {
 }
 export function panel(d, v, i) {
   const text = d.kind === "text",
-    fields = text ? [] : d.fields.filter((f) => f.type !== "metadata"),
+    fields = text
+      ? []
+      : d.fields.filter(
+          (f) =>
+            f.type !== "metadata" &&
+            (f.levels.length || [v.x, v.y, v.outcome].includes(f.id)),
+        ),
     choices = fields.map((f) => [f.id, f.label]),
     codes = text ? allCodes(d) : [];
-  const headline =
-    v.task === "model"
-      ? "Fit a model"
-      : v.task === "group"
-        ? text
-          ? "Compare codes across sources"
-          : "Compare groups"
-        : v.task === "two"
-          ? text
-            ? "Explore code overlap"
-            : "Explore two questions"
-          : text
-            ? "Explore one code"
-            : "Explore one variable";
+  const modelFields = fields.filter(
+    (f) =>
+      f.type === "number" ||
+      (["category", "ordered"].includes(f.type) && f.levels.length === 2),
+  );
+  const tasks = text
+    ? [
+        ["one", "Where does a theme appear?"],
+        ["group", "Which themes appear in each interview?"],
+        ...(codes.length > 1 ? [["two", "Which themes appear together?"]] : []),
+      ]
+    : [
+        ["one", "How did people answer one question?"],
+        ...(choices.length > 1
+          ? [
+              ["group", "How do answers differ between groups?"],
+              ["two", "How do two answers relate?"],
+            ]
+          : []),
+        ...(modelFields.length && choices.length > 1
+          ? [["model", "How do several factors relate to an outcome?"]]
+          : []),
+      ];
   const options = available(d, v);
   if (!options.includes(v.chart)) v.chart = options[0];
   const meta = text
@@ -109,43 +124,64 @@ export function panel(d, v, i) {
         : Object.values(d.metadata || {}).map((m) => m[v.filter])
       : d.fields.find((f) => f.id === v.filter)?.levels || []
     : [];
-  return `<section class="plotcard" data-panel="${i}"><h2>${esc(headline)}</h2><div class="bar">${v.task === "model" ? select("outcome", "Outcome", choices, v.outcome) : text ? select("x", "Code", [["", "All passages"], ...codes], v.x) : select("x", "Variable", choices, v.x)}</div><div class="graphic" id="graphic${i}"></div><div id="modeldetails${i}"></div><details data-chart-options="${i}"><summary>Change chart or compare variables</summary><div class="formgrid">${select(
-    "task",
-    "What would you like to explore?",
-    text
-      ? [
-          ["one", "One code or source text"],
-          ["group", "Codes across sources"],
-          ["two", "Overlap between codes"],
-        ]
-      : [
-          ["one", "One variable"],
-          ["group", "Compare groups"],
-          ["two", "Two questions together"],
-          ["model", "Fit a guided model"],
-        ],
-    v.task,
-  )}
-
+  const setup =
+    v.task === "model"
+      ? select(
+          "outcome",
+          "Which result do you want to understand?",
+          modelFields.map((f) => [f.id, f.label]),
+          v.outcome,
+        )
+      : text
+        ? v.task === "group"
+          ? ""
+          : select(
+              "x",
+              "Choose a theme or code",
+              [...(v.task === "one" ? [["", "All passages"]] : []), ...codes],
+              v.x,
+            )
+        : select("x", "Choose a question or column", choices, v.x);
+  const second =
+    v.task === "two" || (!text && v.task === "group")
+      ? select(
+          "y",
+          text
+            ? "Choose another theme"
+            : v.task === "group"
+              ? "Which question defines the groups?"
+              : "Choose a second question",
+          text
+            ? codes.filter((c) => c !== v.x)
+            : choices.filter(([key]) => key !== v.x),
+          v.y,
+        )
+      : "";
+  return `<section class="plotcard" data-panel="${i}">${select("task", "What would you like to find out?", tasks, v.task)}
+  <div class="formgrid">${setup}${second}</div>
+  ${v.task === "model" ? "<p>Regression estimates how each factor relates to your chosen result while holding the other selected factors constant. For example, does the link between age and voting persist when you account for education?</p>" : ""}
+  ${
+    v.task === "model"
+      ? `<fieldset class="wide"><legend>Which factors might help explain this result?</legend>${fields
+          .filter((f) => f.id !== v.outcome && f.type !== "text")
+          .map(
+            (f) =>
+              `<label class="tick"><input type="checkbox" data-predictor="${f.id}" ${(v.predictors || []).includes(f.id) ? "checked" : ""}>${esc(f.label)}</label>`,
+          )
+          .join(
+            "",
+          )}</fieldset>${d.fields.find((f) => f.id === v.outcome)?.type !== "number" ? select("positive", "Which answer do you want to predict?", d.fields.find((f) => f.id === v.outcome)?.levels || [], v.positive) : ""}<details class="wide"><summary>Advanced regression settings</summary><label class="tick"><input type="checkbox" data-interaction ${v.interaction ? "checked" : ""}>Interaction between first two selected predictors</label><small>Use Compare to fit and inspect a second specification.</small></details>`
+      : select(
+          "chart",
+          "Show as",
+          options.map((k) => [k, kinds[k]]),
+          v.chart,
+        )
+  }
+  <div class="graphic" id="graphic${i}"></div><div id="modeldetails${i}"></div>
+  <details data-chart-options="${i}"><summary>Chart settings</summary><div class="formgrid">
  ${
-   v.task === "model"
-     ? `<fieldset class="wide"><legend>Potential explanations</legend>${fields
-         .filter((f) => f.id !== v.outcome && f.type !== "text")
-         .map(
-           (f) =>
-             `<label class="tick"><input type="checkbox" data-predictor="${f.id}" ${(v.predictors || []).includes(f.id) ? "checked" : ""}>${esc(f.label)}</label>`,
-         )
-         .join(
-           "",
-         )}</fieldset>${d.fields.find((f) => f.id === v.outcome)?.type !== "number" ? select("positive", "Event to predict", d.fields.find((f) => f.id === v.outcome)?.levels || [], v.positive) : ""}<details class="wide"><summary>More model options</summary><label class="tick"><input type="checkbox" data-interaction ${v.interaction ? "checked" : ""}>Interaction between first two selected predictors</label><small>Use Compare to fit and inspect a second specification.</small></details>`
-     : `${v.task !== "one" && (!text || v.task === "two") ? select("y", text ? "Second code" : "Grouping variable", text ? codes.filter((c) => c !== v.x) : choices.filter(([k]) => k !== v.x), v.y) : ""}${select(
-         "chart",
-         "View",
-         options.map((k) => [k, kinds[k]]),
-         v.chart,
-       )}
- ${
-   !text
+   !text && v.task !== "model"
      ? select(
          "measure",
          "Show",
@@ -155,7 +191,7 @@ export function panel(d, v, i) {
          ],
          v.measure,
        )
-     : v.task !== "group"
+     : text && v.task !== "group"
        ? select(
            "measure",
            "Count",
@@ -167,8 +203,7 @@ export function panel(d, v, i) {
          )
        : ""
  }
- ${v.chart === "scatter" || v.chart === "line" ? select("z", "Colour by", [["", "One series"], ...choices.filter(([k]) => k !== v.x && k !== v.y)], v.z) : ""}`
- }
+ ${v.chart === "scatter" || v.chart === "line" ? select("z", "Colour by", [["", "One series"], ...choices.filter(([k]) => k !== v.x && k !== v.y)], v.z) : ""}
  </div><details><summary>Filters and appearance</summary><div class="formgrid">${select("filter", "Keep a subset", [["", "All records"], ...(text ? [["source", "Source"], ...meta] : choices)], v.filter)}${
    v.filter
      ? select(

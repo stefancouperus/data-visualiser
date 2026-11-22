@@ -584,3 +584,118 @@ dialog h2 {
     break-inside: avoid;
   }
 }
+
+.nav .botnav {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+}
+.nav .botnav[aria-expanded="true"] {
+  color: var(--blue);
+  font-weight: 650;
+}
+.plotcard > label:first-child {
+  font-size: 1rem;
+}
+.plotcard > label:first-child select {
+  background: #f5f8ff;
+  border-color: #b2c3e3;
+}
+.plotcard select {
+  text-overflow: ellipsis;
+}
+.plotcard > .graphic {
+  margin-top: 1rem;
+}
+.withbot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(285px, 27vw, 390px);
+  align-items: start;
+}
+.withbot > div:first-child,
+.plotcard {
+  min-width: 0;
+}
+.bot {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #afbed4;
+  background: white;
+  border-radius: 12px;
+}
+.bot.floating {
+  position: fixed;
+  z-index: 12;
+  box-shadow: 0 12px 48px #1a305936;
+}
+.bot.docked {
+  position: sticky;
+  top: 12px;
+  height: calc(100dvh - 32px);
+  margin: 0;
+}
+.bothead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #edf3ff;
+}
+.bothead h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.floating .bothead {
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}
+.bottools {
+  display: flex;
+  gap: 4px;
+}
+.bottools button {
+  padding: 5px 9px;
+  font-size: 0.83rem;
+}
+.botbody {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 14px;
+}
+.botbody .chatlog {
+  max-height: none;
+  overflow: visible;
+}
+.botbody .botprefs {
+  margin: 0 0 12px;
+}
+.floating .botsize {
+  align-self: end;
+  width: 24px;
+  height: 18px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: repeating-linear-gradient(
+      135deg,
+      transparent 0 3px,
+      #637694 3px 4px
+    )
+    bottom right / 12px 12px no-repeat;
+  margin: 0 4px 4px;
+}
+@media (min-width: 900px) and (max-width: 1350px) {
+  .withbot .pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 740px) {
+  .nav .botnav {
+    margin: 0;
+    border-top: 0;
+  }
+}
