@@ -407,6 +407,10 @@ function goto(i) {
     project.views[1] = right;
     project.comparisonStarted = true;
   }
+  if (i === 3 && project.linked) {
+    const { filter, value } = project.views[0];
+    Object.assign(project.views[1], { filter, value });
+  }
   if (step !== i) {
     focusBot(i === 3 ? "both" : "left");
     proposal = null;

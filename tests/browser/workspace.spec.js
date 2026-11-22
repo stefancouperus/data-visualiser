@@ -906,7 +906,17 @@ test("the bot works on the selected panel, drafts a caption and compares both wi
   ]);
   await page.locator("[data-act=closebot]").click();
   await btn("Explore").click();
+  const filter = page.locator('[data-panel="0"] [data-key=filter]');
+  if (!(await filter.isVisible())) {
+    const settings = page.getByText("Chart settings", { exact: true });
+    const appearance = page.getByText("Filters and appearance", { exact: true });
+    if (!(await appearance.isVisible())) await settings.click();
+    await appearance.click();
+  }
+  await filter.selectOption({ label: "Vote" });
+  const selectedFilter = await filter.inputValue();
   await btn("Compare two views").click();
+  await expect(page.locator('[data-panel="1"] [data-key=filter]')).toHaveValue(selectedFilter);
   await expect(page.locator("#graphic1")).toContainText("Year");
   await expect(page.locator("#graphic0")).toContainText("Two of four students");
 });
