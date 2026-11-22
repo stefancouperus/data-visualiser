@@ -13,8 +13,7 @@ const paths = {
 };
 export const icon = (k) =>
   `<svg aria-hidden="true" class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[k] || paths.text}"/></svg>`;
-export const mark =
-  '<svg class="mark" viewBox="0 0 36 36" aria-hidden="true"><rect x="1" y="1" width="34" height="34" rx="8" fill="#2454d6"/><path d="M8 25V14m7 11V7m7 18V12m7 13V9" stroke="#fff" stroke-width="3.3"/></svg>';
+export const mark = '<img class="mark" src="./data-visualiser.svg" alt="">';
 export const pict = (k) =>
   k === "survey"
     ? '<svg class="pict" viewBox="0 0 68 43" aria-hidden="true"><g fill="#3964bd"><rect x="6" y="15" width="10" height="21" rx="2"/><rect x="22" y="5" width="10" height="31" rx="2"/><rect x="38" y="20" width="10" height="16" rx="2"/></g><path d="M1 37h55" stroke="#99aed9"/></svg>'
