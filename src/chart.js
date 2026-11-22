@@ -173,10 +173,18 @@ export function figure(a, v, { width = 700 } = {}) {
     }
   } else if (v.chart === "stack") {
     for (const g of groups) {
-      line(g || a.x, margin, pos, 13, true);
+      const series = records.filter((r) => r.group === g);
+      const count = series[0]?.den;
+      line(
+        (g || a.x) + (count == null ? "" : " (n = " + count + ")"),
+        margin,
+        pos,
+        13,
+        true,
+      );
       pos += 9;
       let x = margin;
-      for (const r of records.filter((r) => r.group === g)) {
+      for (const r of series) {
         const n = ((w - 2 * margin) * r.value) / 100;
         root
           .append("rect")

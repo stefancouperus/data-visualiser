@@ -1,4 +1,9 @@
 import "./style.css";
+import {
+  chartFields,
+  directComparison,
+  resolveAxis,
+} from "./question-matching.js";
 import { labelledSurvey } from "./survey-labels.js";
 import { isDocked, toggleDock, layoutBot } from "./bot-panel.js";
 import { combineTables } from "./combine.js";
@@ -309,7 +314,7 @@ function selectedPassages() {
   if (d?.kind !== "text") return [];
   return d.passages.filter((p) => chosen.has(p.id) || scope.includes(p.source));
 }
-function botContext() {
+function botContext(question = "") {
   const d = getData();
   if (!d) return { step: "Upload" };
   const basic = { stage: steps[step], dataset: d.name, unit: d.unit };
@@ -339,9 +344,7 @@ function botContext() {
     ...basic,
     pendingChart: proposal?.view,
     views,
-    fields: d.fields
-      ?.filter((f) => f.type !== "metadata")
-      .map((f) => ({ id: f.id, name: f.label, type: f.type })),
+    fields: d.fields ? chartFields(d.fields, question) : undefined,
     codebook: d.kind === "text" ? allCodes(d) : undefined,
     passages: selectedPassages().map((p) => ({
       id: p.id,
@@ -357,6 +360,12 @@ function proposedChart(pick) {
     keys = text
       ? allCodes(d)
       : d.fields.filter((f) => f.type !== "metadata").map((f) => f.id);
+  if (!text)
+    pick = {
+      ...pick,
+      x: resolveAxis(d.fields, pick.x),
+      y: resolveAxis(d.fields, pick.y),
+    };
   if (!["one", "group", "two"].includes(pick.task)) return null;
   if (
     !keys.includes(pick.x) &&
@@ -427,7 +436,26 @@ async function ask(question, skill) {
     openBot(question);
     throw Error("Enter the workshop course code first.");
   }
-  const context = botContext();
+  const dataset = getData();
+  const direct =
+    skill === "recommend" &&
+    dataset?.kind === "table" &&
+    directComparison(dataset.fields, question);
+  if (direct) {
+    const candidate = direct.action === "draw" && proposedChart(direct);
+    if (direct.action === "answer" || candidate) {
+      lastQuestion = "";
+      proposal = candidate || null;
+      history.push({ role: "user", content: question });
+      if (candidate) applyProposal();
+      else {
+        history.push({ role: "assistant", content: direct.explanation });
+        render();
+      }
+      return;
+    }
+  }
+  const context = botContext(question);
   if (JSON.stringify(context).length > 115000)
     throw Error("Choose fewer sources or passages for the bot.");
   const previous = history.slice(-4),
@@ -513,10 +541,31 @@ async function ask(question, skill) {
       ) {
         const candidate = proposedChart(pick);
         if (!candidate) {
+          const fields = dataset?.fields || [];
+          const matched = [
+            ...new Set(
+              [pick.x, pick.y]
+                .filter(Boolean)
+                .map(
+                  (axis) =>
+                    fields.find((f) => f.id === resolveAxis(fields, axis))
+                      ?.label,
+                )
+                .filter(Boolean),
+            ),
+          ];
           history.push({
             role: "assistant",
             content:
-              "I couldn’t match that chart to your data. Which question or code would you like to show?",
+              matched.length > 1
+                ? "I found “" +
+                  matched.join("” and “") +
+                  "”. The suggested chart does not support this combination. Would you like to try a different chart type?"
+                : matched.length
+                  ? "I found “" +
+                    matched[0] +
+                    "”. Which other question should I compare it with? You can give a few words from its wording or its answer choices."
+                  : "Which question did you mean? A few words from its wording, answer choices or interview code will help me find it.",
           });
         } else {
           proposal = candidate;

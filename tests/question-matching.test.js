@@ -1,0 +1,64 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  chartFields,
+  directComparison,
+  resolveAxis,
+} from "../src/question-matching.js";
+const fields = [
+  {
+    id: "c2",
+    raw: "Q1",
+    label: "I prefer…",
+    type: "category",
+    levels: ["trains", "boats", "both", "neither"],
+  },
+  {
+    id: "c4",
+    raw: "Q3",
+    label: "Do specialists make better decisions?",
+    type: "ordered",
+    levels: ["Agree", "Disagree"],
+  },
+  {
+    id: "c5",
+    raw: "Q4",
+    label: "Any comments?",
+    type: "text",
+    levels: ["I take boats with a specialist."],
+  },
+];
+const question =
+  "Could you create a visual that relates the train–boat question to the specialists question?";
+test("titles and choice shorthand identify distinct axes without exporting responses", () => {
+  const ask = question;
+  const pick = directComparison(fields, ask);
+  assert.deepEqual(
+    [pick.x, pick.y, pick.chart, pick.measure],
+    ["c4", "c2", "stack", "percent"],
+  );
+  assert.equal(resolveAxis(fields, "I prefer…"), "c2");
+  assert.equal(resolveAxis(fields, "trains"), "c2");
+  const hints = chartFields(fields, ask);
+  assert.ok(hints[0].requestWordsMatchingAnswerChoices.includes("train"));
+  assert.equal(hints[2].requestWordsMatchingAnswerChoices, undefined);
+  assert.ok(!JSON.stringify(hints).includes("neither"));
+});
+test("ambiguous or qualified requests do not silently draw a different chart", () => {
+  const also = {
+    ...fields[1],
+    id: "c6",
+    label: "Do specialists listen enough?",
+  };
+  assert.match(
+    directComparison(
+      [...fields, also],
+      question.replace("train–boat", "trains"),
+    ).explanation,
+    /listen enough/,
+  );
+  assert.equal(
+    directComparison(fields, question.replace("?", " only among men?")),
+    null,
+  );
+});

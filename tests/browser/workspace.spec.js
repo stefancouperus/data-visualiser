@@ -266,3 +266,30 @@ test("questionnaire labels reach charts and the bot can move, resize and dock", 
     })
     .toBeLessThanOrEqual(375);
 });
+
+test("an informal comparison draws the attitude question by preferences mentioned only in choices", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "choices.csv",
+    "StartDate,EndDate,Q1,Q2\nStart Date,End Date,I prefer...,Should specialists decide?\n2026,2026,Cats,Agree\n2026,2026,Dogs,Strongly agree\n2026,2026,Both,Disagree\n2026,2026,Neither,Agree\n",
+  );
+  await page.getByRole("button", { name: "Confirm and explore" }).click();
+  await page.getByRole("button", { name: "Data bot", exact: true }).click();
+  await page
+    .locator("#question")
+    .fill(
+      "Could you create a visual that relates the cat-dog question to the specialists question?",
+    );
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.locator("#graphic0")).toContainText(
+    "Should specialists decide? by I prefer...",
+  );
+  await expect(page.locator("#graphic0")).toContainText("Cats (n = 1)");
+  await expect(page.locator("#data-bot .chatlog")).toContainText(
+    "Created 100% stacked bars",
+  );
+});
