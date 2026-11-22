@@ -77,7 +77,7 @@ export function available(d, v) {
     c.push("scatter", "line");
   return c;
 }
-export function panel(d, v, i) {
+export function panel(d, v, i, comparing = false) {
   const text = d.kind === "text",
     fields = text
       ? []
@@ -95,20 +95,20 @@ export function panel(d, v, i) {
   );
   const tasks = text
     ? [
-        ["one", "Where does a theme appear?"],
-        ["group", "Which themes appear in each interview?"],
-        ...(codes.length > 1 ? [["two", "Which themes appear together?"]] : []),
+        ["one", codes.length ? "Find a theme" : "Read interview passages"],
+        ...(codes.length ? [["group", "Compare interviews"]] : []),
+        ...(codes.length > 1 ? [["two", "Find overlapping themes"]] : []),
       ]
     : [
-        ["one", "How did people answer one question?"],
+        ["one", "Explore one question"],
         ...(choices.length > 1
           ? [
-              ["group", "How do answers differ between groups?"],
-              ["two", "How do two answers relate?"],
+              ["group", "Compare groups"],
+              ["two", "Connect two questions"],
             ]
           : []),
         ...(modelFields.length && choices.length > 1
-          ? [["model", "How do several factors relate to an outcome?"]]
+          ? [["model", "Explore several factors"]]
           : []),
       ];
   const options = available(d, v);
@@ -156,7 +156,15 @@ export function panel(d, v, i) {
           v.y,
         )
       : "";
-  return `<section class="plotcard" data-panel="${i}">${select("task", "What would you like to find out?", tasks, v.task)}
+  const side = i ? "Right" : "Left";
+  const goals = tasks
+    .map(
+      ([id, label]) =>
+        `<label class="goal-choice"><input type="radio" name="goal-${i}" data-key="task" value="${id}" ${id === v.task ? "checked" : ""}><span>${esc(label)}</span></label>`,
+    )
+    .join("");
+  return `<section class="plotcard" data-panel="${i}">${comparing ? `<div class="view-heading"><h2>${side} view</h2><span>${esc(kinds[v.chart])}</span></div><details data-chart-options="edit-${i}"><summary>Change ${side.toLowerCase()} view</summary>` : ""}
+  <fieldset class="goal-picker"><legend>What would you like to find out?</legend><div>${goals}</div></fieldset>
   <div class="formgrid">${setup}${second}</div>
   ${v.task === "model" ? "<p>Regression estimates how each factor relates to your chosen result while holding the other selected factors constant. For example, does the link between age and voting persist when you account for education?</p>" : ""}
   ${
@@ -177,6 +185,7 @@ export function panel(d, v, i) {
           v.chart,
         )
   }
+  ${comparing ? "</details>" : ""}
   <div class="figure-toolbar">${b("figurestyle", "Figure style · " + figureStyles[styleFor(v.style)].label, "", 'data-i="' + i + '"')}</div>
   <div class="graphic" id="graphic${i}"></div><div id="modeldetails${i}"></div>
   <details data-chart-options="${i}"><summary>Chart settings</summary><div class="formgrid">
@@ -223,7 +232,7 @@ export function panel(d, v, i) {
    v.palette,
  )}${v.chart === "excerpts" ? input("query", "Find text", v.query) : ""}</div>${b("resetview", "Reset this view", "plain", 'data-i="' + i + '"')}</details>
  </details>
- <div class="bar">${b("askview", "Explain this view", "", 'data-i="' + i + '"')}${text ? b("passages", "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></section>`;
+ <div class="bar">${b("askview", icon("bot") + " Explain this view", "", 'data-i="' + i + '"')}${text ? b("passages", "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></section>`;
 }
 export function saveScreen(p) {
   return `<div class="card"><h2>Save your project</h2><p>Keep your data, codes, figures, comparisons and bot activity together in one file. To continue on any laptop, choose <strong>Open a saved project</strong> on the start screen.</p><label class="tick"><input id="includeBotChat" type="checkbox" ${p.includeBotChat ? "checked" : ""}>Include full Data bot conversations</label><small>Includes your questions, replies and any text quoted in them.</small><div class="bar">${b("download", "Download project with data", "primary")}</div><details><summary>Other save options</summary><div class="bar">${b("device", "Save on this device")}${b("settings", "Download settings only")}</div><small>A settings-only file requires matching datasets to be imported first.</small></details></div><div class="card"><h2>Saved comparisons</h2><div class="bar">${b("savecompare", "Save current comparison")}</div>${p.saved.length ? p.saved.map((s, i) => `<div class="topline check-item"><div><strong>${esc(s.name)}</strong><p>${esc(s.note)}</p></div><div>${b("loadcomp", "Open", "", 'data-i="' + i + '"')} ${b("dupcomp", "Duplicate", "", 'data-i="' + i + '"')}</div></div>`).join("") : "<p>Your saved comparisons will appear here.</p>"}</div><div class="card"><h2>Export a figure</h2><div class="formgrid">${form(

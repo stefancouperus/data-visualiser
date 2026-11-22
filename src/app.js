@@ -2,7 +2,11 @@ import "./style.css";
 import { codingGuide, checkedSuggestions } from "./coding.js";
 import { codingControls, bindCodingControls } from "./codebook-ui.js";
 import { tutorRecord, projectPackage, previousWork } from "./tutor-history.js";
-import { analyticalEvidence, pairedStatistics } from "./tutor-evidence.js";
+import {
+  analyticalEvidence,
+  pairedStatistics,
+  categoricalPattern,
+} from "./tutor-evidence.js";
 import {
   chartFields,
   directComparison,
@@ -48,7 +52,70 @@ import {
 } from "./screens.js";
 const steps = ["Upload", "Check", "Explore", "Compare", "Save and export"],
   icons = ["upload", "check", "explore", "compare", "save"];
-let proposal = null;
+let proposal = null,
+  captionDraft = null,
+  queuedShortcut = null,
+  botFocus = "left";
+function focusBot(target) {
+  if (botFocus !== target) {
+    proposal = null;
+    captionDraft = null;
+    queuedShortcut = null;
+  }
+  botFocus = target;
+}
+const focusIndex = () => (step === 3 && botFocus === "right" ? 1 : 0);
+function viewName(d, v) {
+  const name = (id) => d.fields?.find((f) => f.id === id)?.label || id;
+  if (v.task === "model") return name(v.outcome) || "Model";
+  if (d.kind === "text" && v.task === "group")
+    return "Themes across interviews";
+  return (
+    [name(v.x), v.task !== "one" && name(v.y)].filter(Boolean).join(" by ") ||
+    "All passages"
+  );
+}
+function botWorkspaceControls() {
+  if (![2, 3].includes(step)) return "";
+  const compare = step === 3,
+    both = compare && botFocus === "both";
+  const view = project.views[focusIndex()],
+    d = getData();
+  const target = compare
+    ? formselect(
+        "bot-focus",
+        "Use for this request",
+        [
+          ["left", "Left view"],
+          ["right", "Right view"],
+          ["both", "Both views"],
+        ],
+        botFocus,
+      )
+    : "";
+  const describe = (v) => {
+    const filter = v.filter
+      ? " · " +
+        (d.fields?.find((f) => f.id === v.filter)?.label || v.filter) +
+        " = " +
+        v.value
+      : "";
+    return viewName(d, v) + " · " + kinds[v.chart] + filter;
+  };
+  const included =
+    chosen.size || scope.length
+      ? `<div class="bar"><small>${chosen.size} selected passages · ${scope.length} whole sources included</small>${b("clearevidence", "Clear included text", "plain")}</div>`
+      : "";
+  const names = both ? project.views.map(describe).join(" / ") : describe(view);
+  const controls = both
+    ? b("askboth", "Compare findings")
+    : b("askview", "Explain the pattern", "", `data-i="${focusIndex()}"`) +
+      (available(d, view).length > 1
+        ? b("botvariant", "Try another chart")
+        : "") +
+      b("botcaption", "Draft a caption");
+  return `<div class="bot-selection">${target}<strong>${esc(names)}</strong>${included}<div class="bar">${controls}</div></div>`;
+}
 let undoViews = [],
   project = fresh(),
   step = 0,
@@ -62,6 +129,9 @@ let undoViews = [],
   lastQuestion = "";
 const getData = () => project.datasets.find((d) => d.id === project.active);
 const resetTutor = () => {
+  botFocus = "left";
+  captionDraft = null;
+  queuedShortcut = null;
   proposal = null;
 
   history = tutorRecord(project).messages;
@@ -73,6 +143,7 @@ const resetTutor = () => {
 function activate(id) {
   undoViews = [];
   project.active = id;
+  project.comparisonStarted = false;
   const v = newView(getData());
   project.views = [v, structuredClone(v)];
   resetTutor();
@@ -92,7 +163,7 @@ function botBox() {
       : ""
   }<div class="chatlog">${history.map((t) => `<div class="msg"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`).join("")}</div>${requesting ? '<p role="status">Waiting for the university model…</p>' : ""}
  ${proposal ? b("botdraw", "Make this chart", "primary") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
- <label>Ask about your project<textarea id="question" maxlength="4000" placeholder="Ask a question or describe a chart…">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></div><div class="botsize" data-window-handle="resize" title="Drag to resize"></div></section>`;
+ ${captionDraft ? b("applycaption", "Add caption to figure") : ""}${botWorkspaceControls()}<label>Ask about your project<textarea id="question" maxlength="4000" placeholder="Ask a question or describe a chart…">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></div><div class="botsize" data-window-handle="resize" title="Drag to resize"></div></section>`;
 }
 function render() {
   const expanded = [
@@ -113,12 +184,12 @@ function render() {
     if (step === 1)
       content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (d.kind === "text" ? "coded" : "table") + '"')}</div>${check(d)}<div class="bar">${b("confirm", "Confirm and explore", "primary")}</div>`;
     else if (step === 2 || step === 3)
-      content += `<div class="bar">${step === 2 ? b("compare", "Compare two views", "primary") : b("savecompare", "Save comparison", "primary")}${b("choose", "Ask the bot for a chart")}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
+      content += `<div class="bar">${step === 2 ? b("compare", "Compare two views", "primary") : b("savecompare", "Save comparison", "primary")}${step === 2 ? b("choose", icon("bot") + " Suggest a chart") : b("askboth", icon("bot") + " Compare findings")}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
         .slice(0, step === 3 ? 2 : 1)
-        .map((v, i) => panel(d, v, i))
+        .map((v, i) => panel(d, v, i, step === 3))
         .join(
           "",
-        )}</div>${step === 3 ? b("askboth", "Compare these views") : ""} ${undoViews.length ? b("undo", "Undo view change", "plain") : ""}<div id="hint"></div>`;
+        )}</div> ${undoViews.length ? b("undo", "Undo view change", "plain") : ""}<div id="hint"></div>`;
     else content += saveScreen(project);
   }
   const previousBody = document.querySelector(".botbody");
@@ -150,8 +221,8 @@ function render() {
       const [l, r] = project.views;
       get("comparisonNote").textContent =
         l.filter === r.filter && l.value === r.value
-          ? "Both panels use the same record filter. Each figure shows its counts and unit."
-          : "The panels use different record filters.";
+          ? "Both views use the same filter. Open Change left view or Change right view to try another question or chart."
+          : "The views use different filters. Check which records each figure includes before comparing them.";
     }
     const hint =
       project.mode === "guided"
@@ -327,12 +398,31 @@ function goto(i) {
   )
     return;
   if (i === 2 || i === 3) project.figurePanels = i === 3 ? "both" : "left";
+  if (i === 3 && !project.comparisonStarted) {
+    const right = structuredClone(project.views[0]);
+    right.chart =
+      { bars: "dots", dots: "bars", small: "bars", grid: "table" }[
+        right.chart
+      ] || right.chart;
+    project.views[1] = right;
+    project.comparisonStarted = true;
+  }
+  if (step !== i) {
+    focusBot(i === 3 ? "both" : "left");
+    proposal = null;
+    captionDraft = null;
+    queuedShortcut = null;
+  }
   step = i;
   render();
   window.scrollTo(0, 0);
 }
 function setProject(p) {
   project = verifyProject(p);
+  project.comparisonStarted ??=
+    project.figurePanels === "both" ||
+    (project.views.length === 2 &&
+      JSON.stringify(project.views[0]) !== JSON.stringify(project.views[1]));
   undoViews = [];
   if (!getData() && project.datasets.length) activate(project.datasets[0].id);
   if (getData() && project.views.length !== 2) activate(project.active);
@@ -420,11 +510,35 @@ function botContext(question = "") {
       fields: d.fields?.map((f) => ({ name: f.label, type: f.type })),
       sourceCount: d.sources?.length,
     };
-  const views = Array.from({ length: step >= 3 ? 2 : 1 }, (_, i) => {
+  const indices =
+    step === 2
+      ? [0]
+      : step === 3 && botFocus !== "both"
+        ? [focusIndex()]
+        : [0, 1];
+  const views = indices.map((i) => {
     try {
       const a = summary(i);
       return {
         ...a,
+        panel: i ? "right" : "left",
+        selectedQuestions: viewName(d, project.views[i]),
+        filter: project.views[i].filter
+          ? {
+              field:
+                d.fields?.find((f) => f.id === project.views[i].filter)
+                  ?.label || project.views[i].filter,
+              value: project.views[i].value,
+            }
+          : null,
+        availableCharts: available(d, project.views[i]),
+        categoricalPattern:
+          d.kind === "table" &&
+          ["ordered", "category", "multiple"].includes(
+            d.fields.find((f) => f.id === project.views[i].x)?.type,
+          )
+            ? categoricalPattern(a.records || [])
+            : undefined,
         calculatedForSelection: analyticalEvidence(
           d,
           project.views[i],
@@ -440,11 +554,12 @@ function botContext(question = "") {
         settings: project.views[i],
       };
     } catch (e) {
-      return { message: e.message };
+      return { panel: i ? "right" : "left", message: e.message };
     }
   });
   return {
     ...basic,
+    focus: step === 3 ? botFocus : step === 2 ? "left" : "both",
     pendingChart: proposal?.view,
     views,
     fields: d.fields ? chartFields(d.fields, question) : undefined,
@@ -474,7 +589,11 @@ function proposedChart(pick) {
     keys = text
       ? allCodes(d)
       : d.fields.filter((f) => f.type !== "metadata").map((f) => f.id);
-  const panel = step === 3 && pick.panel !== "left" ? 1 : 0,
+  const panel =
+      step === 3 &&
+      (botFocus === "both" ? pick.panel !== "left" : botFocus === "right")
+        ? 1
+        : 0,
     current = project.views[panel];
   const candidate = (view) => ({
     view,
@@ -483,6 +602,16 @@ function proposedChart(pick) {
     dataset: d.id,
     baseline: JSON.stringify(current),
   });
+  if (pick.action === "restyleChart") {
+    if (
+      !available(d, current).includes(pick.chart) ||
+      pick.chart === current.chart
+    )
+      return null;
+    const view = { ...current, chart: pick.chart };
+    summary(panel, view);
+    return candidate(view);
+  }
   if (!text && pick.task === "model" && pick.chart === "model") {
     if (!Array.isArray(pick.predictors) || !pick.predictors.length) return null;
     const outcome = resolveAxis(d.fields, pick.outcome);
@@ -561,7 +690,7 @@ function proposedChart(pick) {
   if (!available(d, view).includes(view.chart)) return null;
   return candidate(view);
 }
-function applyProposal() {
+function applyProposal(explanation) {
   const candidate = proposal;
   proposal = null;
   if (
@@ -591,7 +720,8 @@ function applyProposal() {
       " · " +
       chart.title +
       ". " +
-      chart.note,
+      chart.note +
+      (typeof explanation === "string" ? " " + explanation : ""),
   });
   render();
   get("graphic" + candidate.panel)?.scrollIntoView({ block: "nearest" });
@@ -647,13 +777,29 @@ async function extractCodebook(document, code) {
   });
   return structuredAnswer(answer).entries;
 }
-async function ask(question, skill) {
+async function ask(question, skill, intent = "") {
   if (requesting) throw Error("A tutor request is already pending.");
   if (!botURL)
     throw Error("The workshop tutor service has not been connected.");
   if (!sessionStorage.getItem("dv-session")) {
     openBot(question);
     throw Error("Enter the workshop course code first.");
+  }
+  if (skill === "recommend" && step === 3 && !intent) {
+    const left =
+      /\bleft(?:-hand)? (?:view|chart|figure|panel)\b|\bon the left\b/i.test(
+        question,
+      );
+    const right =
+      /\bright(?:-hand)? (?:view|chart|figure|panel)\b|\bon the right\b/i.test(
+        question,
+      );
+    if (
+      (left && right) ||
+      /\b(?:both|two) (?:views|charts|figures|panels)\b/i.test(question)
+    )
+      focusBot("both");
+    else if (left || right) focusBot(left ? "left" : "right");
   }
   const dataset = getData();
   const direct =
@@ -685,6 +831,27 @@ async function ask(question, skill) {
           .map(({ id, source, text, codes }) => ({ id, source, text, codes })),
       }
     : botContext(question);
+  if (intent) context.requestedOutput = intent;
+  if (
+    skill === "recommend" &&
+    step === 3 &&
+    botFocus === "both" &&
+    intent === "compare"
+  ) {
+    const [l, r] = project.views;
+    context.comparison = {
+      sameQuestion:
+        l.x === r.x &&
+        l.y === r.y &&
+        l.task === r.task &&
+        l.outcome === r.outcome,
+      sameFilter: l.filter === r.filter && l.value === r.value,
+      sameUnit: context.views[0]?.unit === context.views[1]?.unit,
+    };
+  }
+  if (skill === "recommend") {
+    captionDraft = null;
+  }
   if (JSON.stringify(context).length > 115000)
     throw Error("Choose fewer sources or passages for the bot.");
   const previous = history.slice(-4),
@@ -692,6 +859,8 @@ async function ask(question, skill) {
     activeChat = history,
     activeId = project.active,
     startStep = step,
+    startFocus = botFocus,
+    startEvidence = JSON.stringify([[...chosen], scope]),
     startViews = JSON.stringify(project.views);
   lastQuestion = "";
   requesting = true;
@@ -713,7 +882,10 @@ async function ask(question, skill) {
       return;
     if (
       skill === "recommend" &&
-      (step !== startStep || JSON.stringify(project.views) !== startViews)
+      (step !== startStep ||
+        botFocus !== startFocus ||
+        JSON.stringify([[...chosen], scope]) !== startEvidence ||
+        JSON.stringify(project.views) !== startViews)
     ) {
       history.push({
         role: "assistant",
@@ -777,6 +949,30 @@ async function ask(question, skill) {
         };
       proposal = null;
       if (
+        (step === 2 || (step === 3 && botFocus !== "both")) &&
+        pick.action === "caption" &&
+        typeof pick.explanation === "string" &&
+        pick.explanation.trim()
+      ) {
+        const panel = focusIndex();
+        captionDraft = {
+          text: pick.explanation.trim(),
+          dataset: project.active,
+          step,
+          panel,
+          baseline: JSON.stringify(project.views[panel]),
+        };
+        history.push({ role: "assistant", content: captionDraft.text });
+        return;
+      }
+      if (intent === "suggest" && pick.action === "draw")
+        pick.action = "suggest";
+      if (intent === "variant")
+        pick.action = pick.chart ? "restyleChart" : "answer";
+      if (["explain", "compare", "caption", "excerpts"].includes(intent))
+        pick.action = "answer";
+      if (
+        pick.action === "restyleChart" ||
         pick.action === "draw" ||
         pick.action === "suggest" ||
         (!pick.action && pick.chart)
@@ -794,7 +990,25 @@ async function ask(question, skill) {
           history.push({ role: "assistant", content: error.message });
           return;
         }
-        if (!candidate && requestedChart) {
+        if (!candidate && pick.action === "restyleChart") {
+          const index =
+            step === 3 && botFocus === "both"
+              ? pick.panel === "left"
+                ? 0
+                : 1
+              : focusIndex();
+          const options = available(dataset, project.views[index]).filter(
+            (k) => k !== project.views[index].chart,
+          );
+          history.push({
+            role: "assistant",
+            content: options.length
+              ? "That chart would not give a different, valid view of this selection. You can show it as: " +
+                options.map((k) => kinds[k]).join(", ") +
+                "."
+              : "This selection has only one available chart.",
+          });
+        } else if (!candidate && requestedChart) {
           history.push({
             role: "assistant",
             content:
@@ -831,7 +1045,8 @@ async function ask(question, skill) {
           });
         } else {
           proposal = candidate;
-          if (pick.action === "draw") applyProposal();
+          if (["draw", "restyleChart"].includes(pick.action))
+            applyProposal(pick.explanation);
           else
             history.push({
               role: "assistant",
@@ -1250,7 +1465,7 @@ function evidence(i, match) {
   }
   modal(
     "Read and code passages",
-    `<label>Find a passage<input id="searchPass"></label><div id="passlist">${list()}</div><button type="button" id="shortpass">Use highlighted words as a passage</button><label>Code to apply<input id="applycode" list="knowncodes"></label><datalist id="knowncodes">${opts(allCodes(d), "")}</datalist>${codingControls(d)}`,
+    `<label>Find a passage<input id="searchPass"></label><div id="passlist">${list()}</div><div class="bar"><button type="button" id="shortpass">Use highlighted words as a passage</button><button type="button" id="discusspass" data-i="${i}">Discuss selected passages</button></div><label>Code to apply<input id="applycode" list="knowncodes"></label><datalist id="knowncodes">${opts(allCodes(d), "")}</datalist>${codingControls(d)}`,
     () => {
       if (!selected.size) throw Error("Choose one or more passages.");
       const code = val("applycode").trim();
@@ -1337,31 +1552,38 @@ function evidence(i, match) {
     suggestions = [];
     render();
   });
-  get("suggestpass").onclick = async () => {
-    if (requesting) {
-      get("formerror").textContent = "Wait for the current bot reply first.";
-      return;
-    }
-    if (!selected.size || selected.size > 10) {
-      get("formerror").textContent = "Choose 1–10 passages for a batch.";
-      return;
-    }
-    d.coding = {
-      ...d.coding,
-      mode: val("coding-method"),
-      focus: val("coding-focus").trim(),
+  for (const id of ["discusspass", "suggestpass"])
+    get(id).onclick = async () => {
+      if (requesting) {
+        get("formerror").textContent = "Wait for the current bot reply first.";
+        return;
+      }
+      if (!selected.size || selected.size > 10) {
+        get("formerror").textContent = "Choose 1–10 passages for a batch.";
+        return;
+      }
+      if (id === "suggestpass")
+        d.coding = {
+          ...d.coding,
+          mode: val("coding-method"),
+          focus: val("coding-focus").trim(),
+        };
+      suggestions = [];
+      chosen = selected;
+      scope = [];
+      get("dialog").close();
+      if (step === 3) focusBot(i ? "right" : "left");
+      try {
+        if (id === "discusspass")
+          await action("discusspass", { dataset: { i } });
+        else {
+          openBot("Suggest codes for the selected passages.");
+          await ask(lastQuestion, "coding");
+        }
+      } catch (e) {
+        notice(e.message);
+      }
     };
-    suggestions = [];
-    chosen = selected;
-    scope = [];
-    get("dialog").close();
-    openBot("Suggest codes for the selected passages.");
-    try {
-      await ask(lastQuestion, "coding");
-    } catch (e) {
-      notice(e.message);
-    }
-  };
 }
 const reviewActs = [
   "combinetables",
@@ -1466,9 +1688,6 @@ async function action(act, el) {
       goto(2);
       return;
     case "compare":
-      project.views[1] = structuredClone(project.views[0]);
-      project.views[1].chart =
-        project.views[0].chart === "bars" ? "dots" : project.views[0].chart;
       goto(3);
       return;
     case "passages":
@@ -1495,24 +1714,87 @@ async function action(act, el) {
     case "botdraw":
       applyProposal();
       return;
+    case "applycaption": {
+      const draft = captionDraft;
+      captionDraft = null;
+      if (
+        !draft ||
+        draft.step !== step ||
+        draft.dataset !== project.active ||
+        draft.baseline !== JSON.stringify(project.views[draft.panel])
+      )
+        throw Error("The figure changed. Draft a new caption.");
+      snapshotViews();
+      project.views[draft.panel].annotation = draft.text;
+      tutorRecord(project).activity.push(
+        "Added a caption to " + viewName(d, project.views[draft.panel]) + ".",
+      );
+      break;
+    }
+    case "clearevidence":
+      chosen.clear();
+      scope = [];
+      suggestions = [];
+      proposal = null;
+      captionDraft = null;
+      queuedShortcut = null;
+      break;
+    case "discusspass":
     case "choose":
-      openBot();
+    case "botvariant":
+    case "botcaption":
+    case "askview":
+    case "askboth": {
+      if (requesting)
+        return notice("The Data bot is working on your previous request.");
+      if (step === 3 && (act === "askview" || act === "askboth"))
+        focusBot(act === "askboth" ? "both" : i ? "right" : "left");
+      const [intent, prompt] = {
+        discusspass: [
+          "excerpts",
+          "Explain what the selected passages have in common or how they differ. Ground each point in a short exact quotation and name the source. Limit your claims to these passages.",
+        ],
+        choose: [
+          "suggest",
+          "Suggest a useful chart for the current selection and explain why.",
+        ],
+        botvariant: [
+          "variant",
+          "Show the current selection using a different chart and explain what that makes easier to see.",
+        ],
+        botcaption: [
+          "caption",
+          "Draft a one- or two-sentence caption for the selected figure using its evidence and unit.",
+        ],
+        askview: [
+          "explain",
+          "Explain the clearest pattern in this view using its counts, units and any relevant limitation.",
+        ],
+        askboth: [
+          "compare",
+          "Compare these two views. Explain what is comparable, what differs, and what the evidence shows.",
+        ],
+      }[act];
+      openBot(prompt);
+      if (!sessionStorage.getItem("dv-session")) {
+        queuedShortcut = {
+          prompt,
+          intent,
+          step,
+          dataset: project.active,
+          baseline: JSON.stringify(project.views),
+          focus: botFocus,
+        };
+        return;
+      }
+      await ask(prompt, "recommend", intent);
       return;
+    }
     case "finding":
       openBot("I would like to show this finding: ");
       return;
     case "caption":
       openBot("Suggest a concise caption for these figures.");
-      return;
-    case "askview":
-      openBot(
-        "What am I seeing in the " +
-          (i ? "right" : "left") +
-          " view, and what is counted?",
-      );
-      return;
-    case "askboth":
-      openBot("Compare these two views. What is easier to see in each?");
       return;
     case "scope": {
       const c = botContext();
@@ -1540,6 +1822,19 @@ async function action(act, el) {
     }
     case "unlock": {
       await unlockBot(val("course"));
+      const queued = queuedShortcut;
+      queuedShortcut = null;
+      if (
+        queued &&
+        queued.prompt === lastQuestion &&
+        queued.step === step &&
+        queued.dataset === project.active &&
+        queued.baseline === JSON.stringify(project.views) &&
+        queued.focus === botFocus
+      ) {
+        await ask(queued.prompt, "recommend", queued.intent);
+        return;
+      }
       break;
     }
     case "send": {
@@ -1673,6 +1968,7 @@ async function action(act, el) {
       activate(s.dataset);
       project.views = structuredClone(s.views);
       project.linked = s.linked;
+      project.comparisonStarted = true;
       goto(3);
       return;
     }
@@ -1797,12 +2093,19 @@ document.addEventListener("change", (e) => {
     goto(project.confirmed.includes(t.value) ? step : 1);
     return;
   }
+  if (t.id === "bot-focus") {
+    focusBot(t.value);
+    render();
+    return;
+  }
   if (t.id === "mode") {
     project.mode = t.value;
     render();
     return;
   }
   if (t.id === "linked") {
+    proposal = null;
+    captionDraft = null;
     project.linked = t.checked;
     if (project.linked)
       Object.assign(project.views[1], {
@@ -1817,6 +2120,10 @@ document.addEventListener("change", (e) => {
   snapshotViews();
   const i = Number(box.dataset.panel),
     v = project.views[i];
+  if (step === 3) focusBot(i ? "right" : "left");
+  queuedShortcut = null;
+  proposal = null;
+  captionDraft = null;
   if (t.hasAttribute("data-predictor")) {
     v.predictors = [...box.querySelectorAll("[data-predictor]:checked")].map(
       (el) => el.dataset.predictor,
@@ -1833,6 +2140,10 @@ document.addEventListener("change", (e) => {
       Object.assign(project.views[1 - i], { filter: v.filter, value: v.value });
   } else return;
   render();
+  if (t.dataset.key === "task")
+    document
+      .querySelector('[data-panel="' + i + '"] input[data-key="task"]:checked')
+      ?.focus({ preventScroll: true });
 });
 resetTutor();
 render();

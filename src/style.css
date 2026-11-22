@@ -752,3 +752,19 @@ dialog h2 {
 
 .book-source { white-space: pre-wrap; overflow: auto; max-height: 13rem; }
 .book-row { border-bottom: 1px solid var(--line); padding: 0.6rem 0; }
+
+.goal-picker { margin: 0 0 1rem; padding: 0; border: 0; min-width: 0; }
+.goal-picker legend { font-weight: 650; margin-bottom: .5rem; }
+.goal-picker > div { display: flex; flex-wrap: wrap; gap: .4rem; }
+.goal-choice { position: relative; display: block; cursor: pointer; }
+.goal-choice input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.goal-choice span { display: block; border: 1px solid var(--line); border-radius: 5px; padding: .4rem .65rem; color: var(--ink); }
+.goal-choice input:checked + span { border-color: var(--blue); background: #edf3ff; color: #164292; font-weight: 650; }
+.goal-choice input:focus-visible + span { outline: 2px solid var(--blue); outline-offset: 2px; }
+.view-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .4rem; }
+.view-heading h2 { margin: 0; }
+.view-heading span { font-size: .85rem; color: var(--muted); }
+.bot-selection { border-top: 1px solid var(--line); padding-top: .7rem; margin-top: .7rem; }
+.bot-selection strong { display: block; margin: .35rem 0; overflow-wrap: anywhere; font-size: .87rem; }
+.bot-selection .bar { gap: .3rem; margin: .45rem 0 .8rem; }
+.bot-selection button { font-size: .85rem; padding: .35rem .55rem; }

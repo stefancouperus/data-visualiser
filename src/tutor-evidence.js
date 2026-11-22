@@ -116,3 +116,50 @@ export function pairedStatistics(points) {
     pearsonR: n > 1 && sx > 0 && sy > 0 ? c / Math.sqrt(sx * sy) : null,
   };
 }
+
+// Rank the calculated categories across the whole chart, including cells beyond
+// the display preview. Compare within-group shares when group sizes differ.
+export function categoricalPattern(records) {
+  if (
+    !records.length ||
+    !records.every((r) => r.den > 0 && Number.isFinite(r.n))
+  )
+    return;
+  const ranges = new Map(),
+    groups = new Set();
+  let leader = null,
+    ties = 0;
+  for (const { group, label, n, den } of records) {
+    const share = n / den,
+      row = { group, label, n, den, share };
+    groups.add(group);
+    if (!leader || share > leader.share) {
+      leader = row;
+      ties = 1;
+    } else if (share === leader.share) ties++;
+    const range = ranges.get(label);
+    if (!range) ranges.set(label, { low: row, high: row });
+    else if (share < range.low.share) range.low = row;
+    else if (share > range.high.share) range.high = row;
+  }
+  if (groups.size === 1)
+    return { highestShare: leader, numberTiedForHighestShare: ties };
+  let largest = null,
+    gap = 0;
+  for (const { low, high } of ranges.values()) {
+    const delta = high.share - low.share;
+    if (delta > gap) {
+      gap = delta;
+      largest = {
+        label: low.label,
+        lower: low,
+        higher: high,
+        percentagePointGap: 100 * delta,
+      };
+    }
+  }
+  return {
+    groupsCompared: groups.size,
+    largestObservedShareDifference: largest,
+  };
+}

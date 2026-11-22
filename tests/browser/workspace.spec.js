@@ -225,8 +225,8 @@ test("questionnaire labels reach charts and the bot can move, resize and dock", 
   await expect(page.locator("#graphic0")).toContainText("Definitely");
   await expect(page.locator("#graphic0")).toContainText("Would you vote?");
   await page
-    .getByLabel("What would you like to find out?")
-    .selectOption("group");
+    .getByRole("radio", { name: "Compare groups", exact: true })
+    .check();
   await expect(
     page.getByLabel("Which question defines the groups?"),
   ).toBeVisible();
@@ -322,7 +322,9 @@ test("all survey chart families, regression, filters, comparison controls and fi
     await expect(svg).toBeVisible();
   };
   for (const type of ["hist", "dots", "bars", "table"]) await shown(type);
-  await key("task").selectOption("group");
+  await page
+    .locator('[data-panel="0"] input[data-key="task"][value="group"]')
+    .check();
   await key("x").selectOption("c5");
   await key("y").selectOption("c4");
   for (const type of ["bars", "dots", "grid", "stack", "small", "table"])
@@ -331,7 +333,9 @@ test("all survey chart families, regression, filters, comparison controls and fi
   await svg.locator('[data-code="Yes"][data-source="First"]').click();
   await expect(page.locator("dialog")).toContainText("10 records");
   await click("Done");
-  await key("task").selectOption("two");
+  await page
+    .locator('[data-panel="0"] input[data-key="task"][value="two"]')
+    .check();
   await key("x").selectOption("c2");
   await key("y").selectOption("c3");
   await shown("scatter");
@@ -345,7 +349,9 @@ test("all survey chart families, regression, filters, comparison controls and fi
     await page.getByText("Filters and appearance", { exact: true }).click();
   await key("value").selectOption("First");
   await expect(svg).toContainText("10 paired");
-  await key("task").selectOption("model");
+  await page
+    .locator('[data-panel="0"] input[data-key="task"][value="model"]')
+    .check();
   await key("outcome").selectOption("c3");
   await page.locator('[data-predictor="c2"]').check();
   await expect(svg).toContainText("Linear regression");
@@ -802,13 +808,11 @@ test("uncoded interview uses a reviewed PDF codebook and only approved labels", 
   await btn("Read and code passages").click();
   await page.locator("input[name=pickp]").first().check();
   await page.locator("#coding-method").selectOption("deductive");
-  await page
-    .locator("#book-file")
-    .setInputFiles({
-      name: "codebook.pdf",
-      mimeType: "application/pdf",
-      buffer: pdf,
-    });
+  await page.locator("#book-file").setInputFiles({
+    name: "codebook.pdf",
+    mimeType: "application/pdf",
+    buffer: pdf,
+  });
   await btn("Extract labels").click();
   await expect(page.locator("[data-label]")).toHaveValue("Work conflict");
   await expect(page.locator("#suggestpass")).toBeDisabled();
@@ -832,4 +836,116 @@ test("uncoded interview uses a reviewed PDF codebook and only approved labels", 
     [],
   ]);
   expect(saved.datasets[0].coding.book[0].label).toBe("Shift conflict");
+});
+
+test("the bot works on the selected panel, drafts a caption and compares both without resetting the right view", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  const calls = [];
+  await page.route("https://tutor.example.test/ask", (route) => {
+    const { context } = route.request().postDataJSON();
+    calls.push(context);
+    const answer =
+      context.requestedOutput === "variant"
+        ? {
+            action: "restyleChart",
+            panel: "right",
+            chart: "table",
+            explanation: "Read exact counts.",
+          }
+        : context.requestedOutput === "caption"
+          ? {
+              action: "caption",
+              explanation: "Two of four students answered Yes.",
+            }
+          : {
+              action: "answer",
+              explanation: "Compare counts within the same sample.",
+            };
+    return route.fulfill({ json: { answer: JSON.stringify(answer) } });
+  });
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "tiny.csv",
+    "Vote,Year\nYes,First\nNo,First\nNo,Second\nYes,Second",
+  );
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Continue").click();
+  await btn("Confirm and explore").click();
+  await btn("Compare").click();
+  await expect(page.getByRole("heading", { name: "Left view" })).toBeVisible();
+  await page.getByText("Change right view", { exact: true }).click();
+  await page
+    .locator('[data-panel="1"] [data-key=x]')
+    .selectOption({ label: "Year" });
+  await page.locator('[data-panel="0"] [data-act=askview]').click();
+  await expect(page.locator(".chatlog")).toContainText("Compare counts");
+  expect(calls[0].focus).toBe("left");
+  expect(calls[0].views.map((v) => v.selectedQuestions)).toEqual(["Vote"]);
+  await btn("Try another chart").click();
+  await expect(page.locator('[data-panel="0"] [data-key=chart]')).toHaveValue(
+    "table",
+  );
+  await expect(page.locator('[data-panel="1"] [data-key=chart]')).toHaveValue(
+    "dots",
+  );
+  await btn("Draft a caption").click();
+  await btn("Add caption to figure").click();
+  await expect(page.locator("#graphic0")).toContainText("Two of four students");
+  await page.locator("#bot-focus").selectOption("both");
+  await page
+    .locator("#data-bot")
+    .getByRole("button", { name: "Compare findings", exact: true })
+    .click();
+  await expect.poll(() => calls.at(-1)?.requestedOutput).toBe("compare");
+  expect(calls.at(-1).views.map((v) => v.selectedQuestions)).toEqual([
+    "Vote",
+    "Year",
+  ]);
+  await page.locator("[data-act=closebot]").click();
+  await btn("Explore").click();
+  await btn("Compare two views").click();
+  await expect(page.locator("#graphic1")).toContainText("Year");
+  await expect(page.locator("#graphic0")).toContainText("Two of four students");
+});
+
+test("discussing interview passages uses only the checked text and the student can clear it", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  let received;
+  await page.route("https://tutor.example.test/ask", (route) => {
+    received = route.request().postDataJSON().context;
+    return route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          action: "answer",
+          explanation: "The participant describes a late shift.",
+        }),
+      },
+    });
+  });
+  await upload(
+    page,
+    /Written responses or documents/,
+    "Interview A.txt",
+    "I worked a late shift.\nI play tennis.",
+  );
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Confirm and explore").click();
+  await btn("Read and code passages").click();
+  await page.locator("input[name=pickp]").first().check();
+  await btn("Discuss selected passages").click();
+  await expect(page.locator(".chatlog")).toContainText("late shift");
+  expect(received.requestedOutput).toBe("excerpts");
+  expect(received.passages.map((p) => p.text)).toEqual([
+    "I worked a late shift.",
+  ]);
+  expect(JSON.stringify(received)).not.toContain("I play tennis.");
+  await btn("Clear included text").click();
+  await btn("Explain the pattern").click();
+  await expect.poll(() => received.requestedOutput).toBe("explain");
+  expect(received.passages).toEqual([]);
 });

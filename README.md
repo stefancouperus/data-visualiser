@@ -12,6 +12,8 @@ Visualising and interpreting your survey or interview data.
 4. **Compare.** Put two views alongside each other and choose whether to link filters. Coded passages, sources and respondents have distinct counting units. Open the underlying evidence before interpreting differences.
 5. **Save and export.** Download an editable project with data, save it in this browser or export chart settings. Settings-only downloads require matching imports and omit passage text and source data. Use a full project to retain coding changes between workshops. Export either panel or the pair as SVG or PNG, or copy a figure.
 
+Explore offers question-based choices. Compare opens two labelled figures with independent editing controls and retains the right-hand view when you revisit it. The Data bot can use the left figure, the right figure or both. Use its shortcuts to explain the current pattern, draw a different chart of the same selection or draft a caption for review.
+
 In Explore or Compare, choose **Figure style** above a chart to preview Workshop, Research report, Policy brief or Presentation on your data. Each panel has its own style and greyscale setting. Policy brief can highlight a category or group where the chart supports it. Figure exports and saved projects keep these choices.
 
 Use **Download project with data** for a portable JSON file. On the start page, choose **Open a saved project** or drop the file there. The full project includes a dataset-specific bot activity record. Tick **Include full Data bot conversations** to save the questions and replies as well. Settings-only exports omit both. Older project downloads still open.
