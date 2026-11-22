@@ -8,6 +8,11 @@ import {
 } from "./import.js";
 import { esc } from "./chart.js";
 import { askForm, formselect, table, val } from "./ui.js";
+import {
+  indicatorColumns,
+  bindIndicatorColumns,
+  readIndicators,
+} from "./indicator-ui.js";
 export function taguette(doc) {
   const merged = doc.paragraphs.join("\n"),
     matches = [
@@ -55,13 +60,13 @@ async function sheet(doc, route) {
   if (route !== "coded" && route !== "text") return choice;
   const fields = choice.fields.map((f) => [f.id, f.label]),
     guess = (re) => choice.fields.find((f) => re.test(f.label))?.id || "";
-  const map = await askForm(
+  const pendingMap = askForm(
     "Which columns contain your material?",
     table(
       choice.fields.map((f) => f.label),
       choice.rows.slice(0, 3).map(Object.values),
     ) +
-      `<div class="formgrid">${formselect("passage", "Passage or written answer", fields, guess(/text|excerpt|content|passage|highlight/i))}${formselect("source", "Interview or source", [["", "Use filename"], ...fields], guess(/source|document|interview/i))}${route === "coded" ? formselect("codes", "Code or tags", [["", "Separate yes/no columns"], ...fields], guess(/codes?|tags?/i)) : ""}${formselect("pid", "Passage ID (if repeated)", [["", "Each row is a passage"], ...fields], guess(/highlight.?id|passage.?id/i))}<label>Separator between codes<input id="sep" value="${/tags/i.test(choice.fields.map((f) => f.label).join(" ")) ? "," : ";"}"></label></div>${route === "coded" ? "<details><summary>Separate yes/no code columns</summary>" + choice.fields.map((f) => `<label class="tick"><input type="checkbox" name="codecol" value="${f.id}">${esc(f.label)}</label>`).join("") + "</details>" : ""}`,
+      `<div class="formgrid">${formselect("passage", "Passage or written answer", fields, guess(/text|excerpt|content|passage|highlight/i))}${formselect("source", "Interview or source", [["", "Use filename"], ...fields], guess(/source|document|interview/i))}${route === "coded" ? formselect("codes", "Code or tags", [["", "Separate yes/no columns"], ...fields], guess(/codes?|tags?/i)) : ""}${formselect("pid", "Passage ID (if repeated)", [["", "Each row is a passage"], ...fields], guess(/highlight.?id|passage.?id/i))}${route === "coded" ? '<label>Separator between codes<input id="sep"><small>Leave blank for one code per cell.</small></label>' : ""}</div>${route === "coded" ? "<details><summary>Separate yes/no code columns</summary>" + indicatorColumns(choice.fields, "codecol") + "</details>" : ""}`,
     () => {
       const m = {
         text: val("passage"),
@@ -71,11 +76,8 @@ async function sheet(doc, route) {
         separator: val("sep"),
       };
       if (route === "coded" && !m.codes) {
-        m.columns = choice.fields.filter((f) =>
-          document.querySelector(
-            `input[name=codecol][value="${f.id}"]:checked`,
-          ),
-        );
+        m.markers = readIndicators(choice.fields, "codecol");
+        m.columns = choice.fields.filter((f) => m.markers.has(f.id));
         if (!m.columns.length)
           throw Error("Select a code column or tick its yes/no columns.");
       }
@@ -84,6 +86,21 @@ async function sheet(doc, route) {
       return m;
     },
   );
+  if (route === "coded") {
+    const codes = document.getElementById("codes"),
+      sep = document.getElementById("sep");
+    const suggestSeparator = () => {
+      const values = choice.rows.map((row) => row[codes.value] || "");
+      const separators = [";", "|", ","].filter((delimiter) =>
+        values.some((value) => value.includes(delimiter)),
+      );
+      sep.value = separators.length === 1 ? separators[0] : "";
+    };
+    codes.addEventListener("change", suggestSeparator);
+    suggestSeparator();
+  }
+  bindIndicatorColumns(choice, "codecol");
+  const map = await pendingMap;
   if (!map) return null;
   const { passages, sources } = codedSheet(choice, map);
   return corpus(choice.name, passages, sources);

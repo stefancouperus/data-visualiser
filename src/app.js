@@ -1,4 +1,9 @@
 import "./style.css";
+import {
+  indicatorColumns,
+  bindIndicatorColumns,
+  readIndicators,
+} from "./indicator-ui.js";
 import { codingGuide, checkedSuggestions } from "./coding.js";
 import { codingControls, bindCodingControls } from "./codebook-ui.js";
 import { tutorRecord, projectPackage, previousWork } from "./tutor-history.js";
@@ -1619,17 +1624,11 @@ async function reviewAction(act, d, el) {
   if (act === "multi") {
     modal(
       "Combine select-all-that-apply columns",
-      `<label>Question label<input id="multiTitle" required></label><p>Choose one column for each possible answer. A non-empty value marks a selection. Set the unselected value if your export uses one.</p><label>Unselected value<input id="emptyVal" value="0"></label>` +
-        fields
-          .map(
-            (f) =>
-              `<label class="tick"><input name="mf" type="checkbox" value="${f.id}">${esc(f.label)}</label>`,
-          )
-          .join(""),
+      '<label>Question label<input id="multiTitle" required></label><p>Choose the columns for this question and check which values mark a selected answer. Blank cells count as unselected.</p>' +
+        indicatorColumns(fields, "mf"),
       () => {
-        const items = fields.filter((f) =>
-          document.querySelector(`input[name=mf][value="${f.id}"]:checked`),
-        );
+        const markers = readIndicators(fields, "mf");
+        const items = fields.filter((f) => markers.has(f.id));
         if (items.length < 2)
           throw Error("Choose at least two answer columns.");
         const id = "m" + uid(),
@@ -1645,13 +1644,14 @@ async function reviewAction(act, d, el) {
         d.rows.forEach(
           (r) =>
             (r[id] = items
-              .filter((f) => r[f.id] && r[f.id] !== val("emptyVal"))
+              .filter((f) => markers.get(f.id).has(r[f.id]))
               .map((f) => f.label)
               .join(" | ")),
         );
         render();
       },
     );
+    bindIndicatorColumns(d, "mf");
     return;
   }
   if (act === "link") {
@@ -2146,7 +2146,7 @@ async function action(act, el) {
         const replace = !project.confirmed.includes(d.id) && !d.rules.length;
         modal(
           "Check the questionnaire labels",
-          `<p>${result.matched} question headings matched. Answer codes could be translated for ${result.decoded} questions.</p>` +
+          `<p>${result.matched} question headings matched. Answer categories matched the questionnaire for ${result.decoded} questions.</p>` +
             table(["Question", "Example answers"], result.samples) +
             (replace
               ? ""

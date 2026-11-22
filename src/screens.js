@@ -61,7 +61,7 @@ export function check(d) {
       .filter((f) => f.type !== "metadata" && f.levels.length > 0)
       .slice(0, 3)
       .map((f) => [f.label, f.levels.slice(0, 3).join(" · ")]),
-  )}${"<details><summary>Seeing question codes or numbers instead of answer text?</summary><p>Use a Qualtrics export with choice text, or add the questionnaire (.qsf) that belongs to this export. Measurements such as age stay numerical.</p>" + b("surveylabels", "Add questionnaire labels") + "</details>"}<details><summary>Review fields and import settings</summary>${d.fields.map((f) => `<details class="check-item"><summary>${esc(f.label)} <small> · ${esc(f.type)}</small></summary><p>Original column: ${esc(f.raw)}. Example values: ${esc(f.levels.slice(0, 5).join(" · "))}</p>${b("field", "Edit field", "", 'data-field="' + f.id + '"')}</details>`).join("")}<div class="bar">${b("combinetables", "Combine with another table")}${b("exclude", "Exclude records by value")}${b("multi", "Group multiple-answer columns")}${b("tocorpus", "Use a column as written responses")}</div>${d.rules.map((r, i) => `<p>Exclude ${esc(d.fields.find((f) => f.id === r.field)?.label)} = ${esc(r.value)} ${b("delrule", "Remove", "plain", 'data-i="' + i + '"')}</p>`).join("")}</details></section>`;
+  )}${"<details><summary>Seeing question codes or numbers instead of answer text?</summary><p>Use a Qualtrics export with choice text, or add the questionnaire (.qsf) that belongs to this export.</p>" + b("surveylabels", "Add questionnaire labels") + "</details>"}<details><summary>Review fields and import settings</summary>${d.fields.map((f) => `<details class="check-item"><summary>${esc(f.label)} <small> · ${esc(f.type)}</small></summary><p>Original column: ${esc(f.raw)}. Example values: ${esc(f.levels.slice(0, 5).join(" · "))}</p>${b("field", "Edit field", "", 'data-field="' + f.id + '"')}</details>`).join("")}<div class="bar">${b("combinetables", "Combine with another table")}${b("exclude", "Exclude records by value")}${b("multi", "Group multiple-answer columns")}${b("tocorpus", "Use a column as written responses")}</div>${d.rules.map((r, i) => `<p>Exclude ${esc(d.fields.find((f) => f.id === r.field)?.label)} = ${esc(r.value)} ${b("delrule", "Remove", "plain", 'data-i="' + i + '"')}</p>`).join("")}</details></section>`;
 }
 export function available(d, v) {
   if (v.task === "patterns")
@@ -246,7 +246,7 @@ export function panel(d, v, i, comparing = false) {
   return `<section class="plotcard ${comparing ? "comparison-card" : "explore-card"}" data-panel="${i}">${comparing ? `<div class="view-heading"><h2>${side} view</h2><span>${esc(kinds[v.chart])}</span></div><details data-chart-options="edit-${i}"><summary>Change ${side.toLowerCase()} view</summary>` : ""}
   <fieldset class="goal-picker"><legend>What would you like to find out?</legend><div>${goals}</div></fieldset>
   <div class="selection-tools"><div class="formgrid">${setup}${second}</div>
-  ${v.task === "model" ? "<p>Regression estimates how each factor relates to your chosen result while holding the other selected factors constant. For example, does the link between age and voting persist when you account for education?</p>" : ""}
+  ${v.task === "model" ? "<p>Choose the result you want to understand and the factors to compare. Regression estimates how each factor relates to that result while holding the other selected factors constant.</p>" : ""}
   ${
     v.task === "model"
       ? `<fieldset class="wide"><legend>Which factors might help explain this result?</legend>${fields

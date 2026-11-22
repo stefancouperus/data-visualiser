@@ -1157,3 +1157,37 @@ test("a group suggestion explains the comparison, keeps the figure until consent
   await expect(page.getByLabel("Compare by group")).toHaveValue("c2");
   await expect(btn("Make this chart")).toHaveCount(0);
 });
+
+test("spreadsheet interviews apply only marker values confirmed for each project column", async ({
+  page,
+}) => {
+  await upload(
+    page,
+    /I have coded interviews/,
+    "repairs.tsv",
+    "Interview\tPassage\tSupply delay\tFault located\nBench A\tOrder pending\tPENDING\tCLEARED\nBench B\tProblem found\tCLEARED\tFOUND",
+  );
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Continue").click();
+  await page.getByText("Separate yes/no code columns", { exact: true }).click();
+  await page.getByLabel("Supply delay", { exact: true }).check();
+  await page.getByLabel("Fault located", { exact: true }).check();
+  await btn("Continue").click();
+  await expect(page.locator("#formerror")).toContainText("Supply delay");
+  await page.getByLabel("PENDING", { exact: true }).check();
+  await page.getByLabel("FOUND", { exact: true }).check();
+  await btn("Continue").click();
+  const rows = page.locator("main table tr");
+  await expect(rows.filter({ hasText: "Order pending" })).toContainText(
+    "Supply delay",
+  );
+  await expect(rows.filter({ hasText: "Order pending" })).not.toContainText(
+    "Fault located",
+  );
+  await expect(rows.filter({ hasText: "Problem found" })).toContainText(
+    "Fault located",
+  );
+  await expect(rows.filter({ hasText: "Problem found" })).not.toContainText(
+    "Supply delay",
+  );
+});

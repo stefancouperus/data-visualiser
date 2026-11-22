@@ -34,7 +34,6 @@ export function newView(d) {
         fields.find(
           (f) =>
             f.levels.length > 1 &&
-            !/^(consent|intro)$/i.test(f.raw) &&
             ["category", "ordered", "number"].includes(f.type),
         )) ||
       fields[0] ||

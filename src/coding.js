@@ -102,3 +102,32 @@ export function bookEntries(rows) {
     return { label, definition };
   });
 }
+
+// A model-extracted deductive label must occur as a complete label or phrase
+// in the uploaded material. PDF line breaks and equivalent Unicode are common.
+export function labelsInCodebook(entries, source) {
+  const normalise = (value) =>
+    value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  const document = normalise(source);
+  return entries.filter(({ label }) => {
+    const term = normalise(label);
+    if (!term) return false;
+    let at = document.indexOf(term);
+    while (at !== -1) {
+      const end = at + term.length;
+      if (
+        !(
+          /[\p{L}\p{N}]$/u.test(document.slice(0, at)) &&
+          /^[\p{L}\p{N}]/u.test(term)
+        ) &&
+        !(
+          /[\p{L}\p{N}]$/u.test(term) &&
+          /^[\p{L}\p{N}]/u.test(document.slice(end))
+        )
+      )
+        return true;
+      at = document.indexOf(term, at + 1);
+    }
+    return false;
+  });
+}

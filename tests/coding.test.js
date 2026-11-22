@@ -80,3 +80,18 @@ test("inductive proposals respect the passage, batch and cross-batch limits whil
     0,
   );
 });
+
+test("deductive extraction retains complete labels evidenced in the project's codebook", async () => {
+  const { labelsInCodebook } = await import("../src/coding.js");
+  const entries = ["Spare parts", "Duty", "Part", "Depot"].map((label) => ({
+    label,
+    definition: "",
+  }));
+  assert.deepEqual(
+    labelsInCodebook(
+      entries,
+      "Spare\nparts — availability\nDepot — location\nPartial refunds",
+    ).map((e) => e.label),
+    ["Spare parts", "Depot"],
+  );
+});

@@ -1,6 +1,6 @@
 import { esc } from "./chart.js";
 import { readFile } from "./import.js";
-import { bookEntries, codingLimits } from "./coding.js";
+import { bookEntries, codingLimits, labelsInCodebook } from "./coding.js";
 import { formselect, get, val } from "./ui.js";
 
 async function fileText(file) {
@@ -159,10 +159,16 @@ export function bindCodingControls(d, extract, onApprove) {
         )
       )
         throw Error("The bot returned an unreadable codebook. Try again.");
-      status.textContent = entries.length
-        ? entries.length + " draft labels to check."
-        : "The bot identified no labels. Check the source and add the labels you use.";
-      review(entries, documentText);
+      const grounded = labelsInCodebook(entries, documentText);
+      const omitted = entries.length - grounded.length;
+      status.textContent =
+        (grounded.length
+          ? grounded.length + " draft labels to check."
+          : "Check the source text and add any missing labels.") +
+        (omitted
+          ? " Some suggested labels could not be found in the uploaded text and were left out."
+          : "");
+      review(grounded, documentText);
     } catch (error) {
       if (draft.isConnected) status.textContent = error.message;
     } finally {

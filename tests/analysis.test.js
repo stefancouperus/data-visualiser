@@ -445,3 +445,48 @@ test("a group without any selected codes still counts towards the none combinati
     assert.equal(row.den, 1);
   }
 });
+
+test("each new project's response categories come from its own rows or matched questionnaire", async () => {
+  const { labelledSurvey } = await import("../src/survey-labels.js");
+  const raw = makeTable(
+    [["Q1"], ["Agree"], ["Strongly disagree"], ["Disagree"]],
+    "Project A",
+  );
+  assert.deepEqual(raw.fields[0].levels, [
+    "Agree",
+    "Strongly disagree",
+    "Disagree",
+  ]);
+  assert.equal(raw.fields[0].type, "category");
+  const survey = makeTable([["Q1"], ["Removed"], ["Refilled"]], "Inventory");
+  const qsf = {
+    SurveyElements: [
+      {
+        Element: "SQ",
+        Payload: {
+          QuestionID: "Q1",
+          QuestionText: "Service action",
+          QuestionType: "MC",
+          Selector: "SAVR",
+          Choices: {
+            1: { Display: "Removed" },
+            2: { Display: "Refilled" },
+            3: { Display: "New" },
+          },
+          ChoiceOrder: [2, 3, 1],
+        },
+      },
+    ],
+  };
+  const labelled = labelledSurvey(survey, qsf).copy;
+  assert.deepEqual(labelled.fields[0].levels, ["Refilled", "Removed"]);
+  assert.deepEqual(labelled.rows, survey.rows);
+  const reopened = reattach(
+    settingsProject({ ...fresh(), datasets: [labelled] }),
+    [survey],
+  );
+  assert.deepEqual(reopened.datasets[0].fields[0].levels, [
+    "Refilled",
+    "Removed",
+  ]);
+});

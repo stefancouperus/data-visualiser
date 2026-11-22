@@ -29,17 +29,18 @@ function wording(value) {
 
 export function applyAnswerLabels(table, field, entries) {
   const lookup = new Map(entries);
-  const values = table.rows.map((row) => row[field.id]).filter(Boolean);
-  if (!values.length || !values.every((value) => lookup.has(value)))
-    return false;
-  for (const row of table.rows) {
-    if (lookup.has(row[field.id])) row[field.id] = lookup.get(row[field.id]);
-  }
-  field.levels = [
-    ...new Set(
-      entries.filter(([key]) => values.includes(key)).map(([, label]) => label),
-    ),
-  ];
+  const values = new Set(
+    table.rows.map((row) => row[field.id]).filter(Boolean),
+  );
+  if (!values.size) return false;
+  const labels = new Set(lookup.values());
+  if ([...values].every((value) => lookup.has(value))) {
+    for (const row of table.rows) {
+      if (lookup.has(row[field.id])) row[field.id] = lookup.get(row[field.id]);
+    }
+  } else if (![...values].every((value) => labels.has(value))) return false;
+  const observed = new Set(table.rows.map((row) => row[field.id]));
+  field.levels = [...labels].filter((label) => observed.has(label));
   field.answerLabels = entries;
   field.type = "category";
   return true;
@@ -104,8 +105,9 @@ export function labelledSurvey(table, definition) {
         new Set(entries.map(([, text]) => text)).size === entries.length &&
         !entries.some(([, text]) => /^[-+]?\d+(\.\d+)?$/.test(text)) &&
         applyAnswerLabels(copy, field, entries)
-      )
+      ) {
         decoded++;
+      }
     }
     if (field.levels.length && samples.length < 4)
       samples.push([field.label, field.levels.slice(0, 3).join(" · ")]);

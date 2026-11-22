@@ -107,8 +107,20 @@ export function directComparison(fields, question) {
     };
   }
   if (first[0].id === second[0].id) return null;
+  const namedByChoices = (field, phrase) => {
+    const words = tokens(phrase);
+    const choices = answerWords(field);
+    return (
+      words.length &&
+      words.every((word) => choices.has(word)) &&
+      !words.every((word) => tokens(field.label).includes(word))
+    );
+  };
   const firstIsGroup =
-    second[0].type === "ordered" && first[0].type !== "ordered";
+    (second[0].type === "ordered" && first[0].type !== "ordered") ||
+    (first[0].type === second[0].type &&
+      namedByChoices(first[0], pair[1]) &&
+      !namedByChoices(second[0], pair[2]));
   const [outcome, group] = firstIsGroup
     ? [second[0], first[0]]
     : [first[0], second[0]];

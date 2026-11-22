@@ -6,22 +6,6 @@ const str = (x) => (x == null ? "" : String(x));
 const unique = (xs) => [...new Set(xs)];
 const meta =
   /^(StartDate|EndDate|Status|IPAddress|Progress|Duration \(in seconds\)|Finished|RecordedDate|ResponseId|Recipient.*|ExternalReference|LocationLatitude|LocationLongitude|DistributionChannel|UserLanguage|Q_Language|LocationFirstSeen|LocationLastSeen|Last Seen Flow Element ID|Last Seen Question IDs|ExternalDataReference)$/i;
-const likert = [
-  [
-    "strongly disagree",
-    "disagree",
-    "neither agree nor disagree",
-    "agree",
-    "strongly agree",
-  ],
-  [
-    "not at all important",
-    "slightly important",
-    "moderately important",
-    "important",
-    "very important",
-  ],
-];
 export function qualtricsHeaders(rows) {
   if (rows[2]?.some((v) => /"ImportId"\s*:/.test(str(v)))) return 3;
   const pairs = [
@@ -69,37 +53,22 @@ export function makeTable(grid, name) {
       const numeric =
         values.length &&
         values.every((x) => /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(x));
-      const order = likert.find(
-        (scale) =>
-          levels.length > 1 &&
-          levels.every((x) => scale.includes(x.toLowerCase())),
-      );
       const type =
         meta.test(raw) && qual
           ? "metadata"
-          : order
-            ? "ordered"
-            : numeric
-              ? "number"
-              : values.length && values.every((x) => /^\d{4}-\d\d-\d\d/.test(x))
-                ? "date"
-                : levels.some((x) => x.length > 85)
-                  ? "text"
-                  : "category";
+          : numeric
+            ? "number"
+            : values.length && values.every((x) => /^\d{4}-\d\d-\d\d/.test(x))
+              ? "date"
+              : levels.some((x) => x.length > 85)
+                ? "text"
+                : "category";
       return {
         id: "c" + i,
         raw,
         label,
         type,
-        levels: order
-          ? levels
-              .slice()
-              .sort(
-                (a, b) =>
-                  order.indexOf(a.toLowerCase()) -
-                  order.indexOf(b.toLowerCase()),
-              )
-          : levels,
+        levels,
       };
     },
   );
@@ -298,15 +267,12 @@ export function codedSheet(table, map) {
       );
     const codes = map.columns
       ? map.columns
-          .filter(
-            (f) =>
-              !["", "0", "false", "no"].includes(
-                str(r[f.id]).trim().toLowerCase(),
-              ),
-          )
+          .filter((f) => map.markers.get(f.id).has(r[f.id]))
           .map((f) => f.label)
-      : (r[map.codes] || "")
-          .split(map.separator || ";")
+      : (map.separator === ""
+          ? [r[map.codes] || ""]
+          : (r[map.codes] || "").split(map.separator ?? ";")
+        )
           .map((s) => s.trim())
           .filter(Boolean);
     p.codes = unique([...p.codes, ...codes]);
