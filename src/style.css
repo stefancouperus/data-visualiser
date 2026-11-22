@@ -170,6 +170,17 @@ aside.rail {
   border-top: 1px solid var(--line);
   padding-top: 12px;
 }
+.app-version {
+  display: block;
+  margin: 4px 0 0 12px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+.compact .app-version {
+  margin-left: 0;
+  text-align: center;
+}
 .compact .rail span {
   display: none;
 }
