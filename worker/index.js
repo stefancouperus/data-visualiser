@@ -6,7 +6,9 @@ import imports from "./skills/import.md";
 import regression from "./skills/regression.md";
 import recommend from "./skills/recommend.md";
 import research from "./skills/research.md";
+import variables from "./skills/variables.md";
 const skills = {
+  variables,
   research,
   charts,
   coding,
@@ -150,7 +152,7 @@ export default {
               max_tokens:
                 data.skill === "codebook"
                   ? 6000
-                  : data.skill === "coding"
+                  : ["coding", "variables"].includes(data.skill)
                     ? 2400
                     : 950,
             }),

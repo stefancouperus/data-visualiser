@@ -1,3 +1,4 @@
+import { confirmedRoles, editRoles } from "./variable-roles.js";
 import { termHelp, bindTermHelp, termMeaning } from "./term-help.js";
 import "./style.css";
 import {
@@ -174,6 +175,46 @@ let undoViews = [],
   scope = [],
   suggestions = [],
   lastQuestion = "";
+const pendingSelections = new Map();
+let selectionConfirmed = false;
+const selectionKeys = [
+  "task",
+  "x",
+  "y",
+  "outcome",
+  "positive",
+  "predictors",
+  "interaction",
+  "items",
+  "patternMode",
+  "groupBy",
+  "themeUnit",
+];
+function beginSelection(i) {
+  const base = structuredClone(project.views[i]);
+  pendingSelections.set(i, { base, view: structuredClone(base) });
+}
+function commitSelection(i) {
+  const draft = pendingSelections.get(i);
+  if (!draft) return;
+  const current = project.views[i];
+  const changed = selectionKeys.filter(
+    (k) => JSON.stringify(draft.base[k]) !== JSON.stringify(draft.view[k]),
+  );
+  if (changed.length) {
+    const next = { ...current };
+    for (const k of [...changed, "chart"]) next[k] = draft.view[k];
+    next.title = next.annotation = "";
+    delete next.highlight;
+    if (!available(getData(), next).includes(next.chart))
+      next.chart = available(getData(), next)[0];
+    summary(i, next);
+    snapshotViews();
+    project.views[i] = next;
+    proposal = captionDraft = queuedShortcut = null;
+  }
+  beginSelection(i);
+}
 const getData = () => project.datasets.find((d) => d.id === project.active);
 const resetTutor = () => {
   botFocus = "left";
@@ -188,6 +229,8 @@ const resetTutor = () => {
   lastQuestion = "";
 };
 function activate(id) {
+  pendingSelections.clear();
+  selectionConfirmed = false;
   undoViews = [];
   project.active = id;
   project.comparisonStarted = false;
@@ -203,7 +246,7 @@ const modeNames = [
 const botURL = (import.meta.env.VITE_BOT_URL || "").replace(/\/$/, "");
 function projectFocusControls() {
   const focus = project.researchFocus;
-  return `<div class="bot-selection"><strong>Research question</strong>${focus ? "<details><summary>View saved focus</summary><p>" + esc(focus) + "</p></details>" : "<small>Tell the bot what you want to find out for suggestions that fit your project.</small>"}<div class="bar">${b("editfocus", focus ? "Edit project focus" : "Tell the bot about your project")}${focus && [2, 3].includes(step) ? b("researchsuggest", "Suggest what to explore", "primary") : ""}</div></div>`;
+  return `<div class="bot-selection"><strong>Research question</strong>${focus ? "<details><summary>View saved focus</summary><p>" + esc(focus) + "</p></details>" : "<small>Tell the bot what you want to find out for suggestions that fit your project.</small>"}<div class="bar">${b("editfocus", focus ? "Edit project focus" : "Tell the bot about your project")}${getData()?.kind === "table" ? b("variables", "Identify question roles") : ""}${focus && [2, 3].includes(step) ? b("researchsuggest", "Suggest what to explore", "primary") : ""}</div></div>`;
 }
 function editProjectFocus(draft) {
   modal(
@@ -232,7 +275,7 @@ function botBox() {
           .activity.map((note) => "<li>" + esc(note) + "</li>")
           .join("")}</ul></details>`
       : ""
-  }<div class="chatlog">${history.map((t) => `<div class="msg"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`).join("")}</div>${requesting ? `<p role="status">${checkingGroups ? "Checking possible groups in your selection…" : "Waiting for the university model…"}</p>` : ""}
+  }<div class="chatlog">${history.map((t) => `<div class="msg ${t.role === "user" ? "msg-user" : "msg-assistant"}"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`).join("")}</div>${requesting ? `<p role="status">${checkingGroups ? "Checking possible groups in your selection…" : "Waiting for the university model…"}</p>` : ""}
  ${proposal ? b("botdraw", "Make this chart", "primary") + (proposal.groupSuggestion ? b("declinegroups", "No thanks", "plain") : "") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
  ${captionDraft ? b("applycaption", "Add caption to figure") : ""}${botWorkspaceControls()}<label>Ask about your project<textarea id="question" maxlength="4000" placeholder="${getData()?.kind === "text" ? "Which of these themes come up in the same passage?" : "Show me which answers people gave together…"}">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></div><div class="botsize" data-window-handle="resize" title="Drag to resize"></div></section>`;
 }
@@ -249,15 +292,33 @@ function render() {
       "Compare two views",
       "Save and export",
     ];
+  const roleButton =
+    d?.kind === "table"
+      ? b(
+          "variables",
+          confirmedRoles(d).length
+            ? "Review question roles"
+            : "Choose question roles",
+        )
+      : "";
   let content = step === 0 ? landing(!!localStorage.getItem("dv-project")) : "";
   if (step !== 0 && d) {
     content = `<div class="hero"><h1>${headers[step]}</h1></div>${datasetSelect(project)}`;
     if (step === 1)
-      content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (d.kind === "text" ? "coded" : "table") + '"')}</div>${check(d)}<div class="bar">${b("confirm", "Confirm and explore", "primary")}</div>`;
+      content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (d.kind === "text" ? "coded" : "table") + '"')}</div>${check(d)}${roleButton ? `<section class="card"><h2>Which questions help answer your research question?</h2><p>Identify the outcome, groups and possible explanations. You can ask the bot for suggestions.</p>${roleButton}</section>` : ""}<div class="bar">${b("confirm", "Confirm and explore", "primary")}</div>`;
     else if (step === 2 || step === 3)
-      content += `<div class="bar">${step === 2 ? b("compare", "Compare two views", "primary") : b("savecompare", "Save comparison", "primary")}${step === 2 ? b("choose", icon("bot") + " Suggest a chart") : b("askboth", icon("bot") + " Compare findings")}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
+      content += `<div class="bar">${step === 2 ? b("compare", "Compare two views", "primary") : b("savecompare", "Save comparison", "primary")}${step === 2 ? b("choose", icon("bot") + " Suggest a chart") : b("askboth", icon("bot") + " Compare findings")}${roleButton}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
         .slice(0, step === 3 ? 2 : 1)
-        .map((v, i) => panel(d, v, i, step === 3))
+        .map((v, i) =>
+          panel(
+            d,
+            v,
+            i,
+            step === 3,
+            pendingSelections.get(i)?.view,
+            selectionConfirmed && step === 2 ? viewName(d, v) : "",
+          ),
+        )
         .join(
           "",
         )}</div> ${undoViews.length ? b("undo", "Undo view change", "plain") : ""}<div id="hint"></div>`;
@@ -504,6 +565,8 @@ function goto(i) {
     Object.assign(project.views[1], { filter, value });
   }
   if (step !== i) {
+    pendingSelections.clear();
+    selectionConfirmed = false;
     focusBot(i === 3 ? "both" : "left");
     proposal = null;
     captionDraft = null;
@@ -514,6 +577,8 @@ function goto(i) {
   window.scrollTo(0, 0);
 }
 function setProject(p) {
+  pendingSelections.clear();
+  selectionConfirmed = false;
   project = verifyProject(p);
   project.comparisonStarted ??=
     project.figurePanels === "both" ||
@@ -595,6 +660,8 @@ function botContext(question = "") {
     return { step: "Upload", projectFocus: project.researchFocus || undefined };
   const basic = {
     projectFocus: project.researchFocus || undefined,
+    confirmedQuestionRoles: confirmedRoles(d),
+    proposedExplanation: d.explanation || undefined,
     pastProjectWork: previousWork(tutorRecord(project), question),
     stage: steps[step],
     dataset: d.name,
@@ -875,6 +942,7 @@ function applyProposal(explanation) {
     );
   }
   snapshotViews();
+  pendingSelections.delete(candidate.panel);
   project.views[candidate.panel] = candidate.view;
   tutorRecord(project).activity.push(
     "Created " +
@@ -2143,6 +2211,103 @@ async function action(act, el) {
     i = Number(el.dataset.i || 0);
   if (reviewActs.includes(act)) return reviewAction(act, d, el);
   switch (act) {
+    case "variables":
+      editRoles(
+        d,
+        project,
+        botURL
+          ? async (context, code) => {
+              if (!sessionStorage.getItem("dv-session")) {
+                if (!code.trim())
+                  throw Error(
+                    "Enter your course code or tick the roles yourself.",
+                  );
+                await unlockBot(code.trim());
+              }
+              return structuredAnswer(
+                await requestTutor({
+                  skill: "variables",
+                  context,
+                  question:
+                    "Suggest question roles for this research question.",
+                }),
+              );
+            }
+          : null,
+        () => {
+          render();
+          notice(
+            "Question roles confirmed. Explore shows them beside the question labels.",
+          );
+        },
+      );
+      return;
+    case "editselection":
+      selectionConfirmed = false;
+      beginSelection(i);
+      render();
+      document.querySelector(`[data-stage-selection="${i}"]`)?.focus();
+      return;
+    case "applyselection":
+      if (!pendingSelections.has(i)) summary(i);
+      commitSelection(i);
+      if (step === 2) selectionConfirmed = true;
+      else
+        document
+          .querySelector(`[data-chart-options="edit-${i}"]`)
+          ?.removeAttribute("open");
+      render();
+      get("figure-heading" + i)?.focus();
+      get("figure-heading" + i)?.scrollIntoView({ block: "center" });
+      notice(
+        "Selection confirmed. Showing " + viewName(d, project.views[i]) + ".",
+      );
+      return;
+    case "discardselection":
+      beginSelection(i);
+      render();
+      notice("Selection reset to the current visual.");
+      return;
+    case "savevisual": {
+      const view = structuredClone(project.views[i]);
+      const result = summary(i, view);
+      modal(
+        "Save visual",
+        `<label>Visual name<input id="visual-name" required maxlength="180" value="${esc((view.title || viewName(d, view)).slice(0, 180))}"></label><p>Open this visual again under Save and export. Download your project to keep it for another session.</p><label class="tick"><input id="visual-svg" type="checkbox">Also download this visual as an SVG image</label>`,
+        () => {
+          const name = val("visual-name").trim();
+          if (!name) throw Error("Give the visual a name.");
+          if (get("visual-svg").checked) {
+            const svg = figure(result, view);
+            const safeName = name.replace(/[<>:"/\\|?*]/g, "-");
+            blobSave(
+              new Blob([new XMLSerializer().serializeToString(svg)], {
+                type: "image/svg+xml;charset=utf-8",
+              }),
+              safeName + ".svg",
+            );
+          }
+          project.savedVisuals.push({ name, dataset: d.id, view });
+          render();
+          notice(
+            "Visual saved in this project. Find it under Save and export.",
+          );
+        },
+        "Save to project",
+      );
+      return;
+    }
+    case "loadvisual": {
+      const saved = project.savedVisuals[i];
+      if (project.active !== saved.dataset) activate(saved.dataset);
+      snapshotViews();
+      pendingSelections.clear();
+      selectionConfirmed = false;
+      project.views[0] = structuredClone(saved.view);
+      proposal = captionDraft = queuedShortcut = null;
+      goto(2);
+      return;
+    }
     case "editfocus":
       editProjectFocus();
       return;
@@ -2166,6 +2331,7 @@ async function action(act, el) {
       return;
     case "undo":
       if (!undoViews.length) throw Error("There are no view changes to undo.");
+      pendingSelections.clear();
       project.views = undoViews.pop();
       break;
     case "addgroups": {
@@ -2239,6 +2405,7 @@ async function action(act, el) {
     }
     case "resetview":
       snapshotViews();
+      pendingSelections.delete(i);
       project.views[i] = newView(d);
       break;
     case "compact":
@@ -2837,9 +3004,23 @@ document.addEventListener("change", (e) => {
   }
   const box = t.closest("[data-panel]");
   if (!box) return;
-  snapshotViews();
-  const i = Number(box.dataset.panel),
-    v = project.views[i];
+  const i = Number(box.dataset.panel);
+  if (t.hasAttribute("data-stage-selection")) {
+    try {
+      if (t.checked) {
+        commitSelection(i);
+        pendingSelections.delete(i);
+      } else beginSelection(i);
+      render();
+    } catch (err) {
+      t.checked = false;
+      notice(err.message);
+    }
+    return;
+  }
+  const draft = t.closest(".selection-editor") && pendingSelections.get(i);
+  if (!draft) snapshotViews();
+  const v = draft ? draft.view : project.views[i];
   if (step === 3) focusBot(i ? "right" : "left");
   queuedShortcut = null;
   proposal = null;

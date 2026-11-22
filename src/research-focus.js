@@ -47,6 +47,13 @@ export function researchCatalogue(d, view, focus, question, keepItems) {
   );
   return {
     projectFocus: focus,
+    proposedExplanation: d.explanation || undefined,
+    confirmedQuestionRoles: d.fields
+      ?.filter(
+        (f) =>
+          Array.isArray(f.roles) && f.roles.length && f.type !== "metadata",
+      )
+      .map(({ id, roles }) => ({ id, roles })),
     datasetKind: text ? "interviews" : "survey or table",
     questions: text ? undefined : chartFields(d.fields, focus + " " + question),
     themes: text

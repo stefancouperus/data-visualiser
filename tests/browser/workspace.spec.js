@@ -175,6 +175,14 @@ test("a recognised two-header survey opens immediately and the tutor draws sugge
   await expect(
     page.getByRole("button", { name: "Make this chart" }),
   ).toBeVisible();
+  await expect(page.locator(".msg-user").last()).toContainText(
+    "How could I compare",
+  );
+  await expect(page.locator(".msg-assistant").last()).toBeVisible();
+  await expect(page.locator(".msg-user p").last()).toHaveCSS(
+    "color",
+    "rgb(255, 255, 255)",
+  );
   await prompt.fill("Yes, show me");
   await send.click();
   await expect(
@@ -1504,5 +1512,95 @@ test("an Excel worksheet with a title, blank cells and zero opens via its chosen
   await page.getByRole("button", { name: "Confirm and explore" }).click();
   await expect(page.locator("#graphic0")).toContainText(
     "2 valid numerical answers of 3 selected records",
+  );
+});
+
+test("review question roles, apply selections and reopen a saved visual", async ({
+  page,
+}) => {
+  await page.route("https://tutor.example.test/ask", async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.skill).toBe("variables");
+    expect(body.context.questions[0]).not.toHaveProperty("levels");
+    const id = (label) =>
+      body.context.questions.find((f) => f.label === label).id;
+    await route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          suggestions: [
+            {
+              id: id("Trust"),
+              roles: ["outcome"],
+              reason: "This measures the attitude in your question.",
+            },
+            {
+              id: id("Year"),
+              roles: ["grouping"],
+              reason: "These are the cohorts you want to compare.",
+            },
+            { id: "unknown", roles: ["outcome"] },
+          ],
+        }),
+      },
+    });
+  });
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "cohorts.csv",
+    "Trust,Year,Contact\nHigh,First,Often\nLow,Second,Rarely\nHigh,Second,Often\nLow,First,Rarely",
+  );
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.evaluate(() => sessionStorage.setItem("dv-session", "test"));
+  await page.getByRole("button", { name: "Choose question roles" }).click();
+  await page
+    .getByLabel("What do you want to find out?")
+    .fill("Does trust differ by year and frequency of contact?");
+  await page
+    .getByRole("button", { name: "Suggest roles from my project" })
+    .click();
+  await expect(
+    page
+      .getByRole("group", { name: "Trust", exact: true })
+      .getByLabel("Outcome"),
+  ).toBeChecked();
+  await page
+    .getByRole("group", { name: "Contact", exact: true })
+    .getByLabel("Explanatory")
+    .check();
+  await page.getByRole("button", { name: "Confirm question roles" }).click();
+  await page.getByRole("button", { name: "Confirm and explore" }).click();
+  const field = page.getByLabel("Choose a question or column");
+  const original = await page.locator("#graphic0").textContent();
+  await page.getByLabel("Update the visual as I select").uncheck();
+  await field.selectOption({ label: "Contact · Explanatory" });
+  await expect(page.locator("#graphic0")).toHaveText(original);
+  await page.getByRole("button", { name: "Apply selection to visual" }).click();
+  await expect(page.locator("#graphic0")).toContainText("Contact");
+  await page.getByRole("button", { name: "Save visual", exact: true }).click();
+  await page.getByLabel("Visual name").fill("Contact distribution");
+  await page.getByLabel("Also download this visual as an SVG image").check();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Save to project" }).click();
+  expect((await download).suggestedFilename()).toBe("Contact distribution.svg");
+  await page
+    .getByRole("button", { name: "Change selection", exact: true })
+    .click();
+  await field.selectOption({ label: "Year · Grouping" });
+  await page.getByRole("button", { name: "Apply selection to visual" }).click();
+  await page
+    .getByRole("button", { name: "Save and export", exact: true })
+    .click();
+  await page.getByText("Other save options", { exact: true }).click();
+  await page.getByRole("button", { name: "Save on this device" }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Resume on this device" }).click();
+  await page
+    .getByRole("button", { name: "Save and export", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Open visual" }).click();
+  await expect(page.locator("#graphic0")).toContainText("Contact");
+  await expect(field.locator("option:checked")).toHaveText(
+    "Contact · Explanatory",
   );
 });

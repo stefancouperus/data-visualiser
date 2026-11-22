@@ -13,6 +13,7 @@ export const fresh = () => ({
   active: "",
   views: [],
   saved: [],
+  savedVisuals: [],
   linked: true,
   confirmed: [],
   mode: "hints",
@@ -53,6 +54,15 @@ export function verifyProject(p) {
     new Set(ids).size !== ids.length ||
     !validViews(p.views) ||
     (p.confirmed !== undefined && !Array.isArray(p.confirmed)) ||
+    (p.savedVisuals !== undefined &&
+      (!Array.isArray(p.savedVisuals) ||
+        p.savedVisuals.some(
+          (s) =>
+            !s ||
+            typeof s.name !== "string" ||
+            !ids.includes(s.dataset) ||
+            !validViews([s.view]),
+        ))) ||
     p.saved.some(
       (s) =>
         !s ||
@@ -110,6 +120,7 @@ export function settingsProject(p) {
           kind: d.kind,
           unit: d.unit,
           rules: d.rules,
+          explanation: d.explanation,
           fields: d.fields.map(({ levels, ...f }) => ({
             ...f,
             levels: f.type === "ordered" ? levels : [],
@@ -156,6 +167,7 @@ export function reattach(settings, actual) {
           : f.levels,
       }));
       d.rules = saved.rules;
+      d.explanation = saved.explanation;
     }
     return d;
   });
@@ -199,6 +211,9 @@ export function renameTheme(project, d, old, name, undoViews) {
   const views = [
     ...project.views,
     ...undoViews.flat(),
+    ...(project.savedVisuals || [])
+      .filter((s) => s.dataset === d.id)
+      .map((s) => s.view),
     ...project.saved.filter((s) => s.dataset === d.id).flatMap((s) => s.views),
   ];
   for (const v of views) {

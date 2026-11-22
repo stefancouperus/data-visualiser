@@ -1,3 +1,4 @@
+import { roleChoices } from "./variable-roles.js";
 import { termHelp } from "./term-help.js";
 import { figureStyles, styleFor, paletteOptions } from "./figure-styles.js";
 import { esc } from "./chart.js";
@@ -88,12 +89,21 @@ export function available(d, v) {
     c.push("scatter", "line");
   return c;
 }
-function patternPicker(d, v, i) {
+function patternPicker(d, v, i, staged) {
   const text = d.kind === "text",
     items = v.items || [],
-    choices = patternChoices(d);
+    rawChoices = patternChoices(d);
+  const withRoles = (pairs, role) => {
+    if (text) return pairs;
+    const allowed = new Set(pairs.map(([id]) => id));
+    return roleChoices(
+      d.fields.filter((f) => allowed.has(f.id)),
+      role,
+    );
+  };
+  const choices = withRoles(rawChoices, "outcome");
   const noun = text ? "themes" : "questions";
-  const groups = groupChoices(d, items);
+  const groups = withRoles(groupChoices(d, items), "grouping");
   const grouping = select(
     "groupBy",
     "Compare by group",
@@ -113,7 +123,7 @@ function patternPicker(d, v, i) {
         )
       : "";
   return `<div class="pattern-setup"><fieldset class="pick-items"><legend>Tick the ${noun} you want to see together</legend>
-    <small>${items.length} of ${selectionLimit} selected. ${items.length === 1 ? "Tick another to see a pattern across them." : "The figure updates as you tick."}</small>
+    <small>${items.length} of ${selectionLimit} selected. ${items.length === 1 ? "Tick another to see a pattern across them." : staged ? "Apply your selection when ready." : "The figure updates as you tick."}</small>
     ${choices.length > 8 ? `<input type="search" aria-label="Find ${noun}" data-find-items="${i}" placeholder="Find ${noun}…">` : ""}
     <div class="item-list">${choices.map(([id, label]) => `<label class="tick"><input type="checkbox" data-item="${esc(id)}" ${items.includes(id) ? "checked" : items.length >= selectionLimit || (!text && id === v.groupBy) ? "disabled" : ""}>${esc(label)}</label>`).join("")}</div>
     </fieldset><fieldset class="pattern-mode"><legend>What would you like the figure to show?</legend>${patternModes(
@@ -143,7 +153,7 @@ const chartLabels = {
 function chartTools(options, current, i) {
   return `<div class="chart-tools" role="group" aria-label="Change visualisation">${options.map((key) => b("charttype", icon(key) + "<span>" + esc(chartLabels[key]) + "</span>", "", `data-i="${i}" data-chart="${key}" aria-label="${esc(kinds[key])}" title="${esc(kinds[key])}" aria-pressed="${current === key}"`)).join("")}</div>`;
 }
-export function panel(d, v, i, comparing = false) {
+function selectionControls(d, v, i, staged) {
   const text = d.kind === "text",
     fields = text
       ? []
@@ -152,7 +162,7 @@ export function panel(d, v, i, comparing = false) {
             f.type !== "metadata" &&
             (f.levels.length || [v.x, v.y, v.outcome].includes(f.id)),
         ),
-    choices = fields.map((f) => [f.id, f.label]),
+    choices = roleChoices(fields, "outcome"),
     codes = text ? allCodes(d) : [];
   const modelFields = fields.filter(
     (f) =>
@@ -190,26 +200,14 @@ export function panel(d, v, i, comparing = false) {
           ? [["model", "Explore several factors"]]
           : []),
       ];
-  const options = available(d, v);
-  if (!options.includes(v.chart)) v.chart = options[0];
-  const meta = text
-    ? [...new Set(Object.values(d.metadata || {}).flatMap(Object.keys))]
-    : [];
-  const fv = v.filter
-    ? text
-      ? v.filter === "source"
-        ? d.sources
-        : Object.values(d.metadata || {}).map((m) => m[v.filter])
-      : d.fields.find((f) => f.id === v.filter)?.levels || []
-    : [];
   const setup =
     v.task === "patterns"
-      ? patternPicker(d, v, i)
+      ? patternPicker(d, v, i, staged)
       : v.task === "model"
         ? select(
             "outcome",
             "Which result do you want to understand?",
-            modelFields.map((f) => [f.id, f.label]),
+            roleChoices(modelFields, "outcome"),
             v.outcome,
           )
         : text
@@ -242,18 +240,20 @@ export function panel(d, v, i, comparing = false) {
               : "Choose a second question",
           text
             ? codes.filter((c) => c !== v.x)
-            : choices.filter(([key]) => key !== v.x),
+            : roleChoices(
+                fields.filter((f) => f.id !== v.x),
+                v.task === "group" ? "grouping" : "explanatory",
+              ),
           v.y,
         )
       : "";
-  const side = i ? "Right" : "Left";
   const goals = tasks
     .map(
       ([id, label]) =>
         `<label class="goal-choice"><input type="radio" name="goal-${i}" data-key="task" value="${id}" ${id === v.task ? "checked" : ""}><span>${esc(label)}</span></label>`,
     )
     .join("");
-  return `<section class="plotcard ${comparing ? "comparison-card" : "explore-card"}" data-panel="${i}">${comparing ? `<div class="view-heading"><h2>${side} view</h2><span>${esc(kinds[v.chart])}</span></div><details data-chart-options="edit-${i}"><summary>Change ${side.toLowerCase()} view</summary>` : ""}
+  return `<div class="selection-mode"><label class="tick"><input type="checkbox" data-stage-selection="${i}" ${staged ? "" : "checked"}>Update the visual as I select</label>${staged ? "<small>Choose your questions or themes, then apply them to update the visual below.</small>" : ""}</div>
   <fieldset class="goal-picker"><legend>What would you like to find out?</legend><div>${goals}</div></fieldset>
   <div class="selection-tools"><div class="formgrid">${setup}${second}</div>
   ${!text && v.task === "group" && d.unit === "response" ? "<small>People who gave the same answer to the second question form one group. Compare how those groups answered the first question.</small>" : ""}
@@ -262,19 +262,52 @@ export function panel(d, v, i, comparing = false) {
   ${v.task === "model" ? "<p>Choose the result you want to understand and the factors to compare. Regression estimates how each factor relates to that result while holding the other selected factors constant.</p>" : ""}
   ${
     v.task === "model"
-      ? `<fieldset class="wide"><legend>Which factors might help explain this result?</legend>${fields
-          .filter((f) => f.id !== v.outcome && f.type !== "text")
+      ? `<fieldset class="wide"><legend>Which factors might help explain this result?</legend>${roleChoices(
+          fields.filter((f) => f.id !== v.outcome && f.type !== "text"),
+          "explanatory",
+        )
           .map(
-            (f) =>
-              `<label class="tick"><input type="checkbox" data-predictor="${f.id}" ${(v.predictors || []).includes(f.id) ? "checked" : ""}>${esc(f.label)}</label>`,
+            ([id, label]) =>
+              `<label class="tick"><input type="checkbox" data-predictor="${id}" ${(v.predictors || []).includes(id) ? "checked" : ""}>${esc(label)}</label>`,
           )
           .join(
             "",
           )}</fieldset>${d.fields.find((f) => f.id === v.outcome)?.type !== "number" ? select("positive", "Which answer do you want to predict?", d.fields.find((f) => f.id === v.outcome)?.levels || [], v.positive) : ""}<details class="wide"><summary>Advanced regression settings</summary><label class="tick"><input type="checkbox" data-interaction ${v.interaction ? "checked" : ""}>Interaction between first two selected predictors</label><small>Use Compare to fit and inspect a second specification.</small></details>`
       : ""
   }</div>
+  <div class="bar apply-selection">${b("applyselection", staged ? "Apply selection to visual" : "Confirm selection and view visual", "primary", 'data-i="' + i + '"')} ${staged ? b("discardselection", "Discard changes", "plain", 'data-i="' + i + '"') : ""}</div>`;
+}
+export function panel(
+  d,
+  v,
+  i,
+  comparing = false,
+  draft = null,
+  confirmedName = "",
+) {
+  const text = d.kind === "text",
+    side = i ? "Right" : "Left",
+    choices = text
+      ? []
+      : d.fields
+          .filter((f) => f.type !== "metadata" && f.levels.length)
+          .map((f) => [f.id, f.label]);
+  const options = available(d, v);
+  if (!options.includes(v.chart)) v.chart = options[0];
+  const meta = text
+    ? [...new Set(Object.values(d.metadata || {}).flatMap(Object.keys))]
+    : [];
+  const fv = v.filter
+    ? text
+      ? v.filter === "source"
+        ? d.sources
+        : Object.values(d.metadata || {}).map((m) => m[v.filter])
+      : d.fields.find((f) => f.id === v.filter)?.levels || []
+    : [];
+  return `<section class="plotcard ${comparing ? "comparison-card" : "explore-card"}" data-panel="${i}">${comparing ? `<div class="view-heading"><h2>${side} view</h2><span>${esc(kinds[v.chart])}</span></div><details data-chart-options="edit-${i}"><summary>Change ${side.toLowerCase()} view</summary>` : ""}
+  ${confirmedName ? `<div class="topline"><p><strong>Confirmed selection</strong><br>${esc(confirmedName)}</p>${b("editselection", "Change selection", "", "data-i=" + i)}</div>` : `<div class="selection-editor">${selectionControls(d, draft || v, i, !!draft)}</div>`}
   ${comparing ? "</details>" : ""}
-  <div class="live-figure"><div class="figure-toolbar"><strong>Live figure</strong><div>${b("describechart", icon("bot") + " Describe a figure", "", 'data-i="' + i + '"')} ${b("figurestyle", "Figure style · " + figureStyles[styleFor(v.style)].label, "", 'data-i="' + i + '"')}</div>
+  <div class="live-figure"><div class="figure-toolbar"><strong tabindex="-1" id="figure-heading${i}">Current visual</strong><div>${b("savevisual", icon("save") + " Save visual", "", 'data-i="' + i + '"')} ${b("describechart", icon("bot") + " Describe a figure", "", 'data-i="' + i + '"')} ${b("figurestyle", "Figure style · " + figureStyles[styleFor(v.style)].label, "", 'data-i="' + i + '"')}</div>
   </div><div class="figure-stage"><div class="graphic" id="graphic${i}"></div>${options.length > 1 ? chartTools(options, v.chart, i) : ""}</div>${v.task === "patterns" && v.items?.length ? `<small>Click a ${v.chart === "grid" ? "cell" : "row"} to read the ${text ? "passages" : "responses"} behind it.</small>` : ""}<div id="modeldetails${i}"></div></div>
   <details data-chart-options="${i}"><summary>Chart settings</summary>${termHelp("percent", d, v)}<div class="formgrid">
  ${
@@ -330,7 +363,7 @@ export function panel(d, v, i, comparing = false) {
  <div class="bar">${b("askview", icon("bot") + " Explain this view", "", 'data-i="' + i + '"')}${text ? b("passages", "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></section>`;
 }
 export function saveScreen(p) {
-  return `<div class="card"><h2>Save your project</h2><p>Keep your data, codes, figures, comparisons and bot activity together in one file. To continue on any laptop, choose <strong>Open a saved project</strong> on the start screen.</p><label class="tick"><input id="includeBotChat" type="checkbox" ${p.includeBotChat ? "checked" : ""}>Include full Data bot conversations</label><small>Includes your questions, replies and any text quoted in them.</small><div class="bar">${b("download", "Download project with data", "primary")}</div><details><summary>Other save options</summary><div class="bar">${b("device", "Save on this device")}${b("settings", "Download settings only")}</div><small>A settings-only file requires matching datasets to be imported first.</small></details></div><div class="card"><h2>Saved comparisons</h2><div class="bar">${b("savecompare", "Save current comparison")}</div>${p.saved.length ? p.saved.map((s, i) => `<div class="topline check-item"><div><strong>${esc(s.name)}</strong><p>${esc(s.note)}</p></div><div>${b("loadcomp", "Open", "", 'data-i="' + i + '"')} ${b("dupcomp", "Duplicate", "", 'data-i="' + i + '"')}</div></div>`).join("") : "<p>Your saved comparisons will appear here.</p>"}</div><div class="card"><h2>Export a figure</h2><div class="formgrid">${form(
+  return `<div class="card"><h2>Save your project</h2><p>Keep your data, codes, figures, comparisons and bot activity together in one file. To continue on any laptop, choose <strong>Open a saved project</strong> on the start screen.</p><label class="tick"><input id="includeBotChat" type="checkbox" ${p.includeBotChat ? "checked" : ""}>Include full Data bot conversations</label><small>Includes your questions, replies and any text quoted in them.</small><div class="bar">${b("download", "Download project with data", "primary")}</div><details><summary>Other save options</summary><div class="bar">${b("device", "Save on this device")}${b("settings", "Download settings only")}</div><small>A settings-only file requires matching datasets to be imported first.</small></details></div><div class="card"><h2>Saved visuals</h2>${p.savedVisuals.length ? p.savedVisuals.map((s, i) => `<div class="topline check-item"><div><strong>${esc(s.name)}</strong><small>${esc(p.datasets.find((d) => d.id === s.dataset)?.name || "")}</small></div>${b("loadvisual", "Open visual", "", 'data-i="' + i + '"')}</div>`).join("") : "<p>Choose Save visual beside a figure to keep it here.</p>"}</div><div class="card"><h2>Saved comparisons</h2><div class="bar">${b("savecompare", "Save current comparison")}</div>${p.saved.length ? p.saved.map((s, i) => `<div class="topline check-item"><div><strong>${esc(s.name)}</strong><p>${esc(s.note)}</p></div><div>${b("loadcomp", "Open", "", 'data-i="' + i + '"')} ${b("dupcomp", "Duplicate", "", 'data-i="' + i + '"')}</div></div>`).join("") : "<p>Your saved comparisons will appear here.</p>"}</div><div class="card"><h2>Export a figure</h2><div class="formgrid">${form(
     "panels",
     "Panels",
     [

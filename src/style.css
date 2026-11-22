@@ -827,3 +827,18 @@ dialog h2 {
 .palette-key { display: flex; flex-wrap: wrap; align-items: center; gap: .2rem; margin: .35rem 0 .7rem; }
 .palette-key i { width: 1rem; height: .65rem; border-radius: .15rem; }
 .palette-key small { margin-left: .35rem; }
+
+.selection-mode { margin: .35rem 0 1rem; }
+.selection-mode small, .role-reason { display: block; }
+.apply-selection { margin: .8rem 0 1.1rem; }
+.role-list { max-height: 42vh; overflow: auto; }
+.role-list fieldset { margin: .65rem 0; }
+.role-list .tick { display: inline-flex; margin-right: .9rem; }
+.role-reason { color: #344963; }
+.role-help { margin: .8rem 0; }
+.botbody .chatlog { display: flex; flex-direction: column; gap: .65rem; }
+.chatlog .msg { max-width: 94%; padding: .65rem .85rem; overflow-wrap: anywhere; }
+.chatlog .msg strong { display: block; font-size: .82rem; }
+.chatlog .msg p { color: inherit; margin: .25rem 0 0; }
+.chatlog .msg-user { align-self: flex-end; color: #fff; background: #284b84; border: 0; border-radius: .9rem .9rem .18rem .9rem; }
+.chatlog .msg-assistant { align-self: flex-start; color: #18362d; background: #eff6f3; border: 1px solid #c5dbd3; border-inline-start: 3px solid #508070; border-radius: .18rem .9rem .9rem .9rem; }
