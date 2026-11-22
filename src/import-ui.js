@@ -103,7 +103,9 @@ async function sheet(doc, route) {
   const map = await pendingMap;
   if (!map) return null;
   const { passages, sources } = codedSheet(choice, map);
-  return corpus(choice.name, passages, sources);
+  const result = corpus(choice.name, passages, sources);
+  result.excerptSources = [...sources];
+  return result;
 }
 async function documents(docs, route) {
   if (route === "text")
@@ -115,9 +117,11 @@ async function documents(docs, route) {
   const tagged = docs.map(taguette);
   if (tagged.every((v) => v.length)) {
     const passages = tagged.flat();
-    return corpus("Taguette highlights", passages, [
+    const result = corpus("Taguette highlights", passages, [
       ...new Set(passages.map((p) => p.source)),
     ]);
+    result.excerptSources = [...result.sources];
+    return result;
   }
   const markers = [
       ...new Set(docs.flatMap((d) => d.marked.flatMap((p) => p.markers))),

@@ -855,3 +855,29 @@ dialog h2 {
 @container (min-width: 760px) {
   .explore-card > .live-figure { grid-row: 1 / span 3; }
 }
+
+.interview-entry { text-align:left; }
+.iv-grid { display:grid;grid-template-columns:minmax(132px, .72fr) minmax(255px, 2.8fr) minmax(185px, 1.15fr);gap:1rem;align-items:start; }
+.iv-grid > * {min-width:0;overflow-wrap:anywhere;}
+.iv-grid h2 {font-size:1.12rem;margin:.15rem 0 .8rem;}
+.iv-side,.iv-tools,.iv-paper {border:1px solid var(--line);border-radius:12px;padding:1rem;}
+.iv-side,.iv-tools {background:#f7f9fa;}
+.iv-tools button,.iv-side button {width:100%;text-align:left;margin:.23rem 0;}
+.iv-source small,.iv-choice small,.iv-legend small {display:block;margin-top:.2rem;color:var(--muted);}
+.iv-source[aria-pressed=true] {background:#e6f2ef;border-color:#387a6d;}
+.iv-progress {display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1rem;flex-wrap:wrap;}
+.iv-progress progress {display:block;width:100%;height:6px;margin-top:.4rem;accent-color:#36796b;}
+.iv-paper header {border-bottom:1px solid var(--line);}
+.iv-text {overflow:auto;max-height:62vh;min-height:12rem;scrollbar-gutter:stable;margin-bottom:.8rem;}
+.iv-passage {padding:.75rem;border-inline-start:3px solid transparent;}
+.iv-passage p {white-space:pre-wrap;line-height:1.65;margin:.3rem 0;cursor:text;}
+.iv-passage button {font-size:.77rem;padding:.16rem .42rem;}
+.iv-selected {background:#f3f8f7;border-color:#36796b;}
+.iv-chip {display:inline-block;border-radius:4px;padding:.06rem .42rem;margin:.12rem;background:color-mix(in srgb,var(--chip) 9%,white);color:var(--chip);border-left:3px solid var(--chip);font-size:.83rem;font-weight:650;}
+.iv-legend,.iv-pick {max-height:32vh;overflow:auto;}
+.iv-review,.iv-import {margin-top:1rem;}
+.iv-match {display:flex;align-items:start;gap:.5rem;padding:.6rem;border-bottom:1px solid var(--line);}
+.iv-match input {width:auto;} .iv-match q,.iv-match small {display:block;}
+.withbot .iv-grid {grid-template-columns:minmax(0,1fr);}
+@media(max-width:950px){.iv-grid {grid-template-columns:minmax(0,1fr) minmax(175px,.5fr);} .iv-side {grid-column:1/-1;} .iv-side button {width:auto;margin-right:.4rem;}}
+@media(max-width:650px){.iv-grid {grid-template-columns:1fr;} .iv-text{max-height:45vh;}}

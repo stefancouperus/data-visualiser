@@ -14,6 +14,29 @@ async function upload(page, route, name, data) {
     buffer: Buffer.from(data),
   });
 }
+async function finishInterviews(page) {
+  while (
+    await page
+      .getByRole("button", {
+        name: "Mark this interview as checked",
+        exact: true,
+      })
+      .count()
+  ) {
+    await page
+      .getByRole("button", {
+        name: "Mark this interview as checked",
+        exact: true,
+      })
+      .click();
+    await page
+      .getByRole("button", { name: "Mark as checked", exact: true })
+      .click();
+  }
+  await page
+    .getByRole("button", { name: "Coding complete · explore themes" })
+    .click();
+}
 async function expand(page, name, root = page) {
   const summary = root.locator("summary").filter({ hasText: name }).first();
   if (!(await summary.evaluate((el) => el.parentElement.open)))
@@ -78,13 +101,13 @@ test("Word comments and highlights map to the same source passage", async ({
   await expect(page.getByRole("main")).toContainText("1 passages");
   await expect(page.locator("main .scroll")).toContainText("Time");
   await expect(page.locator("main .scroll")).toContainText("Work");
-  await page.getByRole("button", { name: "Confirm and explore" }).click();
-  await page.getByRole("button", { name: "Read and code passages" }).click();
-  await page.locator("input[name=pickp]").check();
-  await page.getByLabel("Code to apply").fill("Barriers");
   await page
-    .getByRole("button", { name: "Mark reviewed / apply code" })
+    .getByRole("button", { name: "Edit labels on selected text" })
     .click();
+  await page.getByLabel("New label").fill("Barriers");
+  await page.getByRole("button", { name: "Save passage coding" }).click();
+  await expect(page.locator(".iv-passage")).toContainText("Barriers");
+  await finishInterviews(page);
   await expect(
     page.getByRole("combobox", { name: "Choose a theme or code", exact: true }),
   ).toContainText("Barriers");
@@ -506,7 +529,7 @@ test("UTF-16 TSV, interview bot matrix, evidence drill-down and accepted coding 
               {
                 id: p.id,
                 quote: p.text,
-                code: "Barrier",
+                code: "Planning",
                 reason: "An obstacle.",
               },
             ],
@@ -539,7 +562,7 @@ test("UTF-16 TSV, interview bot matrix, evidence drill-down and accepted coding 
   const btn = (name) => page.getByRole("button", { name, exact: true });
   await btn("Continue").click();
   await btn("Continue").click();
-  await btn("Confirm and explore").click();
+  await finishInterviews(page);
   await btn("Data bot").click();
   await page
     .locator("#question")
@@ -557,9 +580,9 @@ test("UTF-16 TSV, interview bot matrix, evidence drill-down and accepted coding 
   await expect(page.locator("[data-act=acceptcode]")).toBeVisible();
   expect(replies).toHaveLength(1);
   await page.locator("[data-act=acceptcode]").click();
-  await page.locator("#approved").fill("Schedule");
+  await page.locator("#approved").selectOption("Planning");
   await page.locator("#modalform button[type=submit]").click();
-  await expect(page.locator("#graphic0")).toContainText("Schedule");
+  await expect(page.locator("#graphic0")).toContainText("Planning");
 });
 
 test("an explicitly requested heatmap takes precedence over a different model chart", async ({
@@ -1091,7 +1114,7 @@ test("students switch from interview coverage to exact co-coding and open the ma
   const btn = (name) => page.getByRole("button", { name, exact: true });
   await btn("Continue").click();
   await btn("Continue").click();
-  await btn("Confirm and explore").click();
+  await finishInterviews(page);
   await page
     .getByLabel("What would you like to find out?")
     .selectOption({ label: "Look across several themes" });
@@ -1157,7 +1180,7 @@ test("enter interview groups, compare theme coverage and retrieve only that grou
   const btn = (name) => page.getByRole("button", { name, exact: true });
   await btn("Continue").click();
   await btn("Continue").click();
-  await btn("Confirm and explore").click();
+  await finishInterviews(page);
   await page
     .getByLabel("What would you like to find out?")
     .selectOption({ label: "Look across several themes" });
@@ -1295,7 +1318,8 @@ for (const text of [false, true]) {
       );
       await btn("Continue").click();
       if (text) await btn("Continue").click();
-      await btn("Confirm and explore").click();
+      if (text) await finishInterviews(page);
+      else await btn("Confirm and explore").click();
       if (text) {
         await page
           .getByLabel("What would you like to find out?")
@@ -1407,7 +1431,7 @@ test("touch users can read how interview groups are formed and what each theme c
     const btn = (name) => page.getByRole("button", { name, exact: true });
     await btn("Continue").click();
     await btn("Continue").click();
-    await btn("Confirm and explore").click();
+    await finishInterviews(page);
     await page
       .getByLabel("What would you like to find out?")
       .selectOption({ label: "Look across several themes" });
@@ -1446,7 +1470,7 @@ test("interview heatmaps use the chosen colour ramp and pattern dots use the sty
   const btn = (name) => page.getByRole("button", { name, exact: true });
   await btn("Continue").click();
   await btn("Continue").click();
-  await btn("Confirm and explore").click();
+  await finishInterviews(page);
   await page
     .getByLabel("What would you like to find out?")
     .selectOption({ label: "Look across several themes" });
@@ -1501,7 +1525,7 @@ test("a partial Word highlight preserves surrounding text and repeated unmarked 
     "",
     "",
   ]);
-  await btn("Confirm and explore").click();
+  await finishInterviews(page);
   await page
     .getByLabel("What would you like to find out?")
     .selectOption({ label: "Compare interviews" });
@@ -1775,4 +1799,176 @@ test("chat grounds label suggestions and applies only the accepted batch to the 
     false,
   ]);
   expect(saved.datasets[0].coding.meanings).toHaveLength(1);
+});
+
+test("two interviews share an approved inductive codebook, resume a bot draft and open a presence grid", async ({
+  page,
+}) => {
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  let failOnce = true;
+  const requests = [];
+  await page.route("https://tutor.example.test/ask", (route) => {
+    const { context, skill } = route.request().postDataJSON();
+    expect(skill).toBe("coding");
+    const { guide, passages } = context;
+    requests.push(context);
+    if (
+      guide.mode === "deductive" &&
+      passages[0].source === "Second.txt" &&
+      passages[0].text.includes("six") &&
+      failOnce
+    ) {
+      failOnce = false;
+      return route.fulfill({ status: 503, json: { error: "Try again" } });
+    }
+    return route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          suggestions: passages.map((p) => ({
+            id: p.id,
+            code: "Fare cost",
+            definition: "The cost of a ticket.",
+            quote: p.text,
+            reason: "Mentions a fare.",
+          })),
+        }),
+      },
+    });
+  });
+  await upload(
+    page,
+    /Upload uncoded transcripts/,
+    "First.txt",
+    "My fare doubled.\nMy ticket is expensive.",
+  );
+  await expect(btn("Explore themes")).toBeDisabled();
+  await btn("Data bot").click();
+  await page.locator("#question").fill("Could you code my transcript?");
+  await btn("Send").click();
+  await btn("Send selected passages").click();
+  await page.locator("[data-act=closebot]").click();
+  await btn("Review suggested coding").click();
+  await expect(page.getByRole("dialog")).toContainText("My fare doubled.");
+  await page.locator("[name=iv-match]").last().uncheck();
+  await btn("Apply reviewed coding").click();
+  await expect(page.locator(".iv-passage").last()).not.toContainText(
+    "Fare cost",
+  );
+  await btn("Use these labels for all interviews").click();
+  await btn("Mark this interview as checked").click();
+  await btn("Mark as checked").click();
+  await btn("+ Add interview").click();
+  const picker = page.waitForEvent("filechooser");
+  await btn("Choose files").click();
+  await (
+    await picker
+  ).setFiles({
+    name: "Second.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from(
+      ["zero", "one", "two", "three", "four", "five", "six", "seven"]
+        .map((n) => "Ticket cost " + n)
+        .join("\n"),
+    ),
+  });
+  await expect(page.locator(".iv-progress")).toContainText("1 of 2");
+  await btn("Code this interview with the bot").click();
+  await btn("Send this interview").click();
+  await expect(btn("Resume coding")).toBeVisible();
+  await expect(page.locator(".iv-passage .iv-chip")).toHaveCount(0);
+  const download = page.waitForEvent("download");
+  await btn("Save coding project").click();
+  const chunks = [];
+  for await (const c of await (await download).createReadStream())
+    chunks.push(c);
+  await page.reload();
+  const reopen = page.waitForEvent("filechooser");
+  await btn("Open a saved project").click();
+  await (
+    await reopen
+  ).setFiles({
+    name: "project.json",
+    mimeType: "application/json",
+    buffer: Buffer.concat(chunks),
+  });
+  await btn("Resume coding").click();
+  await btn("Send this interview").click();
+  await btn("Review suggested coding").click();
+  await btn("Apply reviewed coding").click();
+  await expect(page.locator(".iv-passage")).toHaveCount(8);
+  await expect(page.locator(".iv-passage > div .iv-chip")).toHaveCount(8);
+  await finishInterviews(page);
+  await expect(page.locator("#graphic0")).toContainText("Second.txt");
+  await expect(page.locator("#graphic0")).toContainText("Fare cost");
+  const fixed = requests.filter((r) => r.guide.mode === "deductive");
+  expect(fixed).toHaveLength(3);
+  expect(
+    fixed.every(
+      (r) =>
+        r.guide.vocabulary.length === 1 &&
+        r.passages.every((p) => p.source === "Second.txt"),
+    ),
+  ).toBe(true);
+});
+
+test("deductive interview codebook upload, review, whole-transcript matching and manual correction", async ({
+  page,
+}) => {
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  await page.route("https://tutor.example.test/ask", (route) => {
+    const { skill, context } = route.request().postDataJSON();
+    if (skill === "codebook")
+      return route.fulfill({
+        json: {
+          answer: JSON.stringify({
+            entries: [{ label: "Cost", definition: "Fare expense" }],
+          }),
+        },
+      });
+    expect(context.guide.mode).toBe("deductive");
+    expect(context.guide.vocabulary[0].label).toBe("Fare cost");
+    const p = context.passages[0];
+    return route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          suggestions: ["Fare cost", "Wrong label"].map((code) => ({
+            id: p.id,
+            code,
+            quote: "train fare",
+            reason: "Names the cost",
+          })),
+        }),
+      },
+    });
+  });
+  await upload(
+    page,
+    /Upload uncoded transcripts/,
+    "travel.txt",
+    "The train fare is high.\nI walk in the sunshine.",
+  );
+  await page.getByRole("button", { name: /Use an uploaded codebook/ }).click();
+  await page
+    .locator("#book-file")
+    .setInputFiles({
+      name: "guide.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Cost: Fare expense"),
+    });
+  await btn("Extract labels").click();
+  await page.locator("[data-label]").fill("Fare cost");
+  await btn("Use these labels").click();
+  await btn("Code this interview with the bot").click();
+  await btn("Send this interview").click();
+  await btn("Review suggested coding").click();
+  await expect(page.locator("[name=iv-match]")).toHaveCount(1);
+  await btn("Apply reviewed coding").click();
+  await expect(page.locator(".iv-passage").first()).toContainText("train fare");
+  await page.locator("button[data-act=iv-select]").last().click();
+  await btn("Edit labels on selected text").click();
+  await page.locator("[name=iv-label]").check();
+  await btn("Save passage coding").click();
+  await expect(page.locator(".iv-passage").last()).toContainText("Fare cost");
 });

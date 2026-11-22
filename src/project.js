@@ -131,6 +131,7 @@ export function settingsProject(p) {
           name: d.name,
           kind: d.kind,
           unit: d.unit,
+          ...(d.textPurpose ? { textPurpose: d.textPurpose } : {}),
           ...(d.openAnswers ? { openAnswers: d.openAnswers } : {}),
         },
   );
@@ -154,6 +155,7 @@ export function reattach(settings, actual) {
     seen.add(d.id);
     d.id = saved.id;
     d.unit = saved.unit;
+    if (saved.textPurpose) d.textPurpose = saved.textPurpose;
     if (saved.openAnswers) d.openAnswers = structuredClone(saved.openAnswers);
     if (d.kind === "table") {
       if (
@@ -214,7 +216,10 @@ export function renameTheme(project, d, old, name, undoViews) {
     }
   }
   const rename = (c) => (c === old ? name : c);
-  for (const p of d.passages) p.codes = [...new Set(p.codes.map(rename))];
+  for (const p of d.passages) {
+    p.codes = [...new Set(p.codes.map(rename))];
+    for (const e of p.codingEvidence || []) e.code = rename(e.code);
+  }
   const views = [
     ...project.views,
     ...undoViews.flat(),

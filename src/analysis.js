@@ -219,7 +219,10 @@ function qualitative(d, v) {
     for (const code of new Set(p.codes))
       row.codes.set(code, (row.codes.get(code) || 0) + 1);
   }
-  const codes = allCodes(d);
+  const codes =
+    v.task === "group" && d.interviews?.established
+      ? [...new Set([...d.coding.book.map((e) => e.label), ...allCodes(d)])]
+      : allCodes(d);
   const base = {
     title:
       v.title ||

@@ -1,3 +1,5 @@
+import { isInterview, interviews, appendInterviews } from "./interviews.js";
+import { interviewScreen, interviewAction } from "./interview-workspace.js";
 import { writtenAnswerSet, isOpenQuestion } from "./open-answers.js";
 import { confirmedRoles, editRoles } from "./variable-roles.js";
 import { termHelp, bindTermHelp, termMeaning } from "./term-help.js";
@@ -278,7 +280,7 @@ function editProjectFocus(draft) {
   );
 }
 function botBox() {
-  return `<section id="data-bot" aria-label="Data bot workspace" class="bot ${isDocked() ? "docked" : "floating"}"><header class="bothead" data-window-handle="move"><h2 title="Drag the title bar to move the floating window">Data bot</h2><div class="bottools">${innerWidth >= 900 ? b("dockbot", isDocked() ? "Float window" : "Dock right") : ""}${b("closebot", "Close", "plain")}</div></header><div class="botbody"><details class="botprefs"><summary>Help settings</summary><label>Help mode<select id="mode">${opts(modeNames, project.mode)}</select></label>${b("scope", "What the bot can see")}</details>${projectFocusControls()}${!history.length && !requesting ? "<p>Ask about a pattern or ask me to make a chart.</p>" : ""}${!botURL ? "<p>Live help will be available when the workshop service is connected. You can explore, compare and export your data now.</p>" : !sessionStorage.getItem("dv-session") ? '<label>Workshop course code<input id="course" type="password" autocomplete="off"></label>' + b("unlock", "Unlock the bot") : ""}${
+  return `<section id="data-bot" aria-label="Data bot workspace" class="bot ${isDocked() ? "docked" : "floating"}"><header class="bothead" data-window-handle="move"><h2 title="Drag the title bar to move the floating window">Data bot</h2><div class="bottools">${innerWidth >= 900 ? b("dockbot", isDocked() ? "Float window" : "Dock right") : ""}${b("closebot", "Close", "plain")}</div></header><div class="botbody"><details class="botprefs"><summary>Help settings</summary><label>Help mode<select id="mode">${opts(modeNames, project.mode)}</select></label>${b("scope", "What the bot can see")}</details>${projectFocusControls()}${!history.length && !requesting ? (step === 1 && isInterview(getData()) ? "<p>Ask me to suggest labels or code the open interview with your shared codebook.</p>" : "<p>Ask about a pattern or ask me to make a chart.</p>") : ""}${!botURL ? "<p>Live help will be available when the workshop service is connected. You can explore, compare and export your data now.</p>" : !sessionStorage.getItem("dv-session") ? '<label>Workshop course code<input id="course" type="password" autocomplete="off"></label>' + b("unlock", "Unlock the bot") : ""}${
     tutorRecord(project).activity.length
       ? `<details><summary>Project activity</summary><ul>${tutorRecord(project)
           .activity.map((note) => "<li>" + esc(note) + "</li>")
@@ -286,18 +288,40 @@ function botBox() {
       : ""
   }<div class="chatlog">${history.map((t) => `<div class="msg ${t.role === "user" ? "msg-user" : "msg-assistant"}"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`).join("")}</div>${requesting ? `<p role="status">${checkingGroups ? "Checking possible groups in your selection…" : "Waiting for the university model…"}</p>` : ""}
  ${proposal ? b("botdraw", "Make this chart", "primary") + (proposal.groupSuggestion ? b("declinegroups", "No thanks", "plain") : "") : ""}${suggestions.length ? b("applycodes", "Apply all suggested labels", "primary") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><small>${esc(s.source)}</small><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
- ${captionDraft ? b("applycaption", "Add caption to figure") : ""}${botWorkspaceControls()}<label>Ask about your project<textarea id="question" maxlength="4000" placeholder="${getData()?.kind === "text" ? "Which of these themes come up in the same passage?" : "Show me which answers people gave together…"}">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></div><div class="botsize" data-window-handle="resize" title="Drag to resize"></div></section>`;
+ ${captionDraft ? b("applycaption", "Add caption to figure") : ""}${botWorkspaceControls()}<label>Ask about your project<textarea id="question" maxlength="4000" placeholder="${step === 1 && isInterview(getData()) ? "Help me code this transcript…" : getData()?.kind === "text" ? "Which of these themes come up in the same passage?" : "Show me which answers people gave together…"}">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></div><div class="botsize" data-window-handle="resize" title="Drag to resize"></div></section>`;
+}
+function analysisReady(d) {
+  return (
+    !!d &&
+    project.confirmed.includes(d.id) &&
+    (!isInterview(d) ||
+      (!interviews(d).draft &&
+        interviews(d).finished &&
+        d.sources.every((source) => interviews(d).done.includes(source))))
+  );
 }
 function render() {
+  const transcriptScroll = document.querySelector(".iv-text")?.scrollTop || 0;
+  const previousSource = document.querySelector(".iv-paper h2")?.textContent;
   const expanded = [
     ...document.querySelectorAll("details[data-chart-options][open]"),
   ].map((el) => el.dataset.chartOptions);
   const d = getData(),
-    confirmed = d && project.confirmed.includes(d.id),
+    interview = isInterview(d),
+    confirmed = analysisReady(d),
+    labels = interview
+      ? [
+          "Upload",
+          "Code interviews",
+          "Explore themes",
+          "Compare",
+          "Save and export",
+        ]
+      : steps,
     headers = [
       "",
-      "Check your upload",
-      "Explore your data",
+      interview ? "Code your interviews" : "Check your upload",
+      interview ? "Explore interview themes" : "Explore your data",
       "Compare two views",
       "Save and export",
     ];
@@ -326,8 +350,14 @@ function render() {
   let content = step === 0 ? landing(!!localStorage.getItem("dv-project")) : "";
   if (step !== 0 && d) {
     content = `<div class="hero"><h1>${headers[step]}</h1></div>${datasetSelect(project)}${coverageNote}`;
-    if (step === 1)
-      content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (d.kind === "text" ? "coded" : "table") + '"')}</div>${check(d)}${roleButton ? `<section class="card"><h2>Which questions help answer your research question?</h2><p>Identify the outcome, groups and possible explanations. Mark questions with written answers too.</p>${roleButton}</section>` : ""}${openRoute}<div class="bar">${b("confirm", "Confirm and explore", "primary")}</div>`;
+    if (step === 1 && interview) {
+      content +=
+        interviewScreen(d) +
+        '<details class="iv-import"><summary>Import details and source information</summary>' +
+        check(d) +
+        "</details>";
+    } else if (step === 1)
+      content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (d.kind === "text" ? "coded" : "table") + '"')}</div>${check(d)}${d.textPurpose === "documents" && !d.openAnswers ? b("makeinterview", "Use the interview coding workspace") : ""}${roleButton ? `<section class="card"><h2>Which questions help answer your research question?</h2><p>Identify the outcome, groups and possible explanations. Mark questions with written answers too.</p>${roleButton}</section>` : ""}${openRoute}<div class="bar">${b("confirm", "Confirm and explore", "primary")}</div>`;
     else if (step === 2 || step === 3)
       content += `${step === 2 ? openRoute : ""}<div class="bar">${step === 2 ? b("compare", "Compare two views") : b("savecompare", "Save comparison", "primary")}${step === 3 ? b("askboth", icon("bot") + " Compare findings") : ""}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
         .slice(0, step === 3 ? 2 : 1)
@@ -344,6 +374,12 @@ function render() {
         .join(
           "",
         )}</div> ${undoViews.length ? b("undo", "Undo view change", "plain") : ""}<div id="hint"></div>`;
+    else if (interview && !confirmed)
+      content +=
+        '<section class="card"><h2>Save your coding progress</h2><p>Reopen the project to continue with your shared codebook, interviews and any coding draft.</p>' +
+        b("download", "Download project with data", "primary") +
+        b("device", "Save on this device") +
+        "</section>";
     else content += saveScreen(project);
   }
   const previousBody = document.querySelector(".botbody");
@@ -351,7 +387,12 @@ function render() {
   const settingsOpen = previousBody?.querySelector(".botprefs")?.open;
   const asideBot = bot && isDocked();
   get("app").innerHTML =
-    `<div class="shell ${compact ? "compact" : ""}"><aside class="rail"><div class="brand">${mark}<span>Data<br>visualiser</span></div><nav class="nav" aria-label="Workflow">${steps.map((s, i) => `<button title="${s}" aria-label="${s}" data-act="nav" data-i="${i}" ${step === i ? 'aria-current="step"' : ""} ${(i > 0 && !d) || (i > 1 && !confirmed) ? "disabled" : ""}>${icon(icons[i])}<span>${s}</span></button>`).join("")}${b("bot", icon("bot") + "<span>Data bot</span>", "botnav", 'aria-label="Data bot" title="Data bot" aria-expanded="' + bot + '"')}</nav><div class="rail-bottom">${b("compact", icon("menu") + "<span>Collapse sidebar</span>", "plain", 'aria-label="Toggle sidebar"')}<small class="app-version">0.1 beta</small></div></aside><main class="main" id="workspace"><header class="top"><span>${esc(project.name)} &nbsp; / &nbsp; ${steps[step]}</span></header><div class="content"><div class="${asideBot ? "withbot" : ""}"><div>${content}</div>${asideBot ? botBox() : ""}</div>${bot && !asideBot ? botBox() : ""}</div></main></div>`;
+    `<div class="shell ${compact ? "compact" : ""}"><aside class="rail"><div class="brand">${mark}<span>Data<br>visualiser</span></div><nav class="nav" aria-label="Workflow">${labels.map((s, i) => `<button title="${s}" aria-label="${s}" data-act="nav" data-i="${i}" ${step === i ? 'aria-current="step"' : ""} ${(i > 0 && !d) || (i > 1 && !confirmed && !(interview && i === 4)) ? "disabled" : ""}>${icon(icons[i])}<span>${s}</span></button>`).join("")}${b("bot", icon("bot") + "<span>Data bot</span>", "botnav", 'aria-label="Data bot" title="Data bot" aria-expanded="' + bot + '"')}</nav><div class="rail-bottom">${b("compact", icon("menu") + "<span>Collapse sidebar</span>", "plain", 'aria-label="Toggle sidebar"')}<small class="app-version">0.1 beta</small></div></aside><main class="main" id="workspace"><header class="top"><span>${esc(project.name)} &nbsp; / &nbsp; ${labels[step]}</span></header><div class="content"><div class="${asideBot ? "withbot" : ""}"><div>${content}</div>${asideBot ? botBox() : ""}</div>${bot && !asideBot ? botBox() : ""}</div></main></div>`;
+  if (
+    previousSource &&
+    previousSource === document.querySelector(".iv-paper h2")?.textContent
+  )
+    document.querySelector(".iv-text").scrollTop = transcriptScroll;
   bindTermHelp(get("app"));
   if (bot) {
     layoutBot();
@@ -586,11 +627,9 @@ function tidy(v, key) {
           )?.id;
 }
 function goto(i) {
-  if (
-    (i > 0 && !getData()) ||
-    (i > 1 && !project.confirmed.includes(project.active))
-  )
-    return;
+  const d = getData();
+  if (i > 0 && !d) return;
+  if (i > 1 && !analysisReady(d) && !(isInterview(d) && i === 4)) i = 1;
   if (i === 2 || i === 3) project.figurePanels = i === 3 ? "both" : "left";
   if (i === 3 && !project.comparisonStarted) {
     const right = structuredClone(project.views[0]);
@@ -2215,6 +2254,13 @@ function evidence(i, match, codingPrompt = "") {
       if (!selected.size) throw Error("Choose one or more passages.");
       const code = val("applycode").trim();
       for (const p of d.passages.filter((p) => selected.has(p.id))) {
+        if (
+          code &&
+          isInterview(d) &&
+          interviews(d).established &&
+          !d.coding.book.some((e) => e.label === code)
+        )
+          throw Error("Choose a label from your shared interview codebook.");
         if (code && !p.codes.includes(code)) p.codes.push(code);
         p.reviewed = true;
       }
@@ -2304,6 +2350,16 @@ function evidence(i, match, codingPrompt = "") {
     suggestions = [];
     render();
   });
+  if (isInterview(d) && interviews(d).established) {
+    get("coding-method").disabled = true;
+    get("codebook-controls").hidden = true;
+    get("inductive-help").hidden = true;
+    get("applycode").setAttribute("list", "knowncodes");
+    get("knowncodes").innerHTML = opts(
+      d.coding.book.map((e) => e.label),
+      "",
+    );
+  }
   for (const id of ["discusspass", "suggestpass"])
     get(id).onclick = async () => {
       if (requesting) {
@@ -2349,9 +2405,84 @@ const reviewActs = [
   "multi",
   "tocorpus",
 ];
+async function handleInterview(act, el, d) {
+  return interviewAction(act, el, d, {
+    current: getData,
+    render,
+    focus: () => project.researchFocus,
+    extract: extractCodebook,
+    unlock: unlockBot,
+    code: async (context) =>
+      structuredAnswer(
+        await requestTutor({
+          skill: "coding",
+          question:
+            "Assign the best supported codes to the supplied passages for student review. Return exact quotations.",
+          context,
+        }),
+      ).suggestions,
+    finish: () => {
+      const s = interviews(d);
+      if (
+        s.draft ||
+        !d.sources.length ||
+        !d.sources.every((source) => s.done.includes(source))
+      )
+        throw Error("Check each interview before exploring themes.");
+      if (!s.finished) {
+        const v = newView(d);
+        if (d.sources.length > 1 && d.coding?.book?.length)
+          Object.assign(v, { task: "group", chart: "presence" });
+        project.views = [v, structuredClone(v)];
+        project.comparisonStarted = false;
+      }
+      s.finished = true;
+      if (!project.confirmed.includes(d.id)) project.confirmed.push(d.id);
+      goto(2);
+    },
+    add: async () => {
+      const route = await askForm(
+        "Add an interview",
+        formselect(
+          "iv-format",
+          "What are you adding?",
+          [
+            ["text", "An uncoded transcript"],
+            ["coded", "An interview with existing labels"],
+          ],
+          "text",
+        ),
+        () => val("iv-format"),
+        "Choose files",
+      );
+      if (!route) return;
+      chooseFiles(".txt,.docx,.csv,.tsv,.xlsx", true, async (files) => {
+        const sets = await importFiles(files, route);
+        if (!sets || getData() !== d) return;
+        appendInterviews(d, sets);
+        resetTutor();
+        goto(1);
+      });
+    },
+  });
+}
 async function action(act, el) {
   const d = getData(),
     i = Number(el.dataset.i || 0);
+  if (act === "makeinterview") {
+    delete d.textPurpose;
+    activate(d.id);
+    goto(1);
+    return;
+  }
+  if (act.startsWith("iv-") && isInterview(d))
+    return handleInterview(act, el, d);
+  if (
+    isInterview(d) &&
+    interviews(d).draft &&
+    ["renamecode", "sources"].includes(act)
+  )
+    throw Error("Review or discard the current coding draft first.");
   if (reviewActs.includes(act)) return reviewAction(act, d, el);
   switch (act) {
     case "openanswers": {
@@ -2581,8 +2712,18 @@ async function action(act, el) {
           : ".docx,.txt,.csv,.tsv,.xlsx",
         true,
         async (files) => {
-          const datasets = await importFiles(files, route);
+          let datasets = await importFiles(
+            files,
+            route === "interview" ? "text" : route,
+          );
           if (!datasets?.length) return;
+          if (["interview", "coded"].includes(route)) {
+            if (datasets.length > 1)
+              appendInterviews(datasets[0], datasets.slice(1));
+            datasets = [datasets[0]];
+            interviews(datasets[0]).source = datasets[0].sources[0];
+          } else if (route === "text")
+            for (const set of datasets) set.textPurpose = "documents";
           project.datasets.push(...datasets);
           if (project.name === "Untitled project")
             project.name = files[0].name.replace(/\.[^.]+$/, "");
@@ -2802,6 +2943,41 @@ async function action(act, el) {
     case "send": {
       const q = val("question").trim();
       if (!q) throw Error("Enter a question.");
+      if (
+        isInterview(d) &&
+        (step === 1 ||
+          /(?:whole|entire|this|my|the) (?:transcript|interview)\b/i.test(q)) &&
+        (requestsCoding(q) ||
+          /\bcode (?:this |the |my |whole |entire )*(?:interview|transcript)\b/i.test(
+            q,
+          ))
+      ) {
+        if (step !== 1) goto(1);
+        const s = interviews(d);
+        history.push({ role: "user", content: q });
+        lastQuestion = "";
+        if (!s.established && !s.method) s.method = "inductive";
+        const command = s.draft
+          ? s.draft.next === s.draft.total
+            ? "iv-review"
+            : "iv-resume"
+          : s.established
+            ? "iv-auto"
+            : s.method === "book"
+              ? "iv-book"
+              : "iv-sample";
+        history.push({
+          role: "assistant",
+          content: s.draft
+            ? "Open your coding draft to continue."
+            : s.established
+              ? "Choose Send this interview to have me match passages to your shared codebook."
+              : "Choose the material you want me to use to establish the labels.",
+        });
+        render();
+        await handleInterview(command, el, d);
+        return;
+      }
       if (d?.kind === "text") {
         const latest = history.at(-1);
         const agrees =
@@ -3106,7 +3282,20 @@ document.addEventListener("drop", async (event) => {
     notice(error.message);
   }
 });
+document.addEventListener("mousedown", (e) => {
+  if (e.target.closest('[data-act="iv-manual"]')) e.preventDefault();
+});
 document.addEventListener("click", async (e) => {
+  const text = e.target.closest("[data-iv-text]");
+  if (
+    text &&
+    !window.getSelection()?.toString() &&
+    !interviews(getData()).draft
+  ) {
+    interviews(getData()).passage = text.dataset.ivText;
+    render();
+    return;
+  }
   const el = e.target.closest("[data-act]");
   try {
     if (el) {

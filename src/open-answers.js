@@ -61,6 +61,7 @@ export function writtenAnswerSet(project, survey, key, id, openOnly) {
       "There are no written answers to this question among the included records.",
     );
   const data = corpus(survey.name + " · " + question.label, passages, sources);
+  data.textPurpose = "documents";
   data.metadata = metadata;
   if (openOnly) {
     data.unit = "respondent";
