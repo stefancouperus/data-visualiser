@@ -1,5 +1,15 @@
 import { esc } from "./chart.js";
 const paths = {
+  bars: "M3 4v16h18M6 7h12M6 12h8M6 17h15",
+  dots: "M3 20h18M6 14h.1m5-6h.1m5 4h.1",
+  stack: "M3 5h18v5H3zM8 5v5m5-5v5M3 14h18v5H3zM12 14v5m5-5v5",
+  grid: "M3 3h18v18H3zM9 3v18m6-18v18M3 9h18M3 15h18",
+  hist: "M3 20h18M4 20v-7h5v7m0-1V5h5v15m0-1v-9h5v10",
+  scatter: "M3 3v17h18M7 15h1m1-5h1m2 3h1m2-6h1m2-2h1",
+  line: "M3 3v17h18M6 15l4-6 4 3 6-8",
+  small: "M3 4h7v7H3zM14 4h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
+  presence: "M3 3h18v18H3zM12 3v18M3 12h18m-15-5 2 2 2-3m5 10 2 2 2-3",
+  excerpts: "M4 3h16v18H4zM7 7h10M7 11h8M7 15h10",
   upload: "M12 16V3m-5 5 5-5 5 5M4 15v5h16v-5",
   check: "m3 12 5 5L20 5",
   explore: "M3 20h18M6 16v-4m5 4V6m5 10V9",

@@ -290,3 +290,57 @@ test("append and join honour exclusions and preserve the two inputs", async () =
   assert.equal(combineTables(left, add, "append").rows[2].c0, "c");
   assert.equal(left.rows.length, 2);
 });
+
+test("multi-question patterns keep people together and use the appropriate denominator", () => {
+  const d = makeTable(
+    [
+      ["Vote", "Trust", "Party"],
+      ["Yes", "High", "B; A"],
+      ["Yes", "High", "A;B"],
+      ["Yes", "", "C"],
+      ["No", "Low", "A"],
+    ],
+    "Survey",
+  );
+  d.fields[2].type = "multiple";
+  const v = {
+    task: "patterns",
+    items: ["c0", "c1", "c2"],
+    patternMode: "together",
+  };
+  const joint = analyse(d, v);
+  assert.equal(joint.complete, 3);
+  assert.deepEqual(joint.records[0].parts, ["Yes", "High", "A + B"]);
+  assert.equal(joint.records[0].n, 2);
+  const each = analyse(d, { ...v, patternMode: "separate" });
+  assert.equal(each.records.find((r) => r.label === "Yes").den, 4);
+  assert.equal(each.records.find((r) => r.label === "High").den, 3);
+  const filtered = analyse(d, { ...v, filter: "c0", value: "No" });
+  assert.equal(filtered.complete, 1);
+  assert.equal(analyse(d, { ...v, items: [] }).records.length, 0);
+});
+test("theme combinations distinguish shared passages from shared interviews and retain uncoded coverage", () => {
+  const d = {
+    kind: "text",
+    sources: ["A", "B", "C"],
+    passages: [
+      { source: "A", codes: ["Trust"], reviewed: true },
+      { source: "A", codes: ["Duty"], reviewed: true },
+      { source: "B", codes: ["Trust", "Duty"], reviewed: true },
+      { source: "C", codes: [], reviewed: false },
+    ],
+  };
+  const v = { task: "patterns", items: ["Trust", "Duty"] };
+  const both = (a) => a.records.find((r) => r.keyParts?.length === 2)?.n;
+  assert.equal(both(analyse(d, { ...v, patternMode: "passages" })), 1);
+  assert.equal(both(analyse(d, { ...v, patternMode: "interviews" })), 2);
+  const a = analyse(d, {
+    ...v,
+    patternMode: "interviews",
+    filter: "source",
+    value: "C",
+  });
+  assert.deepEqual(a.records[0].keyParts, []);
+  assert.equal(a.records[0].den, 1);
+  assert.equal(analyse(d, { ...v, patternMode: "sources" }).records.length, 6);
+});

@@ -3,6 +3,7 @@ import { esc } from "./chart.js";
 import { button as b, opts, select, input, table, icon, pict } from "./ui.js";
 import { kinds, allCodes } from "./analysis.js";
 import { dataCount } from "./project.js";
+import { patternChoices, patternModes, selectionLimit } from "./patterns.js";
 export function landing(local) {
   return `<div class="hero"><h1>Data visualiser</h1><p>visualising and interpreting your survey or interview data</p></div><section class="project-open" id="project-drop" aria-label="Open a saved project"><div>${b("open", icon("project") + " Open a saved project")} ${local ? b("deviceOpen", "Resume on this device", "plain") : ""}</div><small>Choose your downloaded project (.json), or drop it here.</small></section><div class="choices">${b("upload", pict("survey") + "<strong>I have a Qualtrics export</strong><small>Read survey questions, scales and responses.</small>", "choice", 'data-route="survey"')}${b("upload", pict("text") + "<strong>I have coded interviews</strong><small>Import Word, Excel or Taguette highlights.</small>", "choice", 'data-route="coded"')}</div><h2 class="section">Other ways to start</h2><div class="list">${[
     ["table", "table", "Table or spreadsheet", "CSV, TSV or Excel"],
@@ -58,6 +59,10 @@ export function check(d) {
   )}${"<details><summary>Seeing question codes or numbers instead of answer text?</summary><p>Use a Qualtrics export with choice text, or add the questionnaire (.qsf) that belongs to this export. Measurements such as age stay numerical.</p>" + b("surveylabels", "Add questionnaire labels") + "</details>"}<details><summary>Review fields and import settings</summary>${d.fields.map((f) => `<details class="check-item"><summary>${esc(f.label)} <small> · ${esc(f.type)}</small></summary><p>Original column: ${esc(f.raw)}. Example values: ${esc(f.levels.slice(0, 5).join(" · "))}</p>${b("field", "Edit field", "", 'data-field="' + f.id + '"')}</details>`).join("")}<div class="bar">${b("combinetables", "Combine with another table")}${b("exclude", "Exclude records by value")}${b("multi", "Group multiple-answer columns")}${b("tocorpus", "Use a column as written responses")}</div>${d.rules.map((r, i) => `<p>Exclude ${esc(d.fields.find((f) => f.id === r.field)?.label)} = ${esc(r.value)} ${b("delrule", "Remove", "plain", 'data-i="' + i + '"')}</p>`).join("")}</details></section>`;
 }
 export function available(d, v) {
+  if (v.task === "patterns")
+    return d.kind === "text" && v.patternMode === "sources"
+      ? ["grid", "bars", "table"]
+      : ["bars", "dots", "table"];
   if (v.task === "model") return ["model"];
   if (d.kind === "text") {
     if (v.task === "group") return ["presence", "grid", "table"];
@@ -76,6 +81,40 @@ export function available(d, v) {
   if (y?.type === "number" && ["number", "date"].includes(x.type))
     c.push("scatter", "line");
   return c;
+}
+function patternPicker(d, v, i) {
+  const text = d.kind === "text",
+    items = v.items || [],
+    choices = patternChoices(d);
+  const noun = text ? "themes" : "questions";
+  return `<div class="pattern-setup"><fieldset class="pick-items"><legend>Tick the ${noun} you want to see together</legend>
+    <small>${items.length} of ${selectionLimit} selected. ${items.length === 1 ? "Tick another to see a pattern across them." : "The figure updates as you tick."}</small>
+    ${choices.length > 8 ? `<input type="search" aria-label="Find ${noun}" data-find-items="${i}" placeholder="Find ${noun}…">` : ""}
+    <div class="item-list">${choices.map(([id, label]) => `<label class="tick"><input type="checkbox" data-item="${esc(id)}" ${items.includes(id) ? "checked" : items.length >= selectionLimit ? "disabled" : ""}>${esc(label)}</label>`).join("")}</div>
+    </fieldset><fieldset class="pattern-mode"><legend>What would you like the figure to show?</legend>${patternModes(
+      text,
+    )
+      .map(
+        ([mode, label]) =>
+          `<label class="tick"><input type="radio" name="pattern-mode-${i}" data-key="patternMode" value="${mode}" ${mode === v.patternMode ? "checked" : ""}>${esc(label)}</label>`,
+      )
+      .join("")}</fieldset></div>`;
+}
+const chartLabels = {
+  bars: "Bars",
+  dots: "Dots",
+  table: "Table",
+  stack: "Shares",
+  grid: "Heatmap",
+  hist: "Ranges",
+  scatter: "Points",
+  line: "Lines",
+  small: "Panels",
+  presence: "Presence",
+  excerpts: "Passages",
+};
+function chartTools(options, current, i) {
+  return `<div class="chart-tools" role="group" aria-label="Change visualisation">${options.map((key) => b("charttype", icon(key) + "<span>" + esc(chartLabels[key]) + "</span>", "", `data-i="${i}" data-chart="${key}" aria-label="${esc(kinds[key])}" title="${esc(kinds[key])}" aria-pressed="${current === key}"`)).join("")}</div>`;
 }
 export function panel(d, v, i, comparing = false) {
   const text = d.kind === "text",
@@ -96,11 +135,17 @@ export function panel(d, v, i, comparing = false) {
   const tasks = text
     ? [
         ["one", codes.length ? "Find a theme" : "Read interview passages"],
+        ...(codes.length > 1
+          ? [["patterns", "Look across several themes"]]
+          : []),
         ...(codes.length ? [["group", "Compare interviews"]] : []),
         ...(codes.length > 1 ? [["two", "Find overlapping themes"]] : []),
       ]
     : [
         ["one", "Explore one question"],
+        ...(patternChoices(d).length > 1
+          ? [["patterns", "Look across several questions"]]
+          : []),
         ...(choices.length > 1
           ? [
               ["group", "Compare groups"],
@@ -124,23 +169,25 @@ export function panel(d, v, i, comparing = false) {
       : d.fields.find((f) => f.id === v.filter)?.levels || []
     : [];
   const setup =
-    v.task === "model"
-      ? select(
-          "outcome",
-          "Which result do you want to understand?",
-          modelFields.map((f) => [f.id, f.label]),
-          v.outcome,
-        )
-      : text
-        ? v.task === "group"
-          ? ""
-          : select(
-              "x",
-              "Choose a theme or code",
-              [...(v.task === "one" ? [["", "All passages"]] : []), ...codes],
-              v.x,
-            )
-        : select("x", "Choose a question or column", choices, v.x);
+    v.task === "patterns"
+      ? patternPicker(d, v, i)
+      : v.task === "model"
+        ? select(
+            "outcome",
+            "Which result do you want to understand?",
+            modelFields.map((f) => [f.id, f.label]),
+            v.outcome,
+          )
+        : text
+          ? v.task === "group"
+            ? ""
+            : select(
+                "x",
+                "Choose a theme or code",
+                [...(v.task === "one" ? [["", "All passages"]] : []), ...codes],
+                v.x,
+              )
+          : select("x", "Choose a question or column", choices, v.x);
   const second =
     v.task === "two" || (!text && v.task === "group")
       ? select(
@@ -163,9 +210,9 @@ export function panel(d, v, i, comparing = false) {
         `<label class="goal-choice"><input type="radio" name="goal-${i}" data-key="task" value="${id}" ${id === v.task ? "checked" : ""}><span>${esc(label)}</span></label>`,
     )
     .join("");
-  return `<section class="plotcard" data-panel="${i}">${comparing ? `<div class="view-heading"><h2>${side} view</h2><span>${esc(kinds[v.chart])}</span></div><details data-chart-options="edit-${i}"><summary>Change ${side.toLowerCase()} view</summary>` : ""}
+  return `<section class="plotcard ${comparing ? "comparison-card" : "explore-card"}" data-panel="${i}">${comparing ? `<div class="view-heading"><h2>${side} view</h2><span>${esc(kinds[v.chart])}</span></div><details data-chart-options="edit-${i}"><summary>Change ${side.toLowerCase()} view</summary>` : ""}
   <fieldset class="goal-picker"><legend>What would you like to find out?</legend><div>${goals}</div></fieldset>
-  <div class="formgrid">${setup}${second}</div>
+  <div class="selection-tools"><div class="formgrid">${setup}${second}</div>
   ${v.task === "model" ? "<p>Regression estimates how each factor relates to your chosen result while holding the other selected factors constant. For example, does the link between age and voting persist when you account for education?</p>" : ""}
   ${
     v.task === "model"
@@ -178,19 +225,16 @@ export function panel(d, v, i, comparing = false) {
           .join(
             "",
           )}</fieldset>${d.fields.find((f) => f.id === v.outcome)?.type !== "number" ? select("positive", "Which answer do you want to predict?", d.fields.find((f) => f.id === v.outcome)?.levels || [], v.positive) : ""}<details class="wide"><summary>Advanced regression settings</summary><label class="tick"><input type="checkbox" data-interaction ${v.interaction ? "checked" : ""}>Interaction between first two selected predictors</label><small>Use Compare to fit and inspect a second specification.</small></details>`
-      : select(
-          "chart",
-          "Show as",
-          options.map((k) => [k, kinds[k]]),
-          v.chart,
-        )
-  }
+      : ""
+  }</div>
   ${comparing ? "</details>" : ""}
-  <div class="figure-toolbar">${b("figurestyle", "Figure style · " + figureStyles[styleFor(v.style)].label, "", 'data-i="' + i + '"')}</div>
-  <div class="graphic" id="graphic${i}"></div><div id="modeldetails${i}"></div>
+  <div class="live-figure"><div class="figure-toolbar"><strong>Live figure</strong><div>${b("describechart", icon("bot") + " Describe a figure", "", 'data-i="' + i + '"')} ${b("figurestyle", "Figure style · " + figureStyles[styleFor(v.style)].label, "", 'data-i="' + i + '"')}</div>
+  </div><div class="figure-stage"><div class="graphic" id="graphic${i}"></div>${options.length > 1 ? chartTools(options, v.chart, i) : ""}</div>${v.task === "patterns" && v.items?.length ? `<small>Click a ${v.chart === "grid" ? "cell" : "row"} to read the ${text ? "passages" : "responses"} behind it.</small>` : ""}<div id="modeldetails${i}"></div></div>
   <details data-chart-options="${i}"><summary>Chart settings</summary><div class="formgrid">
  ${
-   !text && !["model", "scatter", "line", "stack", "excerpts"].includes(v.chart)
+   v.task !== "patterns" &&
+   !text &&
+   !["model", "scatter", "line", "stack", "excerpts"].includes(v.chart)
      ? select(
          "measure",
          "Show",
@@ -200,7 +244,10 @@ export function panel(d, v, i, comparing = false) {
          ],
          v.measure,
        )
-     : text && v.task !== "group" && v.chart !== "excerpts"
+     : text &&
+         v.task !== "patterns" &&
+         v.task !== "group" &&
+         v.chart !== "excerpts"
        ? select(
            "measure",
            "Count",

@@ -158,7 +158,69 @@ export function figure(a, v, { width = 700 } = {}) {
       pos += theme.row;
     }
   }
-  if (v.chart === "excerpts") {
+  if (v.task === "patterns" && v.chart !== "grid") {
+    const ranked = a.distinctPatterns != null;
+    const namedQuestions = v.patternMode === "together";
+    if (namedQuestions)
+      for (const [i, name] of a.selectedLabels.entries())
+        block(i + 1 + ". " + name, Math.floor((w - 52) / 8), 13);
+    const max = Math.max(1, ...records.map((r) => r.value));
+    let group;
+    for (const [index, r] of records.entries()) {
+      if (r.group && group !== r.group) {
+        group = r.group;
+        pos += 8;
+        block(group, Math.floor((w - 52) / 8), 15, true);
+      }
+      const rowStart = pos - 16;
+      const names = namedQuestions
+        ? r.parts.map((p, j) => j + 1 + ". " + p)
+        : r.parts;
+      const label = ranked ? names.join("   ·   ") : r.label;
+      const amount = r.undefinedShare
+        ? "No answers"
+        : a.unit.startsWith("%")
+          ? num(r.value) + "% (" + r.n + " of " + r.den + ")"
+          : String(r.n);
+      block(label + "   —   " + amount, Math.floor((w - 52) / 8), 14);
+      if (v.chart !== "table" && !r.undefinedShare) {
+        const end =
+          margin +
+          ((w - 2 * margin) * r.value) / (a.unit.startsWith("%") ? 100 : max);
+        if (v.chart === "dots") {
+          rule(pos - 3, w - margin, "#d6dfeb", 1);
+          root
+            .append("circle")
+            .attr("cx", end)
+            .attr("cy", pos - 3)
+            .attr("r", 4)
+            .attr("fill", accent);
+        } else
+          root
+            .append("rect")
+            .attr("x", margin)
+            .attr("y", pos - 7)
+            .attr("width", end - margin)
+            .attr("height", 7)
+            .attr("fill", accent);
+        pos += 12;
+      }
+      root
+        .append("rect")
+        .attr("x", margin)
+        .attr("y", rowStart)
+        .attr("width", w - 2 * margin)
+        .attr("height", pos - rowStart)
+        .attr("fill", "transparent")
+        .attr("data-pattern-row", index)
+        .attr("role", "button")
+        .attr("tabindex", 0)
+        .attr("aria-label", "Read evidence: " + label)
+        .attr("cursor", "pointer")
+        .append("title")
+        .text("Read the evidence for " + label);
+    }
+  } else if (v.chart === "excerpts") {
     for (const p of a.excerpt) {
       block(p.source + "  ·  " + (p.codes?.join(", ") || "Text"), 74, 13, true);
       block(p.text, Math.floor((w - 52) / 8));
@@ -439,6 +501,7 @@ export function figure(a, v, { width = 700 } = {}) {
     }
   }
   if (
+    !(v.task === "patterns" && !a.selectedLabels.length) &&
     !records.length &&
     !a.excerpt?.length &&
     !a.points?.length &&

@@ -26,6 +26,12 @@ import {
   linkage,
 } from "./project.js";
 import { newView, analyse, allCodes, kinds } from "./analysis.js";
+import {
+  patternChoices,
+  patternModes,
+  selectionLimit,
+  patternAnswers,
+} from "./patterns.js";
 import { fitModel } from "./model.js";
 import { figureStyles, styleFor, highlightChoices } from "./figure-styles.js";
 import { esc, figure, combinedSVG, exportSVG, blobSave } from "./chart.js";
@@ -67,6 +73,10 @@ function focusBot(target) {
 const focusIndex = () => (step === 3 && botFocus === "right" ? 1 : 0);
 function viewName(d, v) {
   const name = (id) => d.fields?.find((f) => f.id === id)?.label || id;
+  if (v.task === "patterns")
+    return (
+      (v.items || []).map(name).join(" · ") || "Choose questions or themes"
+    );
   if (v.task === "model") return name(v.outcome) || "Model";
   if (d.kind === "text" && v.task === "group")
     return "Themes across interviews";
@@ -163,7 +173,7 @@ function botBox() {
       : ""
   }<div class="chatlog">${history.map((t) => `<div class="msg"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`).join("")}</div>${requesting ? '<p role="status">Waiting for the university model…</p>' : ""}
  ${proposal ? b("botdraw", "Make this chart", "primary") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
- ${captionDraft ? b("applycaption", "Add caption to figure") : ""}${botWorkspaceControls()}<label>Ask about your project<textarea id="question" maxlength="4000" placeholder="Ask a question or describe a chart…">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></div><div class="botsize" data-window-handle="resize" title="Drag to resize"></div></section>`;
+ ${captionDraft ? b("applycaption", "Add caption to figure") : ""}${botWorkspaceControls()}<label>Ask about your project<textarea id="question" maxlength="4000" placeholder="${getData()?.kind === "text" ? "Which of these themes come up in the same passage?" : "Show me which answers people gave together…"}">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></div><div class="botsize" data-window-handle="resize" title="Drag to resize"></div></section>`;
 }
 function render() {
   const expanded = [
@@ -332,6 +342,16 @@ function tidy(v, key) {
   const d = getData(),
     fs =
       d.fields?.filter((f) => f.type !== "metadata" && f.levels.length) || [];
+  if (key === "task" && v.task === "patterns") {
+    const choices = patternChoices(d).map(([id]) => id);
+    v.items = Array.isArray(v.items)
+      ? v.items.filter((id) => choices.includes(id))
+      : [...new Set([v.x, v.y].filter((id) => choices.includes(id)))];
+    if (!v.items.length && choices.length) v.items = [choices[0]];
+    v.patternMode ||= patternModes(d.kind === "text")[0][0];
+    v.chart = available(d, v)[0];
+    return;
+  }
   if (key === "task") {
     if (v.task === "model") {
       v.chart = "model";
@@ -537,17 +557,17 @@ function botContext(question = "") {
           : null,
         availableCharts: available(d, project.views[i]),
         categoricalPattern:
+          project.views[i].task !== "patterns" &&
           d.kind === "table" &&
           ["ordered", "category", "multiple"].includes(
             d.fields.find((f) => f.id === project.views[i].x)?.type,
           )
             ? categoricalPattern(a.records || [])
             : undefined,
-        calculatedForSelection: analyticalEvidence(
-          d,
-          project.views[i],
-          question,
-        ),
+        calculatedForSelection:
+          project.views[i].task === "patterns"
+            ? undefined
+            : analyticalEvidence(d, project.views[i], question),
         pairedStatistics:
           a.points?.length && !a.date ? pairedStatistics(a.points) : undefined,
         excerpt: undefined,
@@ -578,6 +598,14 @@ function botContext(question = "") {
           },
         }
       : {}),
+    patternOptions:
+      (d.kind === "text" ? allCodes(d).length : d.fields.length) > 1
+        ? {
+            modes: patternModes(d.kind === "text"),
+            selectable: patternChoices(d).map(([id]) => id),
+            maximum: selectionLimit,
+          }
+        : undefined,
     codebook: d.kind === "text" ? allCodes(d) : undefined,
     passages: selectedPassages().map((p) => ({
       id: p.id,
@@ -614,6 +642,38 @@ function proposedChart(pick) {
       return null;
     const view = { ...current, chart: pick.chart };
     summary(panel, view);
+    return candidate(view);
+  }
+  if (pick.task === "patterns") {
+    const modes = patternModes(text),
+      choices = new Map(patternChoices(d));
+    const supplied =
+      pick.items ?? (current.task === "patterns" ? current.items : undefined);
+    if (!Array.isArray(supplied)) return null;
+    const items = [
+      ...new Set(supplied.map((id) => (text ? id : resolveAxis(d.fields, id)))),
+    ];
+    if (
+      !items.length ||
+      items.length > selectionLimit ||
+      items.some((id) => !choices.has(id))
+    )
+      return null;
+    const patternMode =
+      pick.patternMode ||
+      (current.task === "patterns" && current.patternMode) ||
+      modes[0][0];
+    if (!modes.some(([key]) => key === patternMode)) return null;
+    const view = {
+      ...current,
+      task: "patterns",
+      items,
+      patternMode,
+      title: "",
+      annotation: "",
+    };
+    view.chart = pick.chart || available(d, view)[0];
+    if (!available(d, view).includes(view.chart)) return null;
     return candidate(view);
   }
   if (!text && pick.task === "model" && pick.chart === "model") {
@@ -848,7 +908,10 @@ async function ask(question, skill, intent = "") {
         l.x === r.x &&
         l.y === r.y &&
         l.task === r.task &&
-        l.outcome === r.outcome,
+        l.outcome === r.outcome &&
+        (l.task !== "patterns" ||
+          (l.patternMode === r.patternMode &&
+            JSON.stringify(l.items) === JSON.stringify(r.items))),
       sameFilter: l.filter === r.filter && l.value === r.value,
       sameUnit: context.views[0]?.unit === context.views[1]?.unit,
     };
@@ -1407,10 +1470,102 @@ async function reviewAction(act, d, el) {
     return;
   }
 }
+function patternEvidence(i, index) {
+  const d = getData(),
+    v = project.views[i],
+    cell = summary(i).records[index];
+  if (!cell) return;
+  if (d.kind === "table") {
+    const fields = v.items.map((id) => d.fields.find((f) => f.id === id));
+    const rows = filteredRows(d).filter((r) => {
+      if (v.filter && r[v.filter] !== v.value) return false;
+      if (v.patternMode === "separate")
+        return patternAnswers(
+          r,
+          fields.find((f) => f.id === cell.fieldId),
+        ).includes(cell.label);
+      return fields.every(
+        (f, j) =>
+          JSON.stringify(patternAnswers(r, f)) ===
+          JSON.stringify(cell.keyParts[j]),
+      );
+    });
+    modal(
+      "Responses behind this pattern",
+      `<p>Showing ${Math.min(200, rows.length)} of ${rows.length} matching records.</p>` +
+        table(
+          fields.map((f) => f.label),
+          rows.slice(0, 200).map((r) => fields.map((f) => r[f.id])),
+        ),
+      null,
+      "Done",
+    );
+    return;
+  }
+  if (v.patternMode === "sources")
+    return evidence(i, { source: cell.group, code: cell.label });
+  const sources = d.sources.filter(
+    (s) =>
+      !v.filter ||
+      (v.filter === "source" ? s : d.metadata?.[s]?.[v.filter]) === v.value,
+  );
+  const set = new Set(sources),
+    passages = d.passages.filter((p) => set.has(p.source));
+  const same = (codes) =>
+    v.items.every((c) => codes.has(c) === cell.keyParts.includes(c));
+  let included = passages,
+    note = "";
+  if (v.patternMode === "interviews") {
+    const bySource = new Map(sources.map((s) => [s, new Set()]));
+    for (const p of passages)
+      for (const c of p.codes) bySource.get(p.source).add(c);
+    const matches = sources.filter((s) => same(bySource.get(s)));
+    const selected = new Set(matches);
+    included = passages.filter(
+      (p) =>
+        selected.has(p.source) &&
+        (!cell.keyParts.length ||
+          p.codes.some((c) => cell.keyParts.includes(c))),
+    );
+    note = "<p>Matching interviews: " + esc(matches.join(", ")) + ".</p>";
+  } else included = passages.filter((p) => same(new Set(p.codes)));
+  modal(
+    "Passages behind this pattern",
+    note +
+      `<p>Showing ${Math.min(200, included.length)} of ${included.length} matching passages.</p>` +
+      table(
+        ["Interview", "Passage", "Codes"],
+        included
+          .slice(0, 200)
+          .map((p) => [p.source, p.text, p.codes.join(" · ")]),
+      ),
+    null,
+    "Done",
+  );
+}
 function evidence(i, match) {
   const d = getData(),
     v = project.views[i],
     isText = d.kind === "text";
+  if (v.task === "patterns" && !isText && !match) {
+    const fields = (v.items || [])
+      .map((id) => d.fields.find((f) => f.id === id))
+      .filter(Boolean);
+    const rows = filteredRows(d).filter(
+      (r) => !v.filter || r[v.filter] === v.value,
+    );
+    modal(
+      "Answers from the same person",
+      `<p>Each row is one record. Blank cells are missing answers. Showing ${Math.min(200, rows.length)} of ${rows.length} records.</p>` +
+        table(
+          fields.map((f) => f.label),
+          rows.slice(0, 200).map((r) => fields.map((f) => r[f.id])),
+        ),
+      null,
+      "Done",
+    );
+    return;
+  }
   if (!isText) {
     const x = d.fields.find((f) => f.id === v.x);
     const rows = filteredRows(d).filter(
@@ -1628,9 +1783,31 @@ async function action(act, el) {
       if (!undoViews.length) throw Error("There are no view changes to undo.");
       project.views = undoViews.pop();
       break;
+    case "describechart":
+      if (step === 3) focusBot(i ? "right" : "left");
+      openBot();
+      get("question")?.focus();
+      return;
     case "figurestyle":
       chooseFigureStyle(i);
       return;
+    case "charttype": {
+      const view = project.views[i];
+      if (
+        view.chart === el.dataset.chart ||
+        !available(d, view).includes(el.dataset.chart)
+      )
+        return;
+      snapshotViews();
+      if (step === 3) focusBot(i ? "right" : "left");
+      proposal = captionDraft = queuedShortcut = null;
+      view.chart = el.dataset.chart;
+      render();
+      document
+        .querySelector(`[data-panel="${i}"] [data-chart="${view.chart}"]`)
+        ?.focus({ preventScroll: true });
+      return;
+    }
     case "resetview":
       snapshotViews();
       project.views[i] = newView(d);
@@ -2060,6 +2237,14 @@ document.addEventListener("click", async (e) => {
       await action(el.dataset.act, el);
       return;
     }
+    const row = e.target.closest("[data-pattern-row]");
+    if (row?.closest("[data-panel]")) {
+      patternEvidence(
+        Number(row.closest("[data-panel]").dataset.panel),
+        Number(row.dataset.patternRow),
+      );
+      return;
+    }
     const cell = e.target.closest("[data-code]");
     if (cell?.closest("[data-panel]"))
       evidence(Number(cell.closest("[data-panel]").dataset.panel), {
@@ -2071,9 +2256,27 @@ document.addEventListener("click", async (e) => {
   }
 });
 document.addEventListener("input", (e) => {
+  if (e.target.hasAttribute("data-find-items")) {
+    const query = e.target.value.trim().toLowerCase();
+    for (const label of e.target.parentNode.querySelectorAll(
+      ".item-list label",
+    ))
+      label.hidden = !label.textContent.toLowerCase().includes(query);
+  }
   if (e.target.id === "question") lastQuestion = e.target.value;
 });
 document.addEventListener("keydown", (e) => {
+  if (
+    (e.key === "Enter" || e.key === " ") &&
+    e.target.hasAttribute("data-pattern-row")
+  ) {
+    e.preventDefault();
+    patternEvidence(
+      Number(e.target.closest("[data-panel]").dataset.panel),
+      Number(e.target.dataset.patternRow),
+    );
+    return;
+  }
   if (
     e.key === "Escape" &&
     bot &&
@@ -2128,6 +2331,27 @@ document.addEventListener("change", (e) => {
   queuedShortcut = null;
   proposal = null;
   captionDraft = null;
+  if (t.hasAttribute("data-item")) {
+    const list = box.querySelector(".item-list"),
+      scroll = list.scrollTop;
+    const search = box.querySelector("[data-find-items]")?.value;
+    const id = t.dataset.item;
+    v.items = t.checked
+      ? [...new Set([...v.items, id])].slice(0, selectionLimit)
+      : v.items.filter((x) => x !== id);
+    render();
+    const panel = document.querySelector(`[data-panel="${i}"]`);
+    if (search) {
+      const find = panel.querySelector("[data-find-items]");
+      find.value = search;
+      find.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    panel.querySelector(".item-list").scrollTop = scroll;
+    [...panel.querySelectorAll("[data-item]")]
+      .find((input) => input.dataset.item === id)
+      ?.focus({ preventScroll: true });
+    return;
+  }
   if (t.hasAttribute("data-predictor")) {
     v.predictors = [...box.querySelectorAll("[data-predictor]:checked")].map(
       (el) => el.dataset.predictor,
@@ -2144,9 +2368,15 @@ document.addEventListener("change", (e) => {
       Object.assign(project.views[1 - i], { filter: v.filter, value: v.value });
   } else return;
   render();
-  if (t.dataset.key === "task")
+  if (["task", "patternMode"].includes(t.dataset.key))
     document
-      .querySelector('[data-panel="' + i + '"] input[data-key="task"]:checked')
+      .querySelector(
+        '[data-panel="' +
+          i +
+          '"] input[data-key="' +
+          t.dataset.key +
+          '"]:checked',
+      )
       ?.focus({ preventScroll: true });
 });
 resetTutor();

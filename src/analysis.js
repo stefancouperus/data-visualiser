@@ -1,3 +1,4 @@
+import { patternSummary } from "./patterns.js";
 import { bin } from "d3";
 import { filteredRows } from "./import.js";
 export const kinds = {
@@ -51,6 +52,7 @@ export function newView(d) {
   };
 }
 export function analyse(d, v) {
+  if (v.task === "patterns") return patternSummary(d, v);
   if (d.kind === "text") return qualitative(d, v);
   const f = (k) => d.fields.find((a) => a.id === k),
     x = f(v.x),

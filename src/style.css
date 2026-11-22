@@ -768,3 +768,40 @@ dialog h2 {
 .bot-selection strong { display: block; margin: .35rem 0; overflow-wrap: anywhere; font-size: .87rem; }
 .bot-selection .bar { gap: .3rem; margin: .45rem 0 .8rem; }
 .bot-selection button { font-size: .85rem; padding: .35rem .55rem; }
+
+/* Keep the preview in sight while a student works through a long questionnaire. */
+.content > div:first-child > div:first-child { container-type: inline-size; }
+.selection-tools, .live-figure, .figure-stage, .pattern-setup { min-width: 0; }
+.pattern-setup { grid-column: 1/-1; }
+.pick-items { min-width: 0; margin: 0 0 1rem; padding: 0; border: 0; }
+.pick-items legend { font-weight: 650; margin-bottom: .25rem; }
+.pick-items input[type=search] { margin: .4rem 0; }
+.item-list { max-height: 12rem; overflow: auto; margin-top: .4rem; border-block: 1px solid var(--line); }
+.item-list .tick { align-items: baseline; margin: 0; padding: .45rem .2rem; overflow-wrap: anywhere; }
+.item-list .tick[hidden] { display: none; }
+.live-figure { align-self: start; }
+.live-figure .figure-toolbar { display: flex; align-items: center; justify-content: space-between; gap: .4rem; flex-wrap: wrap; }
+.figure-stage { display: flex; align-items: flex-start; gap: .45rem; }
+.figure-stage .graphic { flex: 1 1 auto; min-width: 0; max-height: 68vh; overflow: auto; }
+.figure-stage .graphic svg { min-width: min(100%, 340px); }
+.chart-tools { display: flex; flex-direction:column; gap: .25rem; padding: .65rem 0; }
+.chart-tools button { display:flex; flex-direction:column; align-items:center; gap:.1rem; min-width:3.4rem; padding:.35rem; font-size:.72rem; }
+.chart-tools button[aria-pressed=true] { color:#143e83; background:#edf3ff; border-color:#668ac5; }
+.chart-tools .icon { width:1.1rem; height:1.1rem; }
+@container (min-width: 760px) {
+  .explore-card { display:grid; grid-template-columns: minmax(205px, 29%) minmax(0, 1fr); column-gap:1.25rem; align-items:start; }
+  .explore-card > .goal-picker { grid-column: 1 / -1; }
+  .explore-card > .selection-tools { grid-column:1; }
+  .explore-card > .live-figure { grid-column:2; grid-row:2 / span 3; position: sticky; top:.6rem; }
+  .explore-card > details, .explore-card > .bar { grid-column:1; }
+  .explore-card .formgrid { grid-template-columns:1fr; }
+  .withbot .explore-card { display:block; }
+  .withbot .explore-card > .live-figure { position: static; }
+}
+@media (max-width: 850px) {
+  .figure-stage { flex-direction: column-reverse; align-items: stretch; }
+  .chart-tools { flex-direction:row; flex-wrap:wrap; }
+}
+.pattern-mode { border: 0; padding: 0; margin: .8rem 0; min-width: 0; }
+.pattern-mode legend { font-weight:650; }
+.pattern-mode .tick { align-items:baseline; margin:.4rem 0; }
