@@ -36,6 +36,7 @@ export function landing(local) {
     )}</div><div class="bar">${b("open", icon("project") + " Reopen a project")}${local ? b("deviceOpen", "Resume on this device") : ""}</div>`;
 }
 export function datasetSelect(p) {
+  if (p.datasets.length === 1) return "";
   return `<label>Current dataset<select id="dataset">${opts(
     p.datasets.map((d) => [d.id, d.name + " · " + dataCount(d)]),
     p.active,
@@ -49,7 +50,13 @@ export function check(d) {
         .slice(0, 150)
         .map((p) => [p.source, p.text, p.codes.join("; ")]),
     )}<div class="bar">${b("sources", "Check source list")}${d.originals ? b("original", "Read original transcript") : ""}${b("renamecode", "Rename or merge a code")}${b("link", "Link source information")}</div></section>`;
-  return `<section class="card"><div class="topline"><h2>${d.qual ? "Review your questionnaire" : "Review your table"}</h2>${b("unit", "Change record unit")}</div><p>${d.rows.length} ${esc(d.unit)} records · ${d.fields.length} columns. Open a field to edit its label, type or response order.</p>${d.fields.map((f) => `<details class="check-item"><summary>${esc(f.label)} <small> · ${esc(f.type)}</small></summary><p>Original column: ${esc(f.raw)}. Example values: ${esc(f.levels.slice(0, 5).join(" · "))}</p>${b("field", "Edit field", "", 'data-field="' + f.id + '"')}</details>`).join("")}<div class="bar">${b("combinetables", "Combine with another table")}${b("exclude", "Exclude records by value")}${b("multi", "Group multiple-answer columns")}${b("tocorpus", "Use a column as written responses")}</div>${d.rules.map((r, i) => `<p>Exclude ${esc(d.fields.find((f) => f.id === r.field)?.label)} = ${esc(r.value)} ${b("delrule", "Remove", "plain", 'data-i="' + i + '"')}</p>`).join("")}</section>`;
+  return `<section class="card"><div class="topline"><h2>${d.qual ? "Review your questionnaire" : "Review your table"}</h2>${b("unit", "Change record unit")}</div><p>${d.rows.length} ${esc(d.unit)} records · ${d.fields.length} columns. Check a few questions below, then continue.</p>${table(
+    ["Question", "Sample answers"],
+    d.fields
+      .filter((f) => f.type !== "metadata" && f.levels.length > 0)
+      .slice(0, 3)
+      .map((f) => [f.label, f.levels.slice(0, 3).join(" · ")]),
+  )}<details><summary>Review fields and import settings</summary>${d.fields.map((f) => `<details class="check-item"><summary>${esc(f.label)} <small> · ${esc(f.type)}</small></summary><p>Original column: ${esc(f.raw)}. Example values: ${esc(f.levels.slice(0, 5).join(" · "))}</p>${b("field", "Edit field", "", 'data-field="' + f.id + '"')}</details>`).join("")}<div class="bar">${b("combinetables", "Combine with another table")}${b("exclude", "Exclude records by value")}${b("multi", "Group multiple-answer columns")}${b("tocorpus", "Use a column as written responses")}</div>${d.rules.map((r, i) => `<p>Exclude ${esc(d.fields.find((f) => f.id === r.field)?.label)} = ${esc(r.value)} ${b("delrule", "Remove", "plain", 'data-i="' + i + '"')}</p>`).join("")}</details></section>`;
 }
 export function available(d, v) {
   if (v.task === "model") return ["model"];
@@ -102,7 +109,7 @@ export function panel(d, v, i) {
         : Object.values(d.metadata || {}).map((m) => m[v.filter])
       : d.fields.find((f) => f.id === v.filter)?.levels || []
     : [];
-  return `<section class="plotcard" data-panel="${i}"><h2>${esc(headline)}</h2><div class="formgrid">${select(
+  return `<section class="plotcard" data-panel="${i}"><h2>${esc(headline)}</h2><div class="bar">${v.task === "model" ? select("outcome", "Outcome", choices, v.outcome) : text ? select("x", "Code", [["", "All passages"], ...codes], v.x) : select("x", "Variable", choices, v.x)}</div><div class="graphic" id="graphic${i}"></div><div id="modeldetails${i}"></div><details data-chart-options="${i}"><summary>Change chart or compare variables</summary><div class="formgrid">${select(
     "task",
     "What would you like to explore?",
     text
@@ -119,7 +126,7 @@ export function panel(d, v, i) {
         ],
     v.task,
   )}
- ${v.task === "model" ? select("outcome", "Outcome", choices, v.outcome) : text ? select("x", "Code", [["", "All passages"], ...codes], v.x) : select("x", "Variable", choices, v.x)}
+
  ${
    v.task === "model"
      ? `<fieldset class="wide"><legend>Potential explanations</legend>${fields
@@ -180,7 +187,7 @@ export function panel(d, v, i) {
    ],
    v.palette,
  )}${v.chart === "excerpts" ? input("query", "Find text", v.query) : ""}</div>${b("resetview", "Reset this view", "plain", 'data-i="' + i + '"')}</details>
- <div class="graphic" id="graphic${i}"></div><div id="modeldetails${i}"></div>
+ </details>
  <div class="bar">${b("askview", "Explain this view", "", 'data-i="' + i + '"')}${text ? b("passages", "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></section>`;
 }
 export function saveScreen(p) {

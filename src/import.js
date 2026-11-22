@@ -5,7 +5,7 @@ export const uid = () => crypto.randomUUID();
 const str = (x) => (x == null ? "" : String(x));
 const unique = (xs) => [...new Set(xs)];
 const meta =
-  /^(StartDate|EndDate|Status|IPAddress|Progress|Duration \(in seconds\)|Finished|RecordedDate|ResponseId|Recipient.*|ExternalReference|LocationLatitude|LocationLongitude|DistributionChannel|UserLanguage)$/i;
+  /^(StartDate|EndDate|Status|IPAddress|Progress|Duration \(in seconds\)|Finished|RecordedDate|ResponseId|Recipient.*|ExternalReference|LocationLatitude|LocationLongitude|DistributionChannel|UserLanguage|Q_Language|LocationFirstSeen|LocationLastSeen|Last Seen Flow Element ID|Last Seen Question IDs|ExternalDataReference)$/i;
 const likert = [
   [
     "strongly disagree",
@@ -22,14 +22,32 @@ const likert = [
     "very important",
   ],
 ];
+export function qualtricsHeaders(rows) {
+  if (rows[2]?.some((v) => /"ImportId"\s*:/.test(str(v)))) return 3;
+  const pairs = [
+    ["StartDate", "Start Date"],
+    ["EndDate", "End Date"],
+    ["ResponseId", "Response ID"],
+    ["Status", "Response Type"],
+    ["IPAddress", "IP Address"],
+  ];
+  const matches = pairs.filter(([raw, label]) =>
+    rows[0]?.some(
+      (v, i) =>
+        str(v).trim() === raw &&
+        str(rows[1]?.[i]).trim().toLowerCase() === label.toLowerCase(),
+    ),
+  );
+  return matches.length >= 2 ? 2 : 0;
+}
 export function makeTable(grid, name) {
   const rows = grid.filter((row) => row.some((v) => str(v).trim() !== ""));
   if (rows.length < 2)
     throw Error("A table needs a header row and at least one response.");
-  const qual =
-    rows.length > 2 && rows[2].some((v) => /"ImportId"\s*:/.test(str(v)));
+  const headers = qualtricsHeaders(rows),
+    qual = headers > 0;
   const titles = qual ? rows[1] : rows[0],
-    data = rows.slice(qual ? 3 : 1);
+    data = rows.slice(headers || 1);
   if (!data.length)
     throw Error("This export has headers but no response records.");
   const fields = Array.from(

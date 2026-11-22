@@ -9,7 +9,7 @@ import {
   settingsProject,
   linkage,
 } from "./project.js";
-import { newView, analyse, allCodes } from "./analysis.js";
+import { newView, analyse, allCodes, kinds } from "./analysis.js";
 import { fitModel } from "./model.js";
 import { esc, figure, combinedSVG, exportSVG, blobSave } from "./chart.js";
 import {
@@ -35,8 +35,7 @@ import {
 } from "./screens.js";
 const steps = ["Upload", "Check", "Explore", "Compare", "Save and export"],
   icons = ["upload", "check", "explore", "compare", "save"];
-let proposal = null,
-  recommend = false;
+let proposal = null;
 let undoViews = [],
   project = fresh(),
   step = 0,
@@ -51,7 +50,7 @@ let undoViews = [],
 const getData = () => project.datasets.find((d) => d.id === project.active);
 const resetTutor = () => {
   proposal = null;
-  recommend = false;
+
   history = [];
   chosen.clear();
   scope = [];
@@ -73,10 +72,13 @@ const modeNames = [
 const botURL = (import.meta.env.VITE_BOT_URL || "").replace(/\/$/, "");
 function botBox() {
   return `<section class="bot ${step === 3 ? "botbelow" : ""}"><div class="topline"><h2>Data bot</h2>${b("closebot", "Close", "plain")}</div><label>Help mode<select id="mode">${opts(modeNames, project.mode)}</select></label><div class="bar">${b("scope", "What the bot can see")}</div>${!botURL ? "<p>Live help will be available when the workshop service is connected. You can explore, compare and export your data now.</p>" : !sessionStorage.getItem("dv-session") ? '<label>Workshop course code<input id="course" type="password" autocomplete="off"></label>' + b("unlock", "Unlock the bot") : ""}<div class="chatlog">${history.map((t) => `<div class="msg"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`).join("")}</div>${requesting ? '<p role="status">Waiting for the university model…</p>' : ""}
- ${proposal ? b("botpreview", "Preview suggested chart") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
- <label>Ask about your project<textarea id="question" maxlength="4000" placeholder="What is being counted here?">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></section>`;
+ ${proposal ? b("botdraw", "Make this chart", "primary") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
+ <label>Ask about your project<textarea id="question" maxlength="4000" placeholder="Ask a question or describe a chart…">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></section>`;
 }
 function render() {
+  const expanded = [
+    ...document.querySelectorAll("details[data-chart-options][open]"),
+  ].map((el) => el.dataset.chartOptions);
   const d = getData(),
     confirmed = d && project.confirmed.includes(d.id),
     headers = [
@@ -92,7 +94,7 @@ function render() {
     if (step === 1)
       content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (d.kind === "text" ? "coded" : "table") + '"')}</div>${check(d)}<div class="bar">${b("confirm", "Confirm and explore", "primary")}</div>`;
     else if (step === 2 || step === 3)
-      content += `<div class="bar">${step === 2 ? b("compare", "Compare two views", "primary") : b("savecompare", "Save comparison", "primary")}${b("choose", "Help me choose")}${b("finding", "Show a finding")}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
+      content += `<div class="bar">${step === 2 ? b("compare", "Compare two views", "primary") : b("savecompare", "Save comparison", "primary")}${b("choose", "Ask the bot for a chart")}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
         .slice(0, step === 3 ? 2 : 1)
         .map((v, i) => panel(d, v, i))
         .join(
@@ -103,6 +105,12 @@ function render() {
   const asideBot = bot && step !== 3;
   get("app").innerHTML =
     `<div class="shell ${compact ? "compact" : ""}"><aside class="rail"><div class="brand">${mark}<span>Data<br>visualiser</span></div><nav class="nav" aria-label="Workflow">${steps.map((s, i) => `<button title="${s}" aria-label="${s}" data-act="nav" data-i="${i}" ${step === i ? 'aria-current="step"' : ""} ${(i > 0 && !d) || (i > 1 && !confirmed) ? "disabled" : ""}>${icon(icons[i])}<span>${s}</span></button>`).join("")}</nav><div class="rail-bottom">${b("compact", icon("menu") + "<span>Collapse sidebar</span>", "plain", 'aria-label="Toggle sidebar"')}</div></aside><main class="main" id="workspace"><header class="top"><span>${esc(project.name)} &nbsp; / &nbsp; ${steps[step]}</span>${b("bot", icon("bot") + " Data bot")}</header><div class="content"><div class="${asideBot ? "withbot" : ""}"><div>${content}</div>${asideBot ? botBox() : ""}</div>${bot && step === 3 ? botBox() : ""}</div></main></div>`;
+  for (const i of expanded) {
+    const options = document.querySelector(
+      `details[data-chart-options="${i}"]`,
+    );
+    if (options) options.open = true;
+  }
   if (d && (step === 2 || step === 3)) {
     for (let i = 0; i < (step === 3 ? 2 : 1); i++) {
       try {
@@ -298,6 +306,7 @@ function botContext() {
   });
   return {
     ...basic,
+    pendingChart: proposal?.view,
     views,
     fields: d.fields
       ?.filter((f) => f.type !== "metadata")
@@ -311,6 +320,74 @@ function botContext() {
     })),
   };
 }
+function proposedChart(pick) {
+  const d = getData(),
+    text = d.kind === "text",
+    keys = text
+      ? allCodes(d)
+      : d.fields.filter((f) => f.type !== "metadata").map((f) => f.id);
+  if (!["one", "group", "two"].includes(pick.task)) return null;
+  if (
+    !keys.includes(pick.x) &&
+    !(text && (pick.task === "group" || pick.chart === "excerpts") && !pick.x)
+  )
+    return null;
+  if (pick.task === "one" && pick.y) return null;
+  const paired = pick.task !== "one" && !(text && pick.task === "group");
+  if (paired && (!keys.includes(pick.y) || pick.y === pick.x)) return null;
+  const panel = step === 3 && pick.panel !== "left" ? 1 : 0,
+    current = project.views[panel];
+  const measure = pick.measure || (text ? "passages" : "count");
+  if (
+    !(text ? ["passages", "sources"] : ["count", "percent"]).includes(measure)
+  )
+    return null;
+  const view = {
+    ...newView(d),
+    x: pick.x || "",
+    y: paired ? pick.y : "",
+    task: pick.task,
+    chart: pick.chart,
+    measure,
+    filter: current.filter,
+    value: current.value,
+    palette: current.palette,
+  };
+  if (!available(d, view).includes(view.chart)) return null;
+  return {
+    view,
+    panel,
+    step,
+    dataset: d.id,
+    baseline: JSON.stringify(current),
+  };
+}
+function applyProposal() {
+  const candidate = proposal;
+  proposal = null;
+  if (
+    !candidate ||
+    project.active !== candidate.dataset ||
+    candidate.step !== step ||
+    JSON.stringify(project.views[candidate.panel]) !== candidate.baseline
+  )
+    throw Error("The view has changed. Ask for a fresh chart suggestion.");
+  snapshotViews();
+  project.views[candidate.panel] = candidate.view;
+  const chart = summary(candidate.panel);
+  history.push({
+    role: "assistant",
+    content:
+      "Created " +
+      kinds[candidate.view.chart].toLowerCase() +
+      " · " +
+      chart.title +
+      ". " +
+      chart.note,
+  });
+  render();
+  get("graphic" + candidate.panel)?.scrollIntoView({ block: "nearest" });
+}
 async function ask(question, skill) {
   if (requesting) throw Error("A tutor request is already pending.");
   if (!botURL)
@@ -323,7 +400,9 @@ async function ask(question, skill) {
   if (JSON.stringify(context).length > 115000)
     throw Error("Choose fewer sources or passages for the bot.");
   const previous = history.slice(-4),
-    activeId = project.active;
+    activeId = project.active,
+    startStep = step,
+    startViews = JSON.stringify(project.views);
   lastQuestion = "";
   requesting = true;
   history.push({ role: "user", content: question });
@@ -349,6 +428,17 @@ async function ask(question, skill) {
       throw Error(data.error || "Tutor unavailable.");
     }
     if (project.active !== activeId) return;
+    if (
+      skill === "recommend" &&
+      (step !== startStep || JSON.stringify(project.views) !== startViews)
+    ) {
+      history.push({
+        role: "assistant",
+        content:
+          "Your view changed while I was replying. Ask again using the current view.",
+      });
+      return;
+    }
     if (skill === "coding") {
       const clean = data.answer
         .trim()
@@ -384,35 +474,37 @@ async function ask(question, skill) {
       } catch {
         pick = { explanation: data.answer };
       }
-      const d = getData(),
-        keys =
-          d.kind === "text"
-            ? allCodes(d)
-            : d.fields.filter((f) => f.type !== "metadata").map((f) => f.id);
-      history.push({
-        role: "assistant",
-        content: String(
-          pick.explanation || "Choose a field or code to preview.",
-        ),
-      });
+      proposal = null;
       if (
-        ["one", "group", "two"].includes(pick.task) &&
-        keys.includes(pick.x) &&
-        (pick.task === "one" ||
-          (d.kind === "text" && pick.task === "group") ||
-          (keys.includes(pick.y) && pick.y !== pick.x))
+        pick.action === "draw" ||
+        pick.action === "suggest" ||
+        (!pick.action && pick.chart)
       ) {
-        const v = {
-          ...newView(d),
-          task: pick.task,
-          x: pick.x,
-          y: pick.task === "one" ? "" : pick.y,
-          chart: pick.chart,
-          measure: pick.measure,
-        };
-        if (available(d, v).includes(v.chart)) proposal = v;
-      }
-      recommend = false;
+        const candidate = proposedChart(pick);
+        if (!candidate) {
+          history.push({
+            role: "assistant",
+            content:
+              "I couldn’t match that chart to your data. Which question or code would you like to show?",
+          });
+        } else {
+          proposal = candidate;
+          if (pick.action === "draw") applyProposal();
+          else
+            history.push({
+              role: "assistant",
+              content: String(
+                pick.explanation || "This view is ready to draw.",
+              ),
+            });
+        }
+      } else
+        history.push({
+          role: "assistant",
+          content: String(
+            pick.explanation || "Which question would you like to explore?",
+          ),
+        });
     } else history.push({ role: "assistant", content: data.answer });
   } finally {
     requesting = false;
@@ -916,38 +1008,20 @@ async function action(act, el) {
       break;
     case "upload": {
       const route = el.dataset.route;
-      let help =
-        route === "survey"
-          ? "Export a Qualtrics CSV with answer labels. Keep the original headers. Split multiple-answer columns when available."
-          : route === "coded"
-            ? "Choose your Word documents, coded spreadsheet, or Taguette all-highlights export. For Taguette select Highlights → See all highlights → Export this view."
-            : "Choose files from your computer.";
-      modal(
-        "Upload " +
-          (route === "survey"
-            ? "a Qualtrics export"
-            : route === "coded"
-              ? "coded material"
-              : "your data"),
-        `<p>${help}</p>`,
-        () => {
-          chooseFiles(
-            route === "survey" || route === "table"
-              ? ".csv,.tsv,.xlsx"
-              : ".docx,.txt,.csv,.tsv,.xlsx",
-            true,
-            async (files) => {
-              const datasets = await importFiles(files, route);
-              if (!datasets?.length) return;
-              project.datasets.push(...datasets);
-              if (project.name === "Untitled project")
-                project.name = files[0].name.replace(/\.[^.]+$/, "");
-              activate(datasets[0].id);
-              goto(1);
-            },
-          );
+      chooseFiles(
+        route === "survey" || route === "table"
+          ? ".csv,.tsv,.xlsx"
+          : ".docx,.txt,.csv,.tsv,.xlsx",
+        true,
+        async (files) => {
+          const datasets = await importFiles(files, route);
+          if (!datasets?.length) return;
+          project.datasets.push(...datasets);
+          if (project.name === "Untitled project")
+            project.name = files[0].name.replace(/\.[^.]+$/, "");
+          activate(datasets[0].id);
+          goto(1);
         },
-        "Choose files",
       );
       return;
     }
@@ -974,28 +1048,13 @@ async function action(act, el) {
     case "bot":
       bot = !bot;
       break;
-    case "botpreview": {
-      if (!proposal) return;
-      modal(
-        "Preview suggested chart",
-        '<div class="graphic" id="suggestedFig"></div>',
-        () => {
-          snapshotViews();
-          project.views[step === 3 ? 1 : 0] = proposal;
-          proposal = null;
-          goto(step === 3 ? 3 : 2);
-        },
-        "Use this view",
-      );
-      get("suggestedFig").append(figure(analyse(d, proposal), proposal));
+    case "botdraw":
+      applyProposal();
       return;
-    }
     case "choose":
-      recommend = true;
-      openBot("Which view would help me explore these variables or codes?");
+      openBot();
       return;
     case "finding":
-      recommend = true;
       openBot("I would like to show this finding: ");
       return;
     case "caption":
@@ -1049,14 +1108,25 @@ async function action(act, el) {
     case "send": {
       const q = val("question").trim();
       if (!q) throw Error("Enter a question.");
+      if (
+        proposal &&
+        /^(?:yes|sure|ok(?:ay)?|go ahead|please do|make (?:it|that|the chart)|show (?:me|it)|draw it)(?:[, !.]+(?:please|do it|make it|show me|draw it|go ahead))*[!. ]*$/i.test(
+          q,
+        )
+      ) {
+        lastQuestion = "";
+        history.push({ role: "user", content: q });
+        applyProposal();
+        return;
+      }
       await ask(
         q,
-        recommend
-          ? "recommend"
-          : step === 1
-            ? "imports"
-            : chosen.size && /suggest.*cod/i.test(q)
-              ? "coding"
+        step === 1
+          ? "imports"
+          : chosen.size && /suggest.*cod/i.test(q)
+            ? "coding"
+            : step === 2 || step === 3
+              ? "recommend"
               : project.views.some((v) => v.task === "model")
                 ? "regression"
                 : "charts",

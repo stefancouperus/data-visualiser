@@ -27,7 +27,16 @@ export function newView(d) {
       palette: "colour",
     };
   const fields = d.fields.filter((f) => f.type !== "metadata"),
-    x = fields[0] || d.fields[0];
+    x =
+      (d.qual &&
+        fields.find(
+          (f) =>
+            f.levels.length > 1 &&
+            !/^(consent|intro)$/i.test(f.raw) &&
+            ["category", "ordered", "number"].includes(f.type),
+        )) ||
+      fields[0] ||
+      d.fields[0];
   return {
     x: x.id,
     y: "",

@@ -1,4 +1,11 @@
-import { readFile, makeTable, corpus, texts, codedSheet } from "./import.js";
+import {
+  readFile,
+  makeTable,
+  qualtricsHeaders,
+  corpus,
+  texts,
+  codedSheet,
+} from "./import.js";
 import { esc } from "./chart.js";
 import { askForm, formselect, table, val } from "./ui.js";
 export function taguette(doc) {
@@ -27,20 +34,23 @@ export function taguette(doc) {
   return list;
 }
 async function sheet(doc, route) {
-  const choice = await askForm(
-    "Choose the table to read",
-    `<p>${esc(doc.name)}</p><div class="formgrid">${formselect(
-      "sheet",
-      "Worksheet",
-      doc.sheets.map((s, i) => [String(i), s.name]),
-      "0",
-    )}<label>Header row number<input id="header" type="number" min="1" value="1"></label></div>`,
-    () =>
-      makeTable(
-        doc.sheets[+val("sheet")].grid.slice(Number(val("header")) - 1),
-        doc.name,
-      ),
-  );
+  const auto = doc.sheets.length === 1 && qualtricsHeaders(doc.sheets[0].grid);
+  const choice = auto
+    ? makeTable(doc.sheets[0].grid, doc.name)
+    : await askForm(
+        "Choose the table to read",
+        `<p>${esc(doc.name)}</p><div class="formgrid">${formselect(
+          "sheet",
+          "Worksheet",
+          doc.sheets.map((s, i) => [String(i), s.name]),
+          "0",
+        )}<label>Header row number<input id="header" type="number" min="1" value="1"></label></div>`,
+        () =>
+          makeTable(
+            doc.sheets[+val("sheet")].grid.slice(Number(val("header")) - 1),
+            doc.name,
+          ),
+      );
   if (!choice) return null;
   if (route !== "coded" && route !== "text") return choice;
   const fields = choice.fields.map((f) => [f.id, f.label]),

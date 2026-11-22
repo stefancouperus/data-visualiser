@@ -105,7 +105,9 @@ export default {
           content:
             tutor +
             "\n" +
-            skills[data.skill] +
+            (data.skill === "recommend"
+              ? charts + "\n" + regression + "\n" + recommend
+              : skills[data.skill]) +
             "\nHelp mode: " +
             (["guided", "request", "hints"].includes(data.mode)
               ? data.mode

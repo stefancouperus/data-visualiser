@@ -2,9 +2,8 @@ import { test, expect } from "@playwright/test";
 import { zipSync, strToU8 } from "fflate";
 async function upload(page, route, name, data) {
   await page.goto("/");
-  await page.getByRole("button", { name: route }).click();
   const picker = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: "Choose files" }).click();
+  await page.getByRole("button", { name: route }).click();
   await (
     await picker
   ).setFiles({
@@ -125,4 +124,63 @@ test("spreadsheet source mapping imports coded excerpts", async ({ page }) => {
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(page.locator("main .scroll")).toContainText("Time; Work");
   await expect(page.locator("main .scroll")).toContainText("Planning");
+});
+
+test("a recognised two-header survey opens immediately and the tutor draws suggested and requested charts", async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    sessionStorage.setItem("dv-session", "fictional-browser-test"),
+  );
+  let calls = 0;
+  await page.route("https://tutor.example.test/ask", (route) => {
+    const data = route.request().postDataJSON();
+    expect(data.skill).toBe("recommend");
+    calls++;
+    const suggestion =
+      calls === 1
+        ? {
+            action: "suggest",
+            task: "group",
+            x: "c2",
+            y: "c3",
+            chart: "grid",
+            measure: "percent",
+            explanation: "A heatmap compares turnout within each group.",
+          }
+        : {
+            action: "draw",
+            task: "one",
+            x: "c2",
+            chart: "dots",
+            measure: "count",
+            explanation: "Show turnout counts.",
+          };
+    return route.fulfill({ json: { answer: JSON.stringify(suggestion) } });
+  });
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "test.csv",
+    "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Turnout,Group\n2026,2026,Yes,A\n2026,2026,No,B\n",
+  );
+  await expect(page.getByText(/2 response records/)).toBeVisible();
+  await page.getByRole("button", { name: "Confirm and explore" }).click();
+  await page.getByRole("button", { name: "Data bot", exact: true }).click();
+  const prompt = page.locator("#question");
+  const send = page.getByRole("button", { name: "Send", exact: true });
+  await prompt.fill("How could I compare the two groups?");
+  await send.click();
+  await expect(
+    page.getByRole("button", { name: "Make this chart" }),
+  ).toBeVisible();
+  await prompt.fill("Yes, show me");
+  await send.click();
+  await expect(page.locator('[data-key="chart"]')).toHaveValue("grid");
+  expect(calls).toBe(1);
+  await prompt.fill("Make a dot plot of turnout instead");
+  await send.click();
+  await expect(page.locator('[data-key="chart"]')).toHaveValue("dots");
+  await page.getByRole("button", { name: "Undo view change" }).click();
+  await expect(page.locator('[data-key="chart"]')).toHaveValue("grid");
 });
