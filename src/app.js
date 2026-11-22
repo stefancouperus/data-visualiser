@@ -7,7 +7,13 @@ import {
   bindIndicatorColumns,
   readIndicators,
 } from "./indicator-ui.js";
-import { codingGuide, checkedSuggestions } from "./coding.js";
+import {
+  codingGuide,
+  checkedSuggestions,
+  acceptsCodingBatch,
+  requestsCoding,
+  applyCodingBatch,
+} from "./coding.js";
 import { codingControls, bindCodingControls } from "./codebook-ui.js";
 import { tutorRecord, projectPackage, previousWork } from "./tutor-history.js";
 import {
@@ -279,7 +285,7 @@ function botBox() {
           .join("")}</ul></details>`
       : ""
   }<div class="chatlog">${history.map((t) => `<div class="msg ${t.role === "user" ? "msg-user" : "msg-assistant"}"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`).join("")}</div>${requesting ? `<p role="status">${checkingGroups ? "Checking possible groups in your selection…" : "Waiting for the university model…"}</p>` : ""}
- ${proposal ? b("botdraw", "Make this chart", "primary") + (proposal.groupSuggestion ? b("declinegroups", "No thanks", "plain") : "") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
+ ${proposal ? b("botdraw", "Make this chart", "primary") + (proposal.groupSuggestion ? b("declinegroups", "No thanks", "plain") : "") : ""}${suggestions.length ? b("applycodes", "Apply all suggested labels", "primary") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><small>${esc(s.source)}</small><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
  ${captionDraft ? b("applycaption", "Add caption to figure") : ""}${botWorkspaceControls()}<label>Ask about your project<textarea id="question" maxlength="4000" placeholder="${getData()?.kind === "text" ? "Which of these themes come up in the same passage?" : "Show me which answers people gave together…"}">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></div><div class="botsize" data-window-handle="resize" title="Drag to resize"></div></section>`;
 }
 function render() {
@@ -1160,12 +1166,60 @@ async function checkGroupSuggestion() {
     checkingGroups = false;
   }
 }
+function finishCodingBatch(question) {
+  const current = new Set(selectedPassages().map((p) => p.id));
+  if (suggestions.some((s) => !current.has(s.id)))
+    throw Error("The passage selection changed. Ask for fresh suggestions.");
+  const applied = applyCodingBatch(getData(), suggestions);
+  const message = `Applied ${applied.assignments} label assignment${applied.assignments === 1 ? "" : "s"} across ${applied.passages} passage${applied.passages === 1 ? "" : "s"}: ${applied.labels.join(", ")}.`;
+  suggestions = [];
+  if (question) history.push({ role: "user", content: question });
+  history.push({ role: "assistant", content: message });
+  tutorRecord(project).activity.push(message);
+  lastQuestion = "";
+  render();
+}
+
+async function prepareChatCoding(question) {
+  if (requesting) throw Error("Wait for the current bot reply first.");
+  if (!getData().passages.length) {
+    history.push(
+      { role: "user", content: question },
+      {
+        role: "assistant",
+        content:
+          "This dataset has no passages to code. Open a transcript or a set of written answers first.",
+      },
+    );
+    lastQuestion = "";
+    render();
+    return;
+  }
+  const selected = selectedPassages();
+  if (!selected.length || selected.length > 10) {
+    evidence(focusIndex(), undefined, question);
+    return;
+  }
+  await ask(question, "coding");
+}
 async function ask(question, skill, intent = "") {
   if (requesting) throw Error("A tutor request is already pending.");
   if (!botURL)
     throw Error("The workshop tutor service has not been connected.");
   if (!sessionStorage.getItem("dv-session")) {
     openBot(question);
+    if (skill === "coding") {
+      queuedShortcut = {
+        prompt: question,
+        skill,
+        step,
+        dataset: project.active,
+        baseline: JSON.stringify(project.views),
+        focus: botFocus,
+        selection: JSON.stringify([[...chosen], scope]),
+      };
+      return;
+    }
     throw Error("Enter the workshop course code first.");
   }
   if (skill === "recommend" && step === 3 && !intent) {
@@ -1310,14 +1364,30 @@ async function ask(question, skill, intent = "") {
     }
   }
   const coding = skill === "coding";
-  if (coding && (!chosen.size || chosen.size > 10))
+  const batch = coding ? selectedPassages() : [];
+  if (coding && (!batch.length || batch.length > 10))
     throw Error("Select one to ten passages first.");
   const context = coding
     ? {
         guide: codingGuide(dataset),
-        passages: dataset.passages
-          .filter((p) => chosen.has(p.id))
-          .map(({ id, source, text, codes }) => ({ id, source, text, codes })),
+        priorDiscussion:
+          acceptsCodingBatch(question) ||
+          /\b(?:earlier|suggested|previous|discussed)\b/i.test(question)
+            ? history
+                .filter(
+                  (m) =>
+                    m.role === "assistant" &&
+                    /\b(?:labels?|themes?|codes?|coding)\b/i.test(m.content),
+                )
+                .slice(-3)
+                .map((m) => m.content.slice(0, 1600))
+            : undefined,
+        passages: batch.map(({ id, source, text, codes }) => ({
+          id,
+          source,
+          text,
+          codes,
+        })),
       }
     : research
       ? researchCatalogue(
@@ -1375,6 +1445,10 @@ async function ask(question, skill, intent = "") {
   }
   if (JSON.stringify(context).length > 115000)
     throw Error("Choose fewer sources or passages for the bot.");
+  if (coding) {
+    suggestions = [];
+    proposal = captionDraft = null;
+  }
   const previous = history.slice(-4),
     activeProject = project,
     activeChat = history,
@@ -1419,6 +1493,7 @@ async function ask(question, skill, intent = "") {
     }
     if (skill === "coding") {
       if (
+        startEvidence !== JSON.stringify([[...chosen], scope]) ||
         JSON.stringify(context.guide) !== JSON.stringify(codingGuide(dataset))
       ) {
         suggestions = [];
@@ -1431,7 +1506,7 @@ async function ask(question, skill, intent = "") {
         structuredAnswer(answer).suggestions,
         context.passages,
         context.guide,
-      );
+      ).map((s) => ({ ...s, source: batch.find((p) => p.id === s.id).source }));
       tutorRecord(project).activity.push(
         "Requested coding suggestions for " +
           context.passages.length +
@@ -1449,7 +1524,10 @@ async function ask(question, skill, intent = "") {
             .map(
               (s) => "\n" + s.code + " — “" + s.quote + "” " + (s.reason || ""),
             )
-            .join(""),
+            .join("") +
+          (suggestions.length
+            ? "\nReview the matches. Choose Apply all suggested labels or reply “apply them” to save them to these passages."
+            : ""),
       });
     } else if (skill === "recommend") {
       let pick;
@@ -1471,6 +1549,19 @@ async function ask(question, skill, intent = "") {
             "I could not read the model response. Please try the question again.",
         };
       proposal = null;
+      if (
+        pick.action === "reviewCoding" &&
+        dataset.kind === "text" &&
+        !intent
+      ) {
+        history.push({
+          role: "assistant",
+          content:
+            "Choose the passages to code. I’ll match suggested labels to quotations for you to review and apply.",
+        });
+        evidence(focusIndex(), undefined, question);
+        return;
+      }
       if (research) {
         let message;
         if (
@@ -2016,7 +2107,7 @@ function patternEvidence(i, index) {
     "Done",
   );
 }
-function evidence(i, match) {
+function evidence(i, match, codingPrompt = "") {
   const d = getData(),
     v = project.views[i],
     isText = d.kind === "text";
@@ -2069,6 +2160,10 @@ function evidence(i, match) {
   }
   const ps = d.passages.filter(
     (p) =>
+      (!codingPrompt ||
+        !scope.length ||
+        chosen.has(p.id) ||
+        scope.includes(p.source)) &&
       (!v.filter ||
         (v.filter === "source"
           ? p.source
@@ -2078,7 +2173,9 @@ function evidence(i, match) {
   );
   let page = 0,
     query = "";
-  const selected = new Set();
+  const selected = new Set(
+    codingPrompt ? ps.slice(0, 10).map((p) => p.id) : [],
+  );
   function list() {
     const filtered = ps.filter(
       (p) => !query || p.text.toLowerCase().includes(query),
@@ -2096,12 +2193,25 @@ function evidence(i, match) {
     );
   }
   modal(
-    d.openAnswers ? "Read and code written answers" : "Read and code passages",
-    (d.openAnswers
-      ? `<p>${d.openAnswers.answered} of ${d.openAnswers.eligible} included respondents answered. Select an answer, give the idea a short label, or ask the bot to suggest labels for your selection.</p>`
+    codingPrompt
+      ? "Choose passages for labelling"
+      : d.openAnswers
+        ? "Read and code written answers"
+        : "Read and code passages",
+    (codingPrompt
+      ? `<p>The first ${selected.size} of ${ps.length} matching passages are selected. Choose up to ten to share with the bot for label suggestions.</p>`
       : "") +
+      (d.openAnswers
+        ? `<p>${d.openAnswers.answered} of ${d.openAnswers.eligible} included respondents answered. Select an answer, give the idea a short label, or ask the bot to suggest labels for your selection.</p>`
+        : "") +
       `<label>Find a passage<input id="searchPass"></label><div id="passlist">${list()}</div><div class="bar"><button type="button" id="shortpass">Use highlighted words as a passage</button><button type="button" id="discusspass" data-i="${i}">Discuss selected passages</button></div><label>Code to apply<input id="applycode" list="knowncodes"></label><datalist id="knowncodes">${opts(allCodes(d), "")}</datalist>${codingControls(d)}`,
     () => {
+      if (codingPrompt) {
+        if (get("suggestpass").disabled)
+          throw Error("Review your codebook first.");
+        get("suggestpass").click();
+        return false;
+      }
       if (!selected.size) throw Error("Choose one or more passages.");
       const code = val("applycode").trim();
       for (const p of d.passages.filter((p) => selected.has(p.id))) {
@@ -2110,8 +2220,15 @@ function evidence(i, match) {
       }
       render();
     },
-    "Mark reviewed / apply code",
+    codingPrompt
+      ? "Suggest labels for these passages"
+      : "Mark reviewed / apply code",
   );
+  if (codingPrompt) {
+    get("applycode").closest("label").hidden = true;
+    get("discusspass").hidden = true;
+    get("suggestpass").hidden = true;
+  }
   const refresh = () => {
     get("passlist").innerHTML = list();
     get("prevp").onclick = () => {
@@ -2212,7 +2329,7 @@ function evidence(i, match) {
         if (id === "discusspass")
           await action("discusspass", { dataset: { i } });
         else {
-          openBot("Suggest codes for the selected passages.");
+          openBot(codingPrompt || "Suggest codes for the selected passages.");
           await ask(lastQuestion, "coding");
         }
       } catch (e) {
@@ -2652,10 +2769,12 @@ async function action(act, el) {
                 .join("")
             : ""),
         () => {
-          if (d?.kind === "text")
+          if (d?.kind === "text") {
+            suggestions = [];
             scope = d.sources.filter((s, j) =>
               document.querySelector(`input[name=scope][value="${j}"]:checked`),
             );
+          }
           render();
         },
       );
@@ -2671,9 +2790,11 @@ async function action(act, el) {
         queued.step === step &&
         queued.dataset === project.active &&
         queued.baseline === JSON.stringify(project.views) &&
-        queued.focus === botFocus
+        queued.focus === botFocus &&
+        (!queued.selection ||
+          queued.selection === JSON.stringify([[...chosen], scope]))
       ) {
-        await ask(queued.prompt, "recommend", queued.intent);
+        await ask(queued.prompt, queued.skill || "recommend", queued.intent);
         return;
       }
       break;
@@ -2681,6 +2802,54 @@ async function action(act, el) {
     case "send": {
       const q = val("question").trim();
       if (!q) throw Error("Enter a question.");
+      if (d?.kind === "text") {
+        const latest = history.at(-1);
+        const agrees =
+          latest?.role === "assistant" &&
+          latest.content.includes("reply “apply them”") &&
+          /^(?:yes|yes please|okay|go ahead|please do)[.! ]*$/i.test(q);
+        if (suggestions.length && (acceptsCodingBatch(q) || agrees)) {
+          finishCodingBatch(q);
+          return;
+        }
+        if (
+          !suggestions.length &&
+          acceptsCodingBatch(q) &&
+          latest?.role === "assistant" &&
+          /^Applied \d+ label assignment/.test(latest.content)
+        ) {
+          history.push(
+            { role: "user", content: q },
+            {
+              role: "assistant",
+              content:
+                "Those labels have already been applied. You can see them under Read and code passages.",
+            },
+          );
+          lastQuestion = "";
+          break;
+        }
+        if (
+          suggestions.length &&
+          /\b(?:apply|adopt|accept|assign)\b/i.test(q) &&
+          /\b(?:labels?|codes?|suggestions?|them)\b/i.test(q)
+        ) {
+          history.push(
+            { role: "user", content: q },
+            {
+              role: "assistant",
+              content:
+                "The proposed matches are below. Use Review label to edit or accept one, Dismiss to leave one out, or Apply all suggested labels to save the remaining matches.",
+            },
+          );
+          lastQuestion = "";
+          break;
+        }
+        if (requestsCoding(q)) {
+          await prepareChatCoding(q);
+          return;
+        }
+      }
       if (
         /^(?:what (?:is|are) (?:a |the )?(?:sub[- ]?)?groups?|what (?:does|do) (?:a |the )?["'“”‘’]?(?:sub[- ]?)?groups?["'“”‘’]? mean|what do you mean by (?:a |the )?["'“”‘’]?(?:sub[- ]?)?groups?["'“”‘’]?)(?: (?:here|in (?:this|my|our) (?:chart|project|data|survey|interviews?)))?[?!. ]*$/i.test(
           q,
@@ -2752,16 +2921,17 @@ async function action(act, el) {
         q,
         step === 1
           ? "imports"
-          : chosen.size && /suggest.*cod/i.test(q)
-            ? "coding"
-            : step === 2 || step === 3
-              ? "recommend"
-              : project.views.some((v) => v.task === "model")
-                ? "regression"
-                : "charts",
+          : step === 2 || step === 3
+            ? "recommend"
+            : project.views.some((v) => v.task === "model")
+              ? "regression"
+              : "charts",
       );
       return;
     }
+    case "applycodes":
+      finishCodingBatch();
+      return;
     case "dismisscode":
       suggestions.splice(i, 1);
       break;
@@ -2793,34 +2963,22 @@ async function action(act, el) {
             : `<label>Code label<input id="approved" value="${esc(s.code)}" required></label>`
         }<label>Meaning<textarea id="approved-meaning" ${deductive ? "readonly" : ""}>${esc(s.definition)}</textarea></label>`,
         () => {
-          const p = d.passages.find((p) => p.id === s.id);
-          const code = val("approved").trim();
-          if (!p || !code)
-            throw Error("A matching passage and label are required.");
-          if (!p.codes.includes(code)) p.codes.push(code);
+          const current = {
+            ...s,
+            code: val("approved").trim(),
+            definition: val("approved-meaning").trim(),
+          };
+          const applied = applyCodingBatch(d, [current]);
+          const code = applied.labels[0],
+            p = d.passages.find((p) => p.id === s.id);
           if (!deductive) {
-            d.coding ||= {};
-            d.coding.meanings ||= [];
-            const meaning = d.coding.meanings.find(
-              (entry) => entry.label === code,
-            );
-            if (meaning && !meaning.definition)
-              meaning.definition = val("approved-meaning").trim();
-            if (!meaning)
-              d.coding.meanings.push({
-                label: code,
-                definition: val("approved-meaning").trim(),
-              });
-            const previousLabel = s.code;
+            const meaning = d.coding.meanings.find((e) => e.label === code);
             for (const remaining of suggestions)
-              if (remaining.code === previousLabel) {
+              if (remaining.code === s.code && remaining !== s) {
                 remaining.code = code;
-                remaining.definition = d.coding.meanings.find(
-                  (entry) => entry.label === code,
-                ).definition;
+                remaining.definition = meaning.definition;
               }
           }
-          p.reviewed = true;
           tutorRecord(project).activity.push(
             "Accepted the code “" +
               code +

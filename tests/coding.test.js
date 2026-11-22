@@ -95,3 +95,48 @@ test("deductive extraction retains complete labels evidenced in the project's co
     ["Spare parts", "Depot"],
   );
 });
+
+test("chat acceptance applies only valid reviewed matches atomically", async () => {
+  const { acceptsCodingBatch, requestsCoding, applyCodingBatch } =
+    await import("../src/coding.js");
+  for (const q of [
+    "Please apply them",
+    "Yes, adopt the suggested codes.",
+    "apply all",
+    "Can you apply those labels to the selected passages?",
+  ])
+    assert.equal(acceptsCodingBatch(q), true, q);
+  for (const q of [
+    "don't apply them",
+    "apply them except Time",
+    "please explain these codes",
+    "apply the first one",
+  ])
+    assert.equal(acceptsCodingBatch(q), false, q);
+  assert.ok(requestsCoding("come up with labels for these passages"));
+  assert.equal(requestsCoding("plot a chart of the suggested codes"), false);
+  const data = {
+    passages: [structuredClone(p), { ...structuredClone(p), id: "b" }],
+    coding: {
+      mode: "deductive",
+      book: [{ label: "Hours", definition: "Time" }],
+    },
+  };
+  assert.throws(() =>
+    applyCodingBatch(data, [
+      suggest("Hours"),
+      { ...suggest("Hours"), id: "b", quote: "not in the source" },
+    ]),
+  );
+  assert.deepEqual(
+    data.passages.map((x) => x.codes),
+    [[], []],
+  );
+  assert.throws(() => applyCodingBatch(data, [suggest("Other")]));
+  assert.equal(applyCodingBatch(data, [suggest("hours")]).assignments, 1);
+  assert.throws(() => applyCodingBatch(data, [suggest("Hours")]));
+  assert.deepEqual(
+    data.passages.map((x) => x.codes),
+    [["Hours"], []],
+  );
+});

@@ -131,3 +131,63 @@ export function labelsInCodebook(entries, source) {
     return false;
   });
 }
+
+// Only an unqualified acceptance of the displayed batch can write codes from chat.
+export function acceptsCodingBatch(message) {
+  const words = message
+    .toLowerCase()
+    .trim()
+    .replace(/[.!?,]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (/^(?:please )?(?:apply|accept|adopt) all(?: please)?$/.test(words))
+    return true;
+  return /^(?:(?:yes|ok|okay|sure) )?(?:(?:can|could|would) you |i(?:'d like| would like| want) you to )?(?:please )?(?:apply|accept|adopt|assign|use|add) (?:all(?: of)? )?(?:them(?: all)?|these|those|the suggestions|(?:the|these|those|your|suggested)(?: suggested| proposed)? (?:labels|codes|suggestions))(?:(?: to| on) (?:the |these |those |their |my )?(?:matching |selected )?(?:passages|excerpts|responses|transcript))?(?: please| now)?$/.test(
+    words,
+  );
+}
+
+export function requestsCoding(message) {
+  if (/\b(?:chart|plot|graph|figure|axis|legend)\b/i.test(message))
+    return false;
+  return (
+    acceptsCodingBatch(message) ||
+    /\b(?:come up with|suggest|propose|generate|recommend|identify|assign|apply|adopt|create|give me|develop|find)\b.{0,65}\b(?:labels?|codes?|themes?)\b/i.test(
+      message,
+    ) ||
+    /\b(?:code|label|tag) (?:these|those|the|my|this|selected)\b/i.test(
+      message,
+    ) ||
+    /\b(?:inductiv\w*|deductiv\w*|thematic) cod(?:e|ing)\b/i.test(message)
+  );
+}
+
+export function applyCodingBatch(d, pending) {
+  const guide = codingGuide(d);
+  const byId = new Map(d.passages.map((p) => [p.id, p]));
+  const targetIds = [...new Set(pending.map((s) => s.id))];
+  const targets = targetIds.map((id) => byId.get(id)).filter(Boolean);
+  const valid = checkedSuggestions(pending, targets, guide);
+  if (!pending.length || valid.length !== pending.length)
+    throw Error(
+      "These suggestions no longer match the current passages or codebook. Ask for fresh suggestions.",
+    );
+  for (const s of valid) {
+    const passage = byId.get(s.id);
+    passage.codes.push(s.code);
+    passage.reviewed = true;
+    if (guide.mode === "inductive") {
+      d.coding ||= {};
+      d.coding.meanings ||= [];
+      const meaning = d.coding.meanings.find((e) => e.label === s.code);
+      if (!meaning)
+        d.coding.meanings.push({ label: s.code, definition: s.definition });
+      else if (!meaning.definition) meaning.definition = s.definition;
+    }
+  }
+  return {
+    assignments: valid.length,
+    passages: targetIds.length,
+    labels: [...new Set(valid.map((s) => s.code))],
+  };
+}

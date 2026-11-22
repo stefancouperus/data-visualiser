@@ -1706,3 +1706,73 @@ test("open survey questions keep their research role and reopen reviewed written
     page.getByLabel("Current dataset").locator("option"),
   ).toHaveCount(2);
 });
+
+test("chat grounds label suggestions and applies only the accepted batch to the saved transcript", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  let calls = 0;
+  await page.route("https://tutor.example.test/ask", (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.skill).toBe("coding");
+    expect(body.context.passages).toHaveLength(2);
+    calls++;
+    return route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          suggestions: body.context.passages.map((p) => ({
+            id: p.id,
+            quote: p.text,
+            code: "Opening hours",
+            definition: "A reference to when a service is open.",
+          })),
+        }),
+      },
+    });
+  });
+  await upload(
+    page,
+    /Written responses or documents/,
+    "example.txt",
+    "The library is open late.\nThe library closes too early.\nPrivate sentence left out.",
+  );
+  await page.getByRole("button", { name: "Confirm and explore" }).click();
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Data bot").click();
+  await page
+    .locator("#question")
+    .fill("Could you come up with labels for the transcript?");
+  await btn("Send").click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "Choose passages for labelling",
+  );
+  expect(calls).toBe(0);
+  await page.locator("[name=pickp]").nth(2).uncheck();
+  await btn("Suggest labels for these passages").click();
+  await expect(btn("Apply all suggested labels")).toBeVisible();
+  await page.locator("#question").fill("Please apply them");
+  await btn("Send").click();
+  await expect(page.locator(".chatlog")).toContainText(
+    "Applied 2 label assignments across 2 passages",
+  );
+  await expect(btn("Apply all suggested labels")).toHaveCount(0);
+  expect(calls).toBe(1);
+  await btn("Close").click();
+  await btn("Save and export").click();
+  const dl = page.waitForEvent("download");
+  await btn("Download project with data").click();
+  const chunks = [];
+  for await (const c of await (await dl).createReadStream()) chunks.push(c);
+  const saved = JSON.parse(Buffer.concat(chunks));
+  expect(saved.datasets[0].passages.map((p) => p.codes)).toEqual([
+    ["Opening hours"],
+    ["Opening hours"],
+    [],
+  ]);
+  expect(saved.datasets[0].passages.map((p) => p.reviewed)).toEqual([
+    true,
+    true,
+    false,
+  ]);
+  expect(saved.datasets[0].coding.meanings).toHaveLength(1);
+});
