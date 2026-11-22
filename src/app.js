@@ -1,5 +1,12 @@
 import { structuredAnswer } from "./bot-response.js";
 import { isInterview, interviews, appendInterviews } from "./interviews.js";
+import {
+  listCodingCopies,
+  loadCodingCopy,
+  removeCodingCopy,
+  saveCodingCopy,
+  useCodingCopy,
+} from "./interview-recovery.js";
 import { interviewScreen, interviewAction } from "./interview-workspace.js";
 import { writtenAnswerSet, isOpenQuestion } from "./open-answers.js";
 import { confirmedRoles, editRoles } from "./variable-roles.js";
@@ -33,9 +40,17 @@ import {
   namedChartRequest,
   resolveAxis,
 } from "./question-matching.js";
+import { filterRequest } from "./filter-request.js";
 import { labelledSurvey } from "./survey-labels.js";
 import { isDocked, toggleDock, layoutBot } from "./bot-panel.js";
 import { combineTables } from "./combine.js";
+import {
+  combineCheckboxes,
+  hasAnswer,
+  matchesValue,
+  optionLevels,
+  displayedAnswer,
+} from "./survey-answers.js";
 import { uid, filteredRows } from "./import.js";
 import { importFiles } from "./import-ui.js";
 import {
@@ -59,6 +74,7 @@ import {
 import {
   focusLimit,
   readFocus,
+  projectFocusMessage,
   researchCatalogue,
   researchChart,
   researchExplanation,
@@ -307,6 +323,67 @@ function hasDeviceCopy() {
     return false;
   }
 }
+const codingSaveStatus = new WeakMap();
+window.addEventListener("beforeunload", (event) => {
+  if (codingSaveStatus.get(project)?.needsSave) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
+async function checkpointInterview(p, d) {
+  const state = {
+    needsSave: true,
+    message: "Saving coding progress on this device…",
+  };
+  codingSaveStatus.set(p, state);
+  function showStatus() {
+    if (project !== p || codingSaveStatus.get(p) !== state) return;
+    document.querySelectorAll("[data-iv-storage]").forEach((el) => {
+      el.textContent = state.message;
+    });
+  }
+  showStatus();
+  try {
+    await saveCodingCopy(p, interviews(d).source);
+    state.needsSave = false;
+    state.message = "Coding progress saved on this device.";
+  } catch {
+    state.message =
+      "This browser could not save your latest changes. Download your coding project before closing or refreshing.";
+    if (project === p && codingSaveStatus.get(p) === state)
+      notice(state.message);
+  }
+  showStatus();
+}
+async function showCodingCopies(container) {
+  try {
+    const entries = await listCodingCopies();
+    if (!container.isConnected || !entries.length) return;
+    container.innerHTML =
+      "<h2>Recover interview coding</h2>" +
+      entries
+        .map((entry) => {
+          const attributes = 'data-copy="' + esc(entry.id) + '"';
+          const when = esc(new Date(entry.saved).toLocaleString());
+          return (
+            '<div class="bar"><span>' +
+            esc(entry.name) +
+            " · " +
+            esc(entry.source) +
+            " · " +
+            when +
+            "</span>" +
+            b("recoverCoding", "Resume coding project", "", attributes) +
+            b("removeCodingCopy", "Remove recovery copy", "plain", attributes) +
+            "</div>"
+          );
+        })
+        .join("");
+    container.hidden = false;
+  } catch {
+    // Upload and downloaded projects still work when browser storage is blocked.
+  }
+}
 function render() {
   // A student may reopen a visual or change an existing question into an open one.
   const dataset = getData();
@@ -374,7 +451,7 @@ function render() {
     content = `<div class="hero"><h1>${headers[step]}</h1></div>${datasetSelect(project)}${coverageNote}`;
     if (step === 1 && interview) {
       content +=
-        interviewScreen(d) +
+        interviewScreen(d, codingSaveStatus.get(project)?.message) +
         '<details class="iv-import"><summary>Import details and source information</summary>' +
         check(d) +
         "</details>";
@@ -415,6 +492,7 @@ function render() {
     previousSource === document.querySelector(".iv-paper h2")?.textContent
   )
     document.querySelector(".iv-text").scrollTop = transcriptScroll;
+  if (step === 0) showCodingCopies(get("coding-copies"));
   bindTermHelp(get("app"));
   if (bot) {
     layoutBot();
@@ -469,9 +547,7 @@ function summary(i, v = project.views[i]) {
       "The question used to group or filter this figure now contains written answers. Clear that selection or choose a closed question.",
     );
   if (v.task !== "model") return analyse(d, v);
-  const rows = filteredRows(d).filter(
-      (r) => !v.filter || r[v.filter] === v.value,
-    ),
+  const rows = filteredRows(d, v),
     m = fitModel(d, rows, { ...v, predictors: v.predictors || [] });
   return {
     ...m,
@@ -638,7 +714,7 @@ function tidy(v, key) {
   if (key === "filter")
     v.value =
       (d.kind === "table"
-        ? fs.find((f) => f.id === v.filter)?.levels[0]
+        ? optionLevels(fs.find((f) => f.id === v.filter))[0]
         : v.filter === "source"
           ? d.sources[0]
           : Object.values(d.metadata || {}).find((m) => m[v.filter])?.[
@@ -819,7 +895,8 @@ function botContext(question = "") {
             }
           : null,
         availableCharts: available(d, project.views[i]),
-        chartListScope: "These options apply to restyling the current selection. For a new comparison, use the project chart options and choose the requested questions.",
+        chartListScope:
+          "These options apply to restyling the current selection. For a new comparison, use the project chart options and choose the requested questions.",
         categoricalPattern:
           project.views[i].task !== "patterns" &&
           d.kind === "table" &&
@@ -1327,6 +1404,53 @@ async function ask(question, skill, intent = "") {
   const dataset = getData();
   const current =
     project.views[step === 3 && botFocus === "both" ? 1 : focusIndex()];
+  if (dataset && skill === "recommend" && !intent && [2, 3].includes(step)) {
+    const requested = filterRequest(dataset, question);
+    if (requested) {
+      lastQuestion = "";
+      proposal = captionDraft = null;
+      history.push({ role: "user", content: question });
+      let message = requested.message;
+      if (!message) {
+        const panels =
+          step === 3 && (project.linked || botFocus === "both")
+            ? [0, 1]
+            : [focusIndex()];
+        const changes = panels.map((i) => ({
+          ...project.views[i],
+          filter: requested.filter,
+          value: requested.value,
+        }));
+        try {
+          changes.forEach((v, index) => summary(panels[index], v));
+          snapshotViews();
+          changes.forEach((v, index) => {
+            pendingSelections.delete(panels[index]);
+            project.views[panels[index]] = v;
+          });
+          const target = panels.length > 1 ? "both views" : "this view";
+          message = requested.filter
+            ? "Filtered " +
+              target +
+              " to “" +
+              requested.value +
+              "” for “" +
+              requested.name +
+              "”."
+            : "Cleared the view filter on " +
+              target +
+              ". Project exclusions still apply.";
+          tutorRecord(project).activity.push(message);
+        } catch (error) {
+          message =
+            "I couldn’t apply that filter to this visual. " + error.message;
+        }
+      }
+      history.push({ role: "assistant", content: message });
+      render();
+      return;
+    }
+  }
   if (skill === "recommend" && project.researchFocus && [2, 3].includes(step)) {
     const wantsGroups = asksForGroupSuggestion(question);
     if (
@@ -1364,13 +1488,45 @@ async function ask(question, skill, intent = "") {
     }
     return;
   }
-  const direct =
+  let direct =
     [2, 3].includes(step) &&
     !intent &&
     skill === "recommend" &&
     dataset?.kind === "table" &&
     (namedSurveyComparison(dataset.fields, question) ||
       directComparison(dataset.fields, question));
+  if (direct?.action === "clarifyAxes") {
+    const axes = direct.axes;
+    const controls = axes.map(({ phrase, choices }, i) => {
+      const label = i ? "Group respondents by" : "Compare answers to";
+      const values =
+        choices.length === 1
+          ? choices
+          : [["", "Choose a question"], ...choices];
+      return formselect(
+        "resolve-axis-" + i,
+        label + " (“" + phrase + "”)",
+        values,
+      );
+    });
+    const selection = await askForm(
+      "Which survey questions did you mean?",
+      "<p>More than one question matches your wording.</p>" + controls.join(""),
+      () => {
+        const ids = axes.map((_, i) => val("resolve-axis-" + i));
+        if (ids.some((id) => !id)) throw Error("Choose both questions.");
+        const spec = namedSurveyComparison(dataset.fields, question, ids);
+        if (!spec || !proposedChart(spec))
+          throw Error(
+            "Choose two different questions that support this comparison and its requested measure.",
+          );
+        return spec;
+      },
+      "Draw this comparison",
+    );
+    if (!selection) return;
+    direct = selection;
+  }
   if (direct) {
     const candidate = direct.action === "draw" && proposedChart(direct);
     if (direct.action === "answer" || candidate) {
@@ -1939,10 +2095,12 @@ async function reviewAction(act, d, el) {
     modal(
       "Exclude matching records",
       formselect("excludeField", "Field", fl) +
-        `<label>Exact value<input id="excludeValue"></label>`,
+        `<label>Value or selected option<input id="excludeValue"></label>`,
       () => {
         const rule = { field: val("excludeField"), value: val("excludeValue") };
-        if (!d.rows.some((r) => r[rule.field] === rule.value))
+        const field = fields.find((f) => f.id === rule.field);
+        if (field?.type === "multiple") rule.mode = "option";
+        if (!d.rows.some((r) => matchesValue(r, field, rule.value)))
           throw Error("No records have that value.");
         d.rules.push(rule);
         render();
@@ -2010,30 +2168,11 @@ async function reviewAction(act, d, el) {
   if (act === "multi") {
     modal(
       "Combine select-all-that-apply columns",
-      '<label>Question label<input id="multiTitle" required></label><p>Choose the columns for this question and check which values mark a selected answer. Blank cells count as unselected.</p>' +
+      '<label>Question label<input id="multiTitle" required></label><p>Choose the columns for this question and check which values mark a selected answer. A completely blank set of columns counts as skipped. A recorded answer with no selected options counts towards the total who answered.</p>' +
         indicatorColumns(fields, "mf"),
       () => {
         const markers = readIndicators(fields, "mf");
-        const items = fields.filter((f) => markers.has(f.id));
-        if (items.length < 2)
-          throw Error("Choose at least two answer columns.");
-        const id = "m" + uid(),
-          label = val("multiTitle");
-        d.fields.push({
-          id,
-          label,
-          raw: label,
-          type: "multiple",
-          levels: items.map((f) => f.label),
-          separator: " | ",
-        });
-        d.rows.forEach(
-          (r) =>
-            (r[id] = items
-              .filter((f) => markers.get(f.id).has(r[f.id]))
-              .map((f) => f.label)
-              .join(" | ")),
-        );
+        combineCheckboxes(d, "m" + uid(), val("multiTitle"), markers);
         render();
       },
     );
@@ -2110,8 +2249,7 @@ function patternEvidence(i, index) {
   if (!cell) return;
   if (d.kind === "table") {
     const fields = v.items.map((id) => d.fields.find((f) => f.id === id));
-    const rows = filteredRows(d).filter((r) => {
-      if (v.filter && r[v.filter] !== v.value) return false;
+    const rows = filteredRows(d, v).filter((r) => {
       if (v.groupBy && groupValue(d, v.groupBy, r) !== cell.groupValue)
         return false;
       if (v.patternMode === "separate")
@@ -2121,8 +2259,9 @@ function patternEvidence(i, index) {
         ).includes(cell.label);
       return fields.every(
         (f, j) =>
+          hasAnswer(r, f) &&
           JSON.stringify(patternAnswers(r, f)) ===
-          JSON.stringify(cell.keyParts[j]),
+            JSON.stringify(cell.keyParts[j]),
       );
     });
     modal(
@@ -2130,7 +2269,9 @@ function patternEvidence(i, index) {
       `<p>Showing ${Math.min(200, rows.length)} of ${rows.length} matching records.</p>` +
         table(
           fields.map((f) => f.label),
-          rows.slice(0, 200).map((r) => fields.map((f) => r[f.id])),
+          rows
+            .slice(0, 200)
+            .map((r) => fields.map((f) => displayedAnswer(r, f))),
         ),
       null,
       "Done",
@@ -2206,15 +2347,15 @@ function evidence(i, match, codingPrompt = "") {
     const fields = [...(v.items || []), ...(v.groupBy ? [v.groupBy] : [])]
       .map((id) => d.fields.find((f) => f.id === id))
       .filter(Boolean);
-    const rows = filteredRows(d).filter(
-      (r) => !v.filter || r[v.filter] === v.value,
-    );
+    const rows = filteredRows(d, v);
     modal(
       "Answers from the same person",
       `<p>Each row is one record. Blank cells are missing answers. Showing ${Math.min(200, rows.length)} of ${rows.length} records.</p>` +
         table(
           fields.map((f) => f.label),
-          rows.slice(0, 200).map((r) => fields.map((f) => r[f.id])),
+          rows
+            .slice(0, 200)
+            .map((r) => fields.map((f) => displayedAnswer(r, f))),
         ),
       null,
       "Done",
@@ -2223,17 +2364,10 @@ function evidence(i, match, codingPrompt = "") {
   }
   if (!isText) {
     const x = d.fields.find((f) => f.id === v.x);
-    const rows = filteredRows(d).filter(
+    const rows = filteredRows(d, v).filter(
       (r) =>
-        (!v.filter || r[v.filter] === v.value) &&
-        (!match ||
-          ((x?.type === "multiple"
-            ? r[v.x]
-                .split(x.separator || ";")
-                .map((s) => s.trim())
-                .includes(match.code)
-            : r[v.x] === match.code) &&
-            (!v.y || r[v.y] === match.source))),
+        !match ||
+        (matchesValue(r, x, match.code) && (!v.y || r[v.y] === match.source)),
     );
 
     const fields = d.fields.filter((f) => f.type !== "metadata");
@@ -2242,7 +2376,9 @@ function evidence(i, match, codingPrompt = "") {
       `<p>${rows.length} records in selection. Showing the first 200.</p>` +
         table(
           fields.map((f) => f.label),
-          rows.slice(0, 200).map((r) => fields.map((f) => r[f.id])),
+          rows
+            .slice(0, 200)
+            .map((r) => fields.map((f) => displayedAnswer(r, f))),
         ),
       null,
       "Done",
@@ -2458,8 +2594,12 @@ const reviewActs = [
   "tocorpus",
 ];
 async function handleInterview(act, el, d) {
+  const owner = project;
+  const checkpoint = () => checkpointInterview(owner, d);
   return interviewAction(act, el, d, {
     current: getData,
+    checkpoint,
+    status: () => codingSaveStatus.get(owner)?.message || "",
     render,
     focus: () => project.researchFocus,
     extract: extractCodebook,
@@ -2469,7 +2609,9 @@ async function handleInterview(act, el, d) {
         await requestTutor({
           skill: "coding",
           question:
-            "Assign the best supported codes to the supplied passages for student review. Return exact quotations.",
+            context.guide.mode === "deductive"
+              ? "Check every supplied passage against each approved code, including when the speaker expresses its meaning in different words. For each supported assignment give the exact passage ID, an exact verbatim quotation and a reason. Check for a separate second meaning within the per-passage limit. Leave unsupported passages uncoded."
+              : "Assign the best supported codes to the supplied passages for student review. Return exact quotations.",
           context,
         }),
       ).suggestions,
@@ -2490,6 +2632,7 @@ async function handleInterview(act, el, d) {
       }
       s.finished = true;
       if (!project.confirmed.includes(d.id)) project.confirmed.push(d.id);
+      checkpoint();
       goto(2);
     },
     add: async () => {
@@ -2512,6 +2655,7 @@ async function handleInterview(act, el, d) {
         const sets = await importFiles(files, route);
         if (!sets || getData() !== d) return;
         appendInterviews(d, sets);
+        checkpoint();
         resetTutor();
         goto(1);
       });
@@ -2793,6 +2937,13 @@ async function action(act, el) {
           "Check the questionnaire labels",
           `<p>${result.matched} question headings matched. Answer categories matched the questionnaire for ${result.decoded} questions.</p>` +
             table(["Question", "Example answers"], result.samples) +
+            (d.rules.length
+              ? "<p>Your exclusions carry across. " +
+                filteredRows(result.copy).length +
+                " of " +
+                d.rows.length +
+                " records remain selected.</p>"
+              : "") +
             (replace
               ? ""
               : "<p>This creates a labelled copy with fresh views. Your existing analysis stays available.</p>"),
@@ -2802,7 +2953,6 @@ async function action(act, el) {
             else {
               result.copy.id = uid();
               result.copy.name += " (labelled)";
-              result.copy.rules = [];
               project.datasets.push(result.copy);
             }
             activate(result.copy.id);
@@ -2993,8 +3143,24 @@ async function action(act, el) {
       break;
     }
     case "send": {
-      const q = val("question").trim();
+      let q = val("question").trim();
       if (!q) throw Error("Enter a question.");
+      const declaration = projectFocusMessage(q);
+      if (declaration) {
+        if (!declaration.request) {
+          lastQuestion = q;
+          editProjectFocus(q);
+          return;
+        }
+        if (declaration.focus.length > focusLimit)
+          throw Error("Keep your project focus to 2,000 characters or fewer.");
+        project.researchFocus = readFocus(declaration.focus);
+        proposal = captionDraft = queuedShortcut = null;
+        history.push({ role: "user", content: declaration.focus });
+        notice("Project focus saved.");
+        q = declaration.request;
+        lastQuestion = q;
+      }
       if (
         isInterview(d) &&
         (step === 1 ||
@@ -3093,15 +3259,6 @@ async function action(act, el) {
           { role: "assistant", content: termMeaning("group", d, view) },
         );
         break;
-      }
-      if (
-        /^(?:(?:our|my|the) (?:project|study|research) is (?:about|on)|(?:our|my) research question is|(?:we|I) (?:want|aim) to find out)\b/i.test(
-          q,
-        )
-      ) {
-        lastQuestion = q;
-        editProjectFocus(q);
-        return;
       }
       if (
         proposal?.groupSuggestion &&
@@ -3276,6 +3433,37 @@ async function action(act, el) {
         "Saved. Choose Resume on this device in the same browser to reopen this project.",
       );
       return;
+    case "removeCodingCopy":
+      if (
+        await askForm(
+          "Remove this recovery copy?",
+          "<p>This removes the interview recovery copy from this browser. Downloaded projects and your open workspace are kept.</p>",
+          () => true,
+          "Remove copy",
+        )
+      ) {
+        await removeCodingCopy(el.dataset.copy);
+        render();
+      }
+      return;
+    case "recoverCoding": {
+      if (
+        project.datasets.length &&
+        !(await askForm(
+          "Switch projects?",
+          "<p>Download the current project first if you want to keep its changes.</p>",
+          () => true,
+          "Resume coding project",
+        ))
+      )
+        return;
+      const { project: restored, summary } = await loadCodingCopy(
+        el.dataset.copy,
+      );
+      setProject(restored);
+      useCodingCopy(project, summary);
+      return;
+    }
     case "deviceOpen":
       if (
         project.datasets.length &&
@@ -3300,6 +3488,8 @@ async function action(act, el) {
               .trim()
               .slice(0, 100) || "Data visualiser") + " - project.json",
       );
+      if (act === "download" && codingSaveStatus.has(project))
+        codingSaveStatus.get(project).needsSave = false;
       return;
     case "open":
       chooseFiles(".json", false, ([file]) => openProjectFile(file));

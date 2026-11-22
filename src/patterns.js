@@ -1,4 +1,5 @@
 // Counts are computed locally from the records selected in the workspace.
+import { hasAnswer, choicesIn, optionLevels } from "./survey-answers.js";
 import { allCodes } from "./coding.js";
 import { filteredRows } from "./import.js";
 
@@ -37,17 +38,7 @@ export function patternModes(text, written = false) {
       ];
 }
 export function patternAnswers(row, f) {
-  const raw = row[f.id];
-  if (raw == null || raw === "") return [];
-  if (f.type !== "multiple") return [String(raw)];
-  return [
-    ...new Set(
-      String(raw)
-        .split(f.separator || ";")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    ),
-  ].sort();
+  return choicesIn(row[f.id], f).sort();
 }
 
 export function groupChoices(d, items = []) {
@@ -188,9 +179,7 @@ function summarise(d, v, rankLimit = 12, choices = new Map(patternChoices(d))) {
     }
     return a;
   }
-  const rows = filteredRows(d).filter(
-    (r) => !v.filter || r[v.filter] === v.value,
-  );
+  const rows = filteredRows(d, v);
   a.n = rows.length;
   const fields = items.map((id) => d.fields.find((f) => f.id === id));
   const units =
@@ -207,10 +196,10 @@ function summarise(d, v, rankLimit = 12, choices = new Map(patternChoices(d))) {
       let den = 0;
       for (const row of rows) {
         const picks = patternAnswers(row, f);
-        if (picks.length) den++;
+        if (hasAnswer(row, f)) den++;
         for (const pick of picks) tally.set(pick, (tally.get(pick) || 0) + 1);
       }
-      const labels = f.type === "multiple" ? [...tally.keys()] : f.levels;
+      const labels = [...new Set([...optionLevels(f), ...tally.keys()])];
       for (const label of labels) {
         const n = tally.get(label) || 0;
         a.records.push({
@@ -231,7 +220,7 @@ function summarise(d, v, rankLimit = 12, choices = new Map(patternChoices(d))) {
     let den = 0;
     for (const row of rows) {
       const parts = fields.map((f) => patternAnswers(row, f));
-      if (parts.some((p) => !p.length)) continue;
+      if (fields.some((f) => !hasAnswer(row, f))) continue;
       den++;
       tally(parts);
     }
@@ -245,7 +234,9 @@ function summarise(d, v, rankLimit = 12, choices = new Map(patternChoices(d))) {
       " answered every chosen question. " +
       (rows.length - den) +
       " omitted for a missing answer. Each complete record counts once.";
-    ranked(den, (parts) => parts.map((p) => p.join(" + ")));
+    ranked(den, (parts) =>
+      parts.map((p) => (p.length ? p.join(" + ") : "No options selected")),
+    );
   }
   return a;
 }
@@ -265,7 +256,7 @@ function groupedSummary(d, v) {
           !v.filter ||
           (v.filter === "source" ? s : d.metadata?.[s]?.[v.filter]) === v.value,
       )
-    : filteredRows(d).filter((r) => !v.filter || r[v.filter] === v.value);
+    : filteredRows(d, v);
   const buckets = new Map(),
     included = [];
   for (const entry of entries) {

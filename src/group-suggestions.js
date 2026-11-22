@@ -62,9 +62,7 @@ export function suggestGrouping(d, view) {
           (view.filter === "source" ? s : d.metadata?.[s]?.[view.filter]) ===
             view.value,
       )
-    : filteredRows(d).filter(
-        (r) => !view.filter || r[view.filter] === view.value,
-      );
+    : filteredRows(d, view);
   const candidates = [];
   for (const [key, label] of groupingFields) {
     const counts = new Map();

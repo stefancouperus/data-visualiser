@@ -266,3 +266,79 @@ test("a conversational heatmap command can set both roles and its denominator af
     null,
   );
 });
+
+test("ambiguous chart axes require a choice, and exact choices bind both axes", async () => {
+  const { namedSurveyComparison } = await import("../src/question-matching.js");
+  const fields = [
+    "Trust in council",
+    "Trust in courts",
+    "Current year",
+    "Year joined",
+  ].map((label, i) => ({
+    id: "q" + i,
+    label,
+    type: "category",
+    levels: i < 2 ? ["High", "Low"] : ["First", "Second"],
+  }));
+  const q =
+    "Please draw a heatmap of trust by year, showing percentages within each year.";
+  const clarify = namedSurveyComparison(fields, q);
+  assert.equal(clarify.action, "clarifyAxes");
+  assert.equal(
+    namedSurveyComparison(fields, "Could you show me trust by year?").action,
+    "clarifyAxes",
+  );
+  assert.equal(
+    namedSurveyComparison(fields, "Make a heatmap comparing trust by year")
+      .action,
+    "clarifyAxes",
+  );
+  assert.deepEqual(
+    clarify.axes.map((axis) => axis.choices.map(([id]) => id)),
+    [
+      ["q0", "q1"],
+      ["q2", "q3"],
+    ],
+  );
+  assert.deepEqual(namedSurveyComparison(fields, q, ["q1", "q3"]), {
+    action: "draw",
+    task: "group",
+    chart: "grid",
+    measure: "percent",
+    x: "q1",
+    y: "q3",
+  });
+  assert.equal(
+    namedSurveyComparison(
+      fields,
+      "Draw a heatmap of Trust in courts by Current year",
+    ).x,
+    "q1",
+  );
+});
+
+test("a focus declaration can carry a separate plain-language request", async () => {
+  const { projectFocusMessage } = await import("../src/research-focus.js");
+  assert.deepEqual(
+    projectFocusMessage(
+      "My project is about commuting. Could you plot distance against time?",
+    ),
+    {
+      focus: "My project is about commuting",
+      request: "Could you plot distance against time?",
+    },
+  );
+  assert.deepEqual(
+    projectFocusMessage(
+      "Our research question is whether groups differ? Please compare the outcomes.",
+    ),
+    {
+      focus: "Our research question is whether groups differ",
+      request: "Please compare the outcomes.",
+    },
+  );
+  assert.deepEqual(projectFocusMessage("My study is about access and trust."), {
+    focus: "My study is about access and trust.",
+  });
+  assert.equal(projectFocusMessage("What data are included?"), null);
+});

@@ -1,3 +1,4 @@
+import { matchesValue, recordEligibility } from "./survey-answers.js";
 import Papa from "papaparse";
 import { unzipSync, strFromU8 } from "fflate";
 
@@ -304,7 +305,11 @@ export function corpus(name, passages, sources) {
     unit: "source",
   };
 }
-export const filteredRows = (t) =>
-  t.rows.filter((row) =>
-    (t.rules || []).every((r) => row[r.field] !== r.value),
+export function filteredRows(table, view = {}) {
+  const eligible = recordEligibility(table);
+  const field = view.filter && table.fields.find((f) => f.id === view.filter);
+  return table.rows.filter(
+    (row) =>
+      eligible(row) && (!view.filter || matchesValue(row, field, view.value)),
   );
+}

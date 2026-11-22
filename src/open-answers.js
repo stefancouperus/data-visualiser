@@ -1,4 +1,5 @@
 // Written answers retain the original row identities when exclusions remove rows.
+import { recordEligibility } from "./survey-answers.js";
 import { corpus, texts } from "./import.js";
 import { groupChoices } from "./patterns.js";
 
@@ -20,7 +21,12 @@ export function writtenAnswerSet(project, survey, key, id, openOnly) {
   const question = survey.fields.find((f) => f.id === key);
   if (!question) throw Error("Choose a survey question.");
   const rules = survey.rules || [];
-  const scope = JSON.stringify(rules.map((r) => [r.field, r.value]).sort());
+  const scope = JSON.stringify(
+    rules
+      .map((r) => (r.mode ? [r.field, r.value, r.mode] : [r.field, r.value]))
+      .sort(),
+  );
+  const recordIncluded = recordEligibility(survey);
   if (openOnly) {
     const existing = project.datasets.find(
       (d) =>
@@ -43,7 +49,7 @@ export function writtenAnswerSet(project, survey, key, id, openOnly) {
     metadata = Object.create(null);
   let eligible = 0;
   survey.rows.forEach((row, index) => {
-    if (rules.some((r) => row[r.field] === r.value)) return;
+    if (!recordIncluded(row)) return;
     eligible++;
     const answer = String(row[key] ?? "").trim();
     if (openOnly && !answer) return;

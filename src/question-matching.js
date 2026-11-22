@@ -64,9 +64,25 @@ function candidates(fields, phrase) {
   });
 }
 
+function axisChoices(fields, phrase) {
+  const exactId = fields.find((f) => f.id === phrase);
+  if (exactId) return [exactId];
+  const lower = phrase.trim().toLowerCase();
+  const exact = fields.filter((f) =>
+    [f.label, f.raw].some((s) => s?.trim().toLowerCase() === lower),
+  );
+  return exact.length ? exact : candidates(fields, phrase);
+}
+
 // Students can name the axes together or assign each question a role in a later sentence.
-export function namedSurveyComparison(fields, question) {
-  const chart = namedChartRequest(question);
+export function namedSurveyComparison(fields, question, chosen) {
+  const namedChart = namedChartRequest(question);
+  const plainComparison = question
+    .trim()
+    .match(
+      /^(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:show|plot|compare)\s+(?:me\s+)?(.+?)\s+by\s+([^,.;?!]+)[.?!]?$/i,
+    );
+  const chart = namedChart || (plainComparison && "bars");
   if (!["bars", "dots", "grid", "small", "table", "stack"].includes(chart))
     return null;
   if (
@@ -77,7 +93,7 @@ export function namedSurveyComparison(fields, question) {
     return null;
   const instruction = question.trim().replace(/[.?!]+$/u, "");
   const by = instruction.match(
-    /\b(?:of|showing)\s+(.+?)\s+by\s+([^,]+?)(?:,?\s+(?:showing|using|as)\s+(counts?|numbers?|percentages?|percents?)(?:\s+within\s+each\s+(.+))?)?$/i,
+    /\b(?:of|showing|comparing|for)\s+(.+?)\s+by\s+([^,]+?)(?:,?\s+(?:showing|using|as)\s+(counts?|numbers?|percentages?|percents?)(?:\s+within\s+each\s+(.+))?)?$/i,
   );
   const roles = instruction.match(
     /\buse\s+([^.!?]+?)\s+(?:for|as)\s+(?:the\s+)?(answers?|outcomes?|groups?)\s+and\s+([^.!?]+?)\s+(?:for|as)\s+(?:the\s+)?(answers?|outcomes?|groups?)(?:[.,;]\s*(?:show|use|showing|using)\s+(counts?|numbers?|percentages?|percents?)(?:\s+within\s+each\s+([^.!?]+))?)?$/i,
@@ -93,6 +109,8 @@ export function namedSurveyComparison(fields, question) {
     axes = [by[1], by[2]];
     unit = by[3];
     within = by[4];
+  } else if (!namedChart && plainComparison) {
+    axes = plainComparison.slice(1);
   } else return null;
   const options = fields.filter(
     (f) =>
@@ -100,10 +118,19 @@ export function namedSurveyComparison(fields, question) {
       f.levels.length &&
       !f.roles?.includes("open"),
   );
-  const [x, y] = axes.map((axis) => {
-    const id = resolveAxis(options, axis);
-    return options.find((field) => field.id === id);
-  });
+  const matches = axes.map((axis) => axisChoices(options, axis));
+  if (!chosen && matches.some((list) => list.length > 1)) {
+    return {
+      action: "clarifyAxes",
+      axes: matches.map((list, i) => ({
+        phrase: axes[i],
+        choices: (list.length ? list : options).map((f) => [f.id, f.label]),
+      })),
+    };
+  }
+  const [x, y] = chosen
+    ? chosen.map((id) => options.find((f) => f.id === id))
+    : matches.map((list) => list[0]);
   if (
     !x ||
     !y ||
@@ -203,12 +230,7 @@ export function directComparison(fields, question) {
 export function resolveAxis(fields, value) {
   if (typeof value !== "string" || !value.trim()) return value;
   const options = fields.filter((f) => f.type !== "metadata");
-  if (options.some((f) => f.id === value)) return value;
-  const lower = value.trim().toLowerCase();
-  const exact = options.filter((f) =>
-    [f.label, f.raw].some((s) => s?.toLowerCase().trim() === lower),
-  );
-  const results = exact.length ? exact : candidates(options, value);
+  const results = axisChoices(options, value);
   return results.length === 1 ? results[0].id : value;
 }
 

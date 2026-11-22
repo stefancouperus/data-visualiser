@@ -11,6 +11,26 @@ export const focusLimit = 2000;
 export const readFocus = (value) =>
   typeof value === "string" ? value.trim().slice(0, focusLimit) : "";
 
+// A focus declaration can precede a separate task in the same message.
+export function projectFocusMessage(message) {
+  if (
+    !/^(?:(?:our|my|the) (?:project|study|research) is (?:about|on)|(?:our|my) research question is|(?:we|I) (?:want|aim) to find out)\b/i.test(
+      message,
+    )
+  )
+    return null;
+  const next =
+    /(?:[.!?;]\s+|\n+|,\s+(?:and\s+)?|\s+and\s+(?:then\s+)?)(?=(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:draw|plot|create|make|show|compare|visuali[sz]e|code|apply|filter|fit|suggest|explain|summari[sz]e|calculate|list)\b)/i.exec(
+      message,
+    );
+  if (!next) return { focus: message };
+  const split = next.index + next[0].length;
+  return {
+    focus: message.slice(0, next.index).trim(),
+    request: message.slice(split).trim(),
+  };
+}
+
 export function researchCatalogue(d, view, focus, question, keepItems) {
   const text = d.kind === "text";
   const items =
@@ -22,12 +42,14 @@ export function researchCatalogue(d, view, focus, question, keepItems) {
           ? [view.x]
           : [];
   const selected = keepItems ? items : [];
-  const records = (text ? d.sources : filteredRows(d)).filter(
-    (r) =>
-      !view.filter ||
-      (text && view.filter === "source" ? r : groupValue(d, view.filter, r)) ===
-        view.value,
-  );
+  const records = text
+    ? d.sources.filter(
+        (r) =>
+          !view.filter ||
+          (view.filter === "source" ? r : groupValue(d, view.filter, r)) ===
+            view.value,
+      )
+    : filteredRows(d, view);
   const groupingFields = groupChoices(d, selected).filter(([key]) => {
     if (key === view.filter) return false;
     let first = "";

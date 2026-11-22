@@ -1,3 +1,4 @@
+import { hasAnswer, choicesIn, optionLevels } from "./survey-answers.js";
 import { patternSummary } from "./patterns.js";
 import { allCodes } from "./coding.js";
 import { bin } from "d3";
@@ -71,9 +72,7 @@ export function analyse(d, v) {
     throw Error(
       "Use a closed question to split or filter respondents. Open Written survey answers to compare themes.",
     );
-  const rows = filteredRows(d).filter(
-    (r) => !v.filter || r[v.filter] === v.value,
-  );
+  const rows = filteredRows(d, v);
   const base = {
     title: v.title || x.label + (y ? " by " + y.label : ""),
     series: "",
@@ -141,15 +140,8 @@ export function analyse(d, v) {
     return base;
   }
   const cross = v.task !== "one" && y,
-    multi = x.type === "multiple",
-    picks = (r) =>
-      multi
-        ? r[x.id]
-            .split(x.separator || ";")
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : [r[x.id]];
-  const valid = rows.filter((r) => r[x.id] && (!cross || r[y.id]));
+    multi = x.type === "multiple";
+  const valid = rows.filter((r) => hasAnswer(r, x) && (!cross || r[y.id]));
   const tally = new Map(),
     observed = new Set();
   for (const row of valid) {
@@ -157,15 +149,15 @@ export function analyse(d, v) {
     if (!tally.has(group)) tally.set(group, { den: 0, counts: new Map() });
     const entry = tally.get(group);
     entry.den++;
-    for (const label of new Set(picks(row))) {
+    for (const label of choicesIn(row[x.id], x)) {
       observed.add(label);
       entry.counts.set(label, (entry.counts.get(label) || 0) + 1);
     }
   }
   const labels = [
     ...new Set([
-      ...(x.levels || []).filter(
-        (s) => !multi && (x.type === "ordered" || observed.has(s)),
+      ...optionLevels(x).filter(
+        (s) => multi || x.type === "ordered" || observed.has(s),
       ),
       ...observed,
     ]),
@@ -189,14 +181,14 @@ export function analyse(d, v) {
       });
     }
   }
-  base.unit =
-    v.measure === "percent" || v.chart === "stack"
-      ? d.unit === "response"
-        ? "% of valid responses"
-        : "% of valid " + d.unit + " records"
-      : d.unit === "response"
-        ? "Responses"
-        : d.unit + " records";
+  const percentages = v.measure === "percent" || v.chart === "stack";
+  base.unit = percentages
+    ? d.unit === "response"
+      ? "% of valid responses"
+      : "% of valid " + d.unit + " records"
+    : d.unit === "response"
+      ? "Responses"
+      : d.unit + " records";
   base.note =
     valid.length +
     " valid of " +
@@ -204,8 +196,10 @@ export function analyse(d, v) {
     " selected " +
     d.unit +
     " records." +
-    (multi ? " Multiple selections can exceed 100%." : "") +
-    (cross ? " Percentages use the valid responses within each group." : "");
+    (multi && percentages ? " Multiple selections can exceed 100%." : "") +
+    (cross && percentages
+      ? " Percentages use the valid responses within each group."
+      : "");
   return base;
 }
 function qualitative(d, v) {

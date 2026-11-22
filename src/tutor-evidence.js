@@ -67,9 +67,7 @@ export function analyticalEvidence(d, v, question) {
     )
     .slice(0, 8);
   if (!fields.length) return;
-  const rows = filteredRows(d).filter(
-    (row) => !v.filter || row[v.filter] === v.value,
-  );
+  const rows = filteredRows(d, v);
   const numericSummaries = fields.map((f) => {
     const values = rows
       .filter((row) => row[f.id] !== "" && Number.isFinite(Number(row[f.id])))

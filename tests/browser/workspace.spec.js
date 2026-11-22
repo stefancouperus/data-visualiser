@@ -2068,3 +2068,86 @@ test("reclassifying the visible survey question as open keeps its answers out of
   await expect.poll(() => !!received).toBe(true);
   expect(JSON.stringify(received)).not.toContain("Synthetic statement");
 });
+
+test("a focus statement followed by a plotting request uses the new focus and draws the chart", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  let requested;
+  await page.route("https://tutor.example.test/ask", (route) => {
+    requested = route.request().postDataJSON();
+    return route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          action: "draw",
+          task: "two",
+          chart: "scatter",
+          x: "c2",
+          y: "c3",
+        }),
+      },
+    });
+  });
+  const csv =
+    "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Distance cycled,Minutes cycling\n" +
+    Array.from({ length: 15 }, (_, i) =>
+      [2026, 2026, i + 1, 5 * (i + 1) + 7].join(","),
+    ).join("\n");
+  await upload(page, /I have a Qualtrics export/, "commute.csv", csv);
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Confirm and explore").click();
+  await btn("Data bot").click();
+  await page
+    .locator("#question")
+    .fill(
+      "My project is about commuting. Could you plot Distance cycled on the horizontal axis and Minutes cycling on the vertical axis as a scatterplot?",
+    );
+  await btn("Send").click();
+  await expect(
+    page.locator('[data-chart][aria-pressed="true"]'),
+  ).toHaveAttribute("data-chart", "scatter");
+  expect(requested.question).toMatch(/^Could you plot/);
+  expect(requested.context.projectFocus).toBe("My project is about commuting");
+  await expect(page.locator("dialog[open]")).toHaveCount(0);
+});
+
+test("choosing among similar survey questions draws exactly the confirmed pair", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  let calls = 0;
+  await page.route("https://tutor.example.test/ask", (route) => {
+    calls++;
+    return route.abort();
+  });
+  const csv =
+    "StartDate,EndDate,Q1,Q2,Q3,Q4\nStart Date,End Date,Trust in council,Trust in courts,Current year,Year joined\n2026,2026,High,Low,First,2023\n2026,2026,Low,High,Second,2024";
+  await upload(page, /I have a Qualtrics export/, "trust.csv", csv);
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Confirm and explore").click();
+  await btn("Data bot").click();
+  await page
+    .locator("#question")
+    .fill(
+      "Draw a heatmap of trust by year, showing percentages within each year.",
+    );
+  await btn("Send").click();
+  await expect(
+    page.getByText("Which survey questions did you mean?"),
+  ).toBeVisible();
+  await expect(page.locator("#resolve-axis-0")).toHaveValue("");
+  await expect(page.locator("#resolve-axis-1")).toHaveValue("");
+  await page
+    .locator("#resolve-axis-0")
+    .selectOption({ label: "Trust in courts" });
+  await page.locator("#resolve-axis-1").selectOption({ label: "Year joined" });
+  await btn("Draw this comparison").click();
+  await expect(page.locator("#graphic0 svg")).toHaveAttribute(
+    "aria-label",
+    "Trust in courts by Year joined",
+  );
+  await expect(
+    page.locator('#graphic0 [data-source="2023"][data-code="Low"] text'),
+  ).toHaveText("100");
+  expect(calls).toBe(0);
+});

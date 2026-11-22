@@ -1,3 +1,4 @@
+import { optionLevels } from "./survey-answers.js";
 import { roleChoices } from "./variable-roles.js";
 import { termHelp } from "./term-help.js";
 import { figureStyles, styleFor, paletteOptions } from "./figure-styles.js";
@@ -12,7 +13,7 @@ import {
   selectionLimit,
 } from "./patterns.js";
 export function landing(local) {
-  return `<div class="hero"><h1>Data visualiser</h1><p>visualising and interpreting your survey or interview data</p></div><section class="project-open" id="project-drop" aria-label="Open a saved project"><div>${b("open", icon("project") + " Open a saved project")} ${local ? b("deviceOpen", "Resume on this device", "plain") : ""}</div><small>Choose your downloaded project (.json), or drop it here.</small></section><div class="choices">${b("upload", pict("survey") + "<strong>I have a Qualtrics export</strong><small>Read survey questions, scales and responses.</small>", "choice", 'data-route="survey"')}<section class="choice interview-entry">${pict("text")}<strong>I have interviews</strong><small>Build a shared codebook or check labels you already applied.</small><div class="bar">${b("upload", "Upload uncoded transcripts", "", "data-route=interview")}${b("upload", "I have coded interviews", "", "data-route=coded")}</div></section></div><details class="other-files"><summary>Other file types</summary><div class="list">${[
+  return `<div class="hero"><h1>Data visualiser</h1><p>visualising and interpreting your survey or interview data</p></div><section class="project-open" id="project-drop" aria-label="Open a saved project"><div>${b("open", icon("project") + " Open a saved project")} ${local ? b("deviceOpen", "Resume on this device", "plain") : ""}</div><small>Choose your downloaded project (.json), or drop it here.</small></section><section class="card" id="coding-copies" hidden></section><div class="choices">${b("upload", pict("survey") + "<strong>I have a Qualtrics export</strong><small>Read survey questions, scales and responses.</small>", "choice", 'data-route="survey"')}<section class="choice interview-entry">${pict("text")}<strong>I have interviews</strong><small>Build a shared codebook or check labels you already applied.</small><div class="bar">${b("upload", "Upload uncoded transcripts", "", "data-route=interview")}${b("upload", "I have coded interviews", "", "data-route=coded")}</div></section></div><details class="other-files"><summary>Other file types</summary><div class="list">${[
     ["table", "table", "Table or spreadsheet", "CSV, TSV or Excel"],
     [
       "coded",
@@ -325,7 +326,7 @@ export function panel(
       ? v.filter === "source"
         ? d.sources
         : Object.values(d.metadata || {}).map((m) => m[v.filter])
-      : d.fields.find((f) => f.id === v.filter)?.levels || []
+      : optionLevels(d.fields.find((f) => f.id === v.filter))
     : [];
   return `<section class="plotcard ${comparing ? "comparison-card" : "explore-card"}" data-panel="${i}">${comparing ? `<div class="view-heading"><h2>${side} view</h2><span>${esc(kinds[v.chart])}</span></div><details data-chart-options="edit-${i}"><summary>Change ${side.toLowerCase()} view</summary>` : ""}
   ${confirmedName ? `<div class="topline"><p><strong>Confirmed selection</strong><br>${esc(confirmedName)}</p>${b("editselection", "Change selection", "", "data-i=" + i)}</div>` : `<div class="selection-editor">${selectionControls(d, draft || v, i, !!draft)}</div>`}

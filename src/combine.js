@@ -1,3 +1,4 @@
+import { optionLevels, choicesIn } from "./survey-answers.js";
 import { uid, filteredRows } from "./import.js";
 export function combineTables(left, right, mode, keyLeft, keyRight) {
   const result = structuredClone(left);
@@ -21,10 +22,28 @@ export function combineTables(left, right, mode, keyLeft, keyRight) {
       throw Error(
         "Appending requires the same named columns. Original tables remain available.",
       );
+    for (const field of result.fields.filter((f) => f.type === "multiple")) {
+      field.levels = [
+        ...new Set([
+          ...optionLevels(field),
+          ...optionLevels(byName.get(field.raw)),
+        ]),
+      ];
+    }
     result.rows.push(
       ...rightRows.map((r) =>
         Object.fromEntries(
-          left.fields.map((f) => [f.id, r[byName.get(f.raw).id]]),
+          left.fields.map((f) => {
+            const origin = byName.get(f.raw);
+            const value = r[origin.id];
+            if (f.type !== "multiple") return [f.id, value];
+            if (!value)
+              return [
+                f.id,
+                origin.checkboxIndicators && value === "" ? "" : null,
+              ];
+            return [f.id, choicesIn(value, origin).join(f.separator || ";")];
+          }),
         ),
       ),
     );
@@ -43,9 +62,19 @@ export function combineTables(left, right, mode, keyLeft, keyRight) {
         label: right.name + " · " + f.label,
         raw: right.name + " · " + f.raw,
       }));
+    const joinedIDs = new Map(added.map((field) => [field.old, field.id]));
+    joinedIDs.set(keyRight, keyLeft);
+    for (const field of added) {
+      if (field.checkboxIndicators)
+        field.checkboxIndicators = field.checkboxIndicators.map((option) => ({
+          ...option,
+          id: joinedIDs.get(option.id),
+        }));
+    }
     for (const r of result.rows) {
       const paired = map.get(r[keyLeft]);
-      for (const f of added) r[f.id] = paired?.[f.old] || "";
+      for (const f of added)
+        r[f.id] = paired ? paired[f.old] : f.checkboxIndicators ? null : "";
     }
     result.fields.push(...added);
     result.matchCount = result.rows.filter((r) => map.has(r[keyLeft])).length;
@@ -53,8 +82,10 @@ export function combineTables(left, right, mode, keyLeft, keyRight) {
   for (const f of result.fields)
     f.levels = [
       ...new Set([
-        ...(f.type === "ordered" ? f.levels : []),
-        ...result.rows.map((r) => r[f.id]).filter(Boolean),
+        ...(f.type === "ordered" || f.type === "multiple"
+          ? optionLevels(f)
+          : []),
+        ...result.rows.flatMap((row) => choicesIn(row[f.id], f)),
       ]),
     ];
   return result;

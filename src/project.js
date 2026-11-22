@@ -1,3 +1,7 @@
+import {
+  fillCheckboxField,
+  restoreLegacyCheckboxes,
+} from "./survey-answers.js";
 import { readFocus } from "./research-focus.js";
 import { readTutorHistory } from "./tutor-history.js";
 import { filteredRows } from "./import.js";
@@ -122,6 +126,12 @@ export function verifyProject(p) {
           (d.interviews.draft &&
             (!d.sources.includes(d.interviews.draft.source) ||
               !Array.isArray(d.interviews.draft.matches) ||
+              [d.interviews.draft.rejected, d.interviews.draft.manual].some(
+                (choices) =>
+                  choices !== undefined &&
+                  (!Array.isArray(choices) ||
+                    choices.some((x) => typeof x !== "string")),
+              ) ||
               !Number.isInteger(d.interviews.draft.next) ||
               d.interviews.draft.next < 0 ||
               d.interviews.draft.next > d.interviews.draft.total)))
@@ -141,6 +151,7 @@ export function verifyProject(p) {
           d.rows.some((r) => !r || typeof r !== "object"))
       )
         throw Error("Missing table data.");
+      if (d.kind === "table") restoreLegacyCheckboxes(d);
       if (
         d.kind === "text" &&
         (!Array.isArray(d.passages) ||
@@ -177,7 +188,7 @@ export function settingsProject(p) {
           explanation: d.explanation,
           fields: d.fields.map(({ levels, ...f }) => ({
             ...f,
-            levels: f.type === "ordered" ? levels : [],
+            levels: f.type === "ordered" || f.checkboxIndicators ? levels : [],
           })),
         }
       : {
@@ -212,13 +223,39 @@ export function reattach(settings, actual) {
     if (saved.textPurpose) d.textPurpose = saved.textPurpose;
     if (saved.openAnswers) d.openAnswers = structuredClone(saved.openAnswers);
     if (d.kind === "table") {
+      // Settings can include checkbox fields derived after the original import.
+      for (const field of saved.fields.slice(d.fields.length)) {
+        if (
+          !field.checkboxIndicators?.length ||
+          !field.checkboxIndicators.every((option) =>
+            d.fields.some((source) => source.id === option.id),
+          )
+        )
+          break;
+        const derived = structuredClone(field);
+        fillCheckboxField(d, derived, true);
+        d.fields.push(derived);
+      }
       if (
         saved.fields.length !== d.fields.length ||
         saved.fields.some((f, i) => f.raw !== d.fields[i].raw)
       )
         throw Error("Columns differ in " + d.name);
       for (const [index, field] of d.fields.entries()) {
-        const entries = saved.fields[index].answerLabels;
+        const savedField = saved.fields[index];
+        if (
+          field.checkboxIndicators &&
+          savedField.checkboxIndicators &&
+          field.id !== savedField.id
+        ) {
+          // A student can rebuild the same checkbox group before opening settings.
+          for (const row of d.rows) {
+            row[savedField.id] = row[field.id];
+            delete row[field.id];
+          }
+          field.id = savedField.id;
+        }
+        const entries = savedField.answerLabels;
         if (entries && !field.answerLabels)
           applyAnswerLabels(d, field, entries);
       }

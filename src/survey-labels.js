@@ -1,3 +1,5 @@
+import { filteredRows } from "./import.js";
+
 // Qualtrics question definitions contain simple HTML as well as plain text.
 function wording(value) {
   const content = String(value ?? "")
@@ -36,6 +38,10 @@ export function applyAnswerLabels(table, field, entries) {
   if (!values.size) return false;
   const labels = new Set(lookup.values());
   if ([...values].every((value) => lookup.has(value))) {
+    for (const rule of table.rules || []) {
+      if (rule.field === field.id && lookup.has(rule.value))
+        rule.value = lookup.get(rule.value);
+    }
     for (const row of table.rows) {
       if (lookup.has(row[field.id])) row[field.id] = lookup.get(row[field.id]);
     }
@@ -117,5 +123,15 @@ export function labelledSurvey(table, definition) {
     throw Error(
       "No question matched this export. Choose the QSF for the same questionnaire, or export the responses with choice text.",
     );
+  if (table.rules?.length) {
+    const before = new Set(filteredRows(table));
+    const after = new Set(filteredRows(copy));
+    if (
+      table.rows.some((row, i) => before.has(row) !== after.has(copy.rows[i]))
+    )
+      throw Error(
+        "Applying these labels would change which responses are excluded. Review the exclusion rules before adding this questionnaire.",
+      );
+  }
   return { copy, matched, decoded, samples };
 }
