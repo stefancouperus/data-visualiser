@@ -155,7 +155,8 @@ function botWorkspaceControls() {
   const names = both ? project.views.map(describe).join(" / ") : describe(view);
   const controls = both
     ? b("askboth", "Compare findings")
-    : b("askview", "Explain the pattern", "", `data-i="${focusIndex()}"`) +
+    : b("choose", "Suggest a chart") +
+      b("askview", "Explain the pattern", "", `data-i="${focusIndex()}"`) +
       (available(d, view).length > 1
         ? b("botvariant", "Try another chart")
         : "") +
@@ -163,7 +164,7 @@ function botWorkspaceControls() {
         ? b("suggestgroups", "Suggest groups to compare")
         : "") +
       b("botcaption", "Draft a caption");
-  return `<div class="bot-selection">${target}<strong>${esc(names)}</strong>${included}<div class="bar">${controls}</div>${!both ? termHelp("group", d, view) : ""}</div>`;
+  return `<div class="bot-selection">${target}<strong>${esc(names)}</strong>${included}<details data-chart-options="bot-prompts"><summary>Suggested questions</summary><div class="bar">${controls}</div></details></div>`;
 }
 let checkingGroups = false;
 let undoViews = [],
@@ -322,7 +323,7 @@ function render() {
     if (step === 1)
       content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (d.kind === "text" ? "coded" : "table") + '"')}</div>${check(d)}${roleButton ? `<section class="card"><h2>Which questions help answer your research question?</h2><p>Identify the outcome, groups and possible explanations. Mark questions with written answers too.</p>${roleButton}</section>` : ""}${openRoute}<div class="bar">${b("confirm", "Confirm and explore", "primary")}</div>`;
     else if (step === 2 || step === 3)
-      content += `${step === 2 ? openRoute : ""}<div class="bar">${step === 2 ? b("compare", "Compare two views", "primary") : b("savecompare", "Save comparison", "primary")}${step === 2 ? b("choose", icon("bot") + " Suggest a chart") : b("askboth", icon("bot") + " Compare findings")}${roleButton}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
+      content += `${step === 2 ? openRoute : ""}<div class="bar">${step === 2 ? b("compare", "Compare two views") : b("savecompare", "Save comparison", "primary")}${step === 3 ? b("askboth", icon("bot") + " Compare findings") : ""}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
         .slice(0, step === 3 ? 2 : 1)
         .map((v, i) =>
           panel(
@@ -2283,7 +2284,9 @@ async function action(act, el) {
       selectionConfirmed = false;
       beginSelection(i);
       render();
-      document.querySelector(`[data-stage-selection="${i}"]`)?.focus();
+      document
+        .querySelector(`[data-panel="${i}"] .selection-editor select`)
+        ?.focus();
       return;
     case "applyselection":
       if (!pendingSelections.has(i)) summary(i);
@@ -2425,6 +2428,11 @@ async function action(act, el) {
       return;
     case "charttype": {
       const view = project.views[i];
+      const picker = el.closest(".chart-picker");
+      if (picker) {
+        picker.open = false;
+        picker.querySelector("summary").focus({ preventScroll: true });
+      }
       if (
         view.chart === el.dataset.chart ||
         !available(d, view).includes(el.dataset.chart)
@@ -2436,7 +2444,7 @@ async function action(act, el) {
       view.chart = el.dataset.chart;
       render();
       document
-        .querySelector(`[data-panel="${i}"] [data-chart="${view.chart}"]`)
+        .querySelector(`[data-panel="${i}"] .chart-picker summary`)
         ?.focus({ preventScroll: true });
       return;
     }
@@ -2894,6 +2902,8 @@ async function action(act, el) {
     case "open":
       chooseFiles(".json", false, ([file]) => openProjectFile(file));
       return;
+    case "downloadfigure":
+      return action(val("figure-format") === "svg" ? "svg" : "png", el);
     case "previewexport":
     case "svg":
     case "png":
@@ -3101,13 +3111,7 @@ document.addEventListener("change", (e) => {
   render();
   if (["task", "patternMode"].includes(t.dataset.key))
     document
-      .querySelector(
-        '[data-panel="' +
-          i +
-          '"] input[data-key="' +
-          t.dataset.key +
-          '"]:checked',
-      )
+      .querySelector(`[data-panel="${i}"] select[data-key="${t.dataset.key}"]`)
       ?.focus({ preventScroll: true });
 });
 resetTutor();

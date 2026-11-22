@@ -48,15 +48,26 @@ export function roleChoices(fields, preferred) {
 export function editRoles(d, project, suggest, done) {
   const fields = fieldsFor(d);
   const existing = new Map(confirmedRoles(d).map((f) => [f.id, f.roles]));
+  const roleNames = (selected) =>
+    roles
+      .filter(([key]) => selected.includes(key))
+      .map(([, name]) => name)
+      .join(" · ") || "Unassigned";
+  const showRoles = (box) => {
+    box.closest("details").querySelector(".role-summary").textContent =
+      roleNames(
+        [...box.querySelectorAll("input:checked")].map((el) => el.value),
+      );
+  };
   modal(
     "How do these questions fit your project?",
     `
     <label>What do you want to find out?<textarea id="role-focus" maxlength="2000">${esc(project.researchFocus || "")}</textarea></label>
     <label>What might explain the outcome? (optional)<input id="role-idea" maxlength="1000" value="${esc(d.explanation || "")}"></label>
-    <p>${roles.map(([, name, meaning]) => "<strong>" + name + "</strong> · " + meaning).join("<br>")}</p>
+    <details><summary>What do the four roles mean?</summary><p>${roles.map(([, name, meaning]) => "<strong>" + name + "</strong> · " + meaning).join("<br>")}</p></details>
     ${suggest ? `<div class="role-help">${sessionStorage.getItem("dv-session") ? "" : '<label>Course code for bot suggestions<input id="role-code" type="password"></label>'}<button type="button" id="suggest-roles">Suggest roles from my project</button><p role="status" id="role-status"></p></div>` : ""}
-    <p>Tick any roles that fit. A question can have several roles or be left blank.</p>
-    <div class="role-list">${fields.map((f) => `<fieldset data-role-field="${esc(f.id)}"><legend>${esc(f.label)}</legend>${roles.map(([r, name]) => `<label class="tick"><input type="checkbox" value="${r}" ${existing.get(f.id)?.includes(r) ? "checked" : ""}>${name}</label>`).join("")}<small class="role-reason"></small></fieldset>`).join("")}</div>`,
+    <p>Choose a question to edit its roles. Each question can have more than one.</p>
+    <div class="role-list">${fields.map((f) => `<details name="question-roles"><summary>${esc(f.label)} <span class="role-summary">${esc(roleNames(existing.get(f.id) || []))}</span></summary><fieldset data-role-field="${esc(f.id)}" aria-label="${esc(f.label)}">${roles.map(([r, name]) => `<label class="tick"><input type="checkbox" value="${r}" ${existing.get(f.id)?.includes(r) ? "checked" : ""}>${name}</label>`).join("")}<small class="role-reason"></small></fieldset></details>`).join("")}</div>`,
     () => {
       project.researchFocus = get("role-focus").value.trim();
       d.explanation = get("role-idea").value.trim();
@@ -73,6 +84,12 @@ export function editRoles(d, project, suggest, done) {
     },
     "Confirm question roles",
   );
+  get("dialog").querySelector(".role-list").onchange = (e) => {
+    const box = e.target.closest("fieldset");
+    showRoles(box);
+    box.dataset.edited = "true";
+    box.querySelector("small").textContent = "";
+  };
   const trigger = get("suggest-roles");
   if (!trigger) return;
   trigger.onclick = async () => {
@@ -135,18 +152,14 @@ export function editRoles(d, project, suggest, done) {
             : "");
         added++;
       }
+      boxes.forEach(showRoles);
       status.textContent = added
-        ? `Suggestions added for ${added} question(s). Review the ticks, then confirm your choices.`
+        ? `Suggestions added for ${added} question(s). Review the roles, then confirm your choices.`
         : "No additional roles suggested. You can choose roles yourself.";
     } catch (err) {
       status.textContent = err.message;
     } finally {
       trigger.disabled = false;
     }
-  };
-  get("dialog").querySelector(".role-list").onchange = (e) => {
-    const box = e.target.closest("fieldset");
-    box.dataset.edited = "true";
-    box.querySelector("small").textContent = "";
   };
 }

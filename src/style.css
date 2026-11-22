@@ -842,3 +842,16 @@ dialog h2 {
 .chatlog .msg p { color: inherit; margin: .25rem 0 0; }
 .chatlog .msg-user { align-self: flex-end; color: #fff; background: #284b84; border: 0; border-radius: .9rem .9rem .18rem .9rem; }
 .chatlog .msg-assistant { align-self: flex-start; color: #18362d; background: #eff6f3; border: 1px solid #c5dbd3; border-inline-start: 3px solid #508070; border-radius: .18rem .9rem .9rem .9rem; }
+
+.other-files { margin-top: 1.25rem; }
+.figure-actions, .export-main { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; }
+.export-main { align-items: end; margin-bottom: 1rem; }
+.chart-picker { position: relative; margin: 0; }
+.chart-picker summary { cursor: pointer; border: 1px solid var(--line); border-radius: .4rem; padding: .4rem .65rem; }
+.chart-picker .chart-tools { position: absolute; z-index: 3; right: 0; top: 100%; display: grid; grid-template-columns: repeat(2,minmax(4rem,1fr)); gap: .25rem; padding: .4rem; background: white; border: 1px solid var(--line); border-radius: .45rem; box-shadow: 0 .3rem .8rem #162d4f1f; }
+.role-list > details { border-bottom: 1px solid var(--line); margin: 0; padding: .55rem .15rem; }
+.role-summary { display: block; margin-left: 1rem; color: var(--muted); font-size: .85em; }
+.role-list fieldset { border: 0; margin: 0; }
+@container (min-width: 760px) {
+  .explore-card > .live-figure { grid-row: 1 / span 3; }
+}

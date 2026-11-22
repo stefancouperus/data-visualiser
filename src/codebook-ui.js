@@ -51,7 +51,7 @@ async function fileText(file) {
 }
 
 export function codingControls(d) {
-  return `<fieldset><legend>Code with the Data bot</legend>
+  return `<details><summary>Code with the Data bot</summary>
     ${formselect(
       "coding-method",
       "How do you want to code?",
@@ -73,7 +73,7 @@ export function codingControls(d) {
     <section id="book-draft" hidden><h3>Review the codebook</h3><p>Check each label and its meaning. Add any missing labels and remove anything that is only an example.</p>
     <details id="book-original"><summary>Read text from the upload</summary><pre class="book-source"></pre></details>
     <div id="book-rows"></div><div class="bar"><button type="button" id="book-add">Add label</button><button type="button" id="use-book">Use these labels</button><button type="button" id="cancel-book">Discard draft</button></div></section>
-    </div><small>Review up to ten passages at a time. The bot can suggest up to two labels per passage, counting any already applied. A passage may receive none.</small><div class="bar"><button type="button" id="suggestpass">Suggest codes for selected passages</button></div></fieldset>`;
+    </div><small>Review up to ten passages at a time. The bot can suggest up to two labels per passage, counting any already applied. A passage may receive none.</small><div class="bar"><button type="button" id="suggestpass">Suggest codes for selected passages</button></div></details>`;
 }
 
 export function bindCodingControls(d, extract, onApprove) {

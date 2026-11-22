@@ -2,6 +2,8 @@ import { test, expect } from "@playwright/test";
 import { zipSync, strToU8 } from "fflate";
 async function upload(page, route, name, data) {
   await page.goto("/");
+  if (!(await page.getByRole("button", { name: route }).isVisible()))
+    await page.getByText("Other file types", { exact: true }).click();
   const picker = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: route }).click();
   await (
@@ -11,6 +13,11 @@ async function upload(page, route, name, data) {
     mimeType: "application/octet-stream",
     buffer: Buffer.from(data),
   });
+}
+async function expand(page, name, root = page) {
+  const summary = root.locator("summary").filter({ hasText: name }).first();
+  if (!(await summary.evaluate((el) => el.parentElement.open)))
+    await summary.click();
 }
 test("survey review, comparison, project save and figure export", async ({
   page,
@@ -41,7 +48,8 @@ test("survey review, comparison, project save and figure export", async ({
   await page.getByText("Other save options", { exact: true }).click();
   await page.getByRole("button", { name: "Save on this device" }).click();
   const dl = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Download SVG" }).click();
+  await page.getByLabel("Image format").selectOption("svg");
+  await page.getByRole("button", { name: "Download figure" }).click();
   expect((await dl).suggestedFilename()).toContain(".svg");
   await page.reload();
   await page.getByRole("button", { name: "Resume on this device" }).click();
@@ -239,8 +247,8 @@ test("questionnaire labels reach charts and the bot can move, resize and dock", 
   await expect(page.locator("#graphic0")).toContainText("Definitely");
   await expect(page.locator("#graphic0")).toContainText("Would you vote?");
   await page
-    .getByRole("radio", { name: "Compare groups", exact: true })
-    .check();
+    .getByLabel("What would you like to find out?")
+    .selectOption({ label: "Compare groups" });
   await expect(
     page.getByLabel("Which question splits respondents into groups?"),
   ).toBeVisible();
@@ -332,13 +340,12 @@ test("all survey chart families, regression, filters, comparison controls and fi
   const key = (k) => page.locator('[data-panel="0"] [data-key="' + k + '"]');
   const svg = page.locator("#graphic0 svg");
   const shown = async (chart) => {
+    await expand(page, "Chart type", page.locator('[data-panel="0"]'));
     await page.locator('[data-panel="0"] [data-chart="' + chart + '"]').click();
     await expect(svg).toBeVisible();
   };
   for (const type of ["hist", "dots", "bars", "table"]) await shown(type);
-  await page
-    .locator('[data-panel="0"] input[data-key="task"][value="group"]')
-    .check();
+  await key("task").selectOption("group");
   await key("x").selectOption("c5");
   await key("y").selectOption("c4");
   for (const type of ["bars", "dots", "grid", "stack", "small", "table"])
@@ -347,9 +354,7 @@ test("all survey chart families, regression, filters, comparison controls and fi
   await svg.locator('[data-code="Yes"][data-source="First"]').click();
   await expect(page.locator("dialog")).toContainText("10 records");
   await click("Done");
-  await page
-    .locator('[data-panel="0"] input[data-key="task"][value="two"]')
-    .check();
+  await key("task").selectOption("two");
   await key("x").selectOption("c2");
   await key("y").selectOption("c3");
   await shown("scatter");
@@ -363,9 +368,7 @@ test("all survey chart families, regression, filters, comparison controls and fi
     await page.getByText("Filters and appearance", { exact: true }).click();
   await key("value").selectOption("First");
   await expect(svg).toContainText("10 paired");
-  await page
-    .locator('[data-panel="0"] input[data-key="task"][value="model"]')
-    .check();
+  await key("task").selectOption("model");
   await key("outcome").selectOption("c3");
   await page.locator('[data-predictor="c2"]').check();
   await expect(svg).toContainText("Linear regression");
@@ -383,6 +386,7 @@ test("all survey chart families, regression, filters, comparison controls and fi
   await expect(
     page.getByText("Test comparison (copy)", { exact: true }),
   ).toBeVisible();
+  await expand(page, "Export options");
   await page.locator("#panels").selectOption("both");
   await page.locator("#layout").selectOption("vertical");
   await page.locator("#preset").selectOption("940");
@@ -390,7 +394,7 @@ test("all survey chart families, regression, filters, comparison controls and fi
   await expect(page.locator("#previewFigure > svg > svg")).toHaveCount(2);
   await click("Done");
   const file = page.waitForEvent("download");
-  await click("Download PNG");
+  await click("Download figure");
   expect((await file).suggestedFilename()).toBe("data-visualiser.png");
   await click("Copy figure");
   await expect
@@ -548,6 +552,7 @@ test("UTF-16 TSV, interview bot matrix, evidence drill-down and accepted coding 
   await page.locator('#graphic0 [data-code="Time"][data-source="A"]').click();
   await expect(page.locator("#passlist")).toContainText("1 matching passages");
   await page.locator("input[name=pickp]").check();
+  await expand(page, "Code with the Data bot");
   await page.locator("#suggestpass").click();
   await expect(page.locator("[data-act=acceptcode]")).toBeVisible();
   expect(replies).toHaveLength(1);
@@ -654,6 +659,7 @@ test("portable download reopens from the start screen with optional bot memory",
   expect(first.datasets[0].rows.length).toBe(2);
   expect(first.tutorHistory[first.active].messages).toBeUndefined();
   expect(first.tutorHistory[first.active].activity.length).toBe(1);
+  await expand(page, "Other save options");
   await page.getByLabel("Include full Data bot conversations").check();
   const bytes = await save();
   await page.reload();
@@ -698,6 +704,7 @@ test("figure styles preview the current data and survive comparison, export and 
   const chart = page.locator("#graphic0 svg");
   await expect(chart).toHaveAttribute("data-style", "workshop");
   const labels = await chart.locator("text").allTextContents();
+  await expand(page, "Chart settings");
   await btn("Figure style · Workshop").click();
   const marks = new Map();
   for (const style of ["report", "presentation", "workshop", "policy"]) {
@@ -736,6 +743,7 @@ test("figure styles preview the current data and survive comparison, export and 
   ).toHaveAttribute("fill", "#00658a");
   await btn("Close").click();
   await expect(chart).toHaveAttribute("data-style", "workshop");
+  await expand(page, "Chart settings");
   await btn("Figure style · Workshop").click();
   await page.getByRole("radio", { name: /Policy brief/ }).check();
   await page.getByLabel("Highlight one category or group").selectOption("Yes");
@@ -747,6 +755,7 @@ test("figure styles preview the current data and survive comparison, export and 
   await expect(chart).toHaveAttribute("data-style", "policy");
   await expect(chart.locator('.bar-mark[fill="#303030"]')).toHaveCount(1);
   await btn("Compare two views").click();
+  await expand(page, "Chart settings", page.locator('[data-panel="1"]'));
   await page.locator('[data-panel="1"] [data-act="figurestyle"]').click();
   await page.getByRole("radio", { name: /Presentation/ }).check();
   await page.locator("#style-palette").selectOption("coast");
@@ -765,14 +774,17 @@ test("figure styles preview the current data and survive comparison, export and 
       chunks.push(chunk);
     return Buffer.concat(chunks);
   }
+  await expand(page, "Export options");
   await page
     .getByRole("combobox", { name: "Panels", exact: true })
     .selectOption("both");
-  const svg = (await downloaded("Download SVG")).toString();
+  await page.getByLabel("Image format").selectOption("svg");
+  const svg = (await downloaded("Download figure")).toString();
   expect(svg).toContain('data-style="policy"');
   expect(svg).toContain('data-style="presentation"');
   expect(svg).toContain("#00658a");
-  expect((await downloaded("Download PNG")).subarray(1, 4).toString()).toBe(
+  await page.getByLabel("Image format").selectOption("png");
+  expect((await downloaded("Download figure")).subarray(1, 4).toString()).toBe(
     "PNG",
   );
   const data = await downloaded("Download project with data");
@@ -854,6 +866,7 @@ test("uncoded interview uses a reviewed PDF codebook and only approved labels", 
   await btn("Confirm and explore").click();
   await btn("Read and code passages").click();
   await page.locator("input[name=pickp]").first().check();
+  await expand(page, "Code with the Data bot");
   await page.locator("#coding-method").selectOption("deductive");
   await page.locator("#book-file").setInputFiles({
     name: "codebook.pdf",
@@ -865,6 +878,7 @@ test("uncoded interview uses a reviewed PDF codebook and only approved labels", 
   await expect(page.locator("#suggestpass")).toBeDisabled();
   await page.locator("[data-label]").fill("Shift conflict");
   await btn("Use these labels").click();
+  await expand(page, "Code with the Data bot");
   await page.locator("#suggestpass").click();
   await expect(page.locator("[data-act=acceptcode]")).toHaveCount(1);
   await btn("Review label").click();
@@ -927,7 +941,9 @@ test("the bot works on the selected panel, drafts a caption and compares both wi
   await page
     .locator('[data-panel="1"] [data-key=x]')
     .selectOption({ label: "Year" });
-  await page.locator('[data-panel="0"] [data-act=askview]').click();
+  await page.locator('[data-panel="0"] [data-act=describechart]').click();
+  await expand(page, "Suggested questions");
+  await btn("Explain the pattern").click();
   await expect(page.locator(".chatlog")).toContainText("Compare counts");
   expect(calls[0].focus).toBe("left");
   expect(calls[0].views.map((v) => v.selectedQuestions)).toEqual(["Vote"]);
@@ -1006,6 +1022,7 @@ test("discussing interview passages uses only the checked text and the student c
   ]);
   expect(JSON.stringify(received)).not.toContain("I play tennis.");
   await btn("Clear included text").click();
+  await expand(page, "Suggested questions");
   await btn("Explain the pattern").click();
   await expect.poll(() => received.requestedOutput).toBe("explain");
   expect(received.passages).toEqual([]);
@@ -1040,8 +1057,8 @@ test("a student can follow a multi-question pattern to its responses and redraw 
   await btn("Continue").click();
   await btn("Confirm and explore").click();
   await page
-    .getByRole("radio", { name: "Look across several questions" })
-    .check();
+    .getByLabel("What would you like to find out?")
+    .selectOption({ label: "Look across several questions" });
   await page.getByLabel("Trust", { exact: true }).check();
   await page.getByLabel("Duty", { exact: true }).check();
   const svg = page.locator("#graphic0");
@@ -1049,7 +1066,7 @@ test("a student can follow a multi-question pattern to its responses and redraw 
   await svg.locator("[data-pattern-row]").first().click();
   await expect(page.locator("dialog")).toContainText("2 of 2");
   await btn("Done").click();
-  await btn("Describe a figure").click();
+  await btn("Ask about this visual").click();
   await page
     .locator("#question")
     .fill("Show me how people answered each of these questions overall");
@@ -1057,9 +1074,10 @@ test("a student can follow a multi-question pattern to its responses and redraw 
   await expect(svg).toContainText("75% (3 of 4)");
   await expect(svg).toContainText("66.67% (2 of 3)");
   expect(sent.views[0].selectedLabels).toEqual(["Vote", "Trust", "Duty"]);
-  await expect(
-    page.getByRole("button", { name: "Dot plot", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('[data-chart="dots"]')).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
 });
 test("students switch from interview coverage to exact co-coding and open the matching passages", async ({
   page,
@@ -1074,17 +1092,18 @@ test("students switch from interview coverage to exact co-coding and open the ma
   await btn("Continue").click();
   await btn("Continue").click();
   await btn("Confirm and explore").click();
-  await page.getByRole("radio", { name: "Look across several themes" }).check();
+  await page
+    .getByLabel("What would you like to find out?")
+    .selectOption({ label: "Look across several themes" });
   await page.getByLabel("Planning", { exact: true }).check();
-  const mode = (value) =>
-    page.locator('input[data-key="patternMode"][value="' + value + '"]');
-  await mode("interviews").check();
+  const mode = page.locator('select[data-key="patternMode"]');
+  await mode.selectOption("interviews");
   await page.locator("#graphic0 [data-pattern-row]").first().click();
   await expect(page.locator("dialog")).toContainText(
     "Matching interviews: A, B",
   );
   await btn("Done").click();
-  await mode("passages").check();
+  await mode.selectOption("passages");
   await page
     .getByRole("button", {
       name: "Read evidence: Time · Planning",
@@ -1109,11 +1128,11 @@ test("split the current three survey questions by study year using the bot and i
   await btn("Continue").click();
   await btn("Confirm and explore").click();
   await page
-    .getByRole("radio", { name: "Look across several questions" })
-    .check();
+    .getByLabel("What would you like to find out?")
+    .selectOption({ label: "Look across several questions" });
   await page.getByLabel("Trust", { exact: true }).check();
   await page.getByLabel("Duty", { exact: true }).check();
-  await btn("Describe a figure").click();
+  await btn("Ask about this visual").click();
   await page
     .locator("#question")
     .fill("Could you split these patterns by study year?");
@@ -1139,7 +1158,9 @@ test("enter interview groups, compare theme coverage and retrieve only that grou
   await btn("Continue").click();
   await btn("Continue").click();
   await btn("Confirm and explore").click();
-  await page.getByRole("radio", { name: "Look across several themes" }).check();
+  await page
+    .getByLabel("What would you like to find out?")
+    .selectOption({ label: "Look across several themes" });
   await btn("Add interview groups").click();
   await page
     .getByLabel("Which detail will you use to form groups?")
@@ -1175,11 +1196,11 @@ test("a group suggestion explains the comparison, keeps the figure until consent
   await btn("Continue").click();
   await btn("Confirm and explore").click();
   await page
-    .getByRole("radio", { name: "Look across several questions" })
-    .check();
+    .getByLabel("What would you like to find out?")
+    .selectOption({ label: "Look across several questions" });
   await page.getByLabel("Trust", { exact: true }).check();
   const original = await page.locator("#graphic0").innerText();
-  await btn("Describe a figure").click();
+  await btn("Ask about this visual").click();
   const send = async (q) => {
     await page.locator("#question").fill(q);
     await btn("Send").click();
@@ -1192,6 +1213,7 @@ test("a group suggestion explains the comparison, keeps the figure until consent
   await expect(btn("Make this chart")).toBeVisible();
   await btn("No thanks").click();
   await expect(btn("Make this chart")).toHaveCount(0);
+  await expand(page, "Suggested questions");
   await btn("Suggest groups to compare").click();
   await expect(btn("Make this chart")).toBeVisible();
   await send("Yes, please draw that comparison");
@@ -1276,8 +1298,8 @@ for (const text of [false, true]) {
       await btn("Confirm and explore").click();
       if (text) {
         await page
-          .getByRole("radio", { name: "Look across several themes" })
-          .check();
+          .getByLabel("What would you like to find out?")
+          .selectOption({ label: "Look across several themes" });
         await btn("Add interview groups").click();
         await page
           .getByLabel("Which detail will you use to form groups?")
@@ -1308,6 +1330,7 @@ for (const text of [false, true]) {
         text ? "Shift" : "c2",
       );
       invalid = true;
+      await expand(page, "Suggested questions");
       await btn("Suggest groups to compare").click();
       await expect(page.locator(".chatlog")).toContainText(
         "couldn’t match that suggestion",
@@ -1334,8 +1357,8 @@ test("students can preview, pin and dismiss an explanation using their own surve
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: "Confirm and explore" }).click();
   await page
-    .getByRole("radio", { name: "Compare groups", exact: true })
-    .check();
+    .getByLabel("What would you like to find out?")
+    .selectOption({ label: "Compare groups" });
   const help = page
     .locator(".term-help")
     .filter({ has: page.getByText("What is a group?", { exact: true }) });
@@ -1386,8 +1409,8 @@ test("touch users can read how interview groups are formed and what each theme c
     await btn("Continue").click();
     await btn("Confirm and explore").click();
     await page
-      .getByRole("radio", { name: "Look across several themes" })
-      .check();
+      .getByLabel("What would you like to find out?")
+      .selectOption({ label: "Look across several themes" });
     await btn("Add interview groups").click();
     await page
       .getByLabel("Which detail will you use to form groups?")
@@ -1424,8 +1447,11 @@ test("interview heatmaps use the chosen colour ramp and pattern dots use the sty
   await btn("Continue").click();
   await btn("Continue").click();
   await btn("Confirm and explore").click();
-  await page.getByRole("radio", { name: "Look across several themes" }).check();
+  await page
+    .getByLabel("What would you like to find out?")
+    .selectOption({ label: "Look across several themes" });
   await page.getByLabel("Repair", { exact: true }).check();
+  await expand(page, "Chart settings");
   await btn("Figure style · Workshop").click();
   await page.getByRole("radio", { name: /Presentation/ }).check();
   await page.locator("#style-palette").selectOption("archive");
@@ -1440,9 +1466,8 @@ test("interview heatmaps use the chosen colour ramp and pattern dots use the sty
   await expect(
     chart.locator('[data-code="Delay"][data-source="A"] text'),
   ).toHaveAttribute("fill", "#ffffff");
-  await page
-    .getByRole("radio", { name: /themes appear together in the same passage/i })
-    .check();
+  await page.locator('select[data-key="patternMode"]').selectOption("passages");
+  await expand(page, "Chart type");
   await btn("Dot plot").click();
   await expect(chart.locator('path[fill="#823447"]').first()).toBeVisible();
   await expect(chart.locator("[data-pattern-row]").first()).toBeVisible();
@@ -1478,8 +1503,8 @@ test("a partial Word highlight preserves surrounding text and repeated unmarked 
   ]);
   await btn("Confirm and explore").click();
   await page
-    .getByRole("radio", { name: "Compare interviews", exact: true })
-    .check();
+    .getByLabel("What would you like to find out?")
+    .selectOption({ label: "Compare interviews" });
   const cell = page.locator("#graphic0 [data-code=Timing]").first();
   await cell.focus();
   await cell.press("Enter");
@@ -1559,11 +1584,17 @@ test("review question roles, apply selections and reopen a saved visual", async 
   await page
     .getByRole("button", { name: "Suggest roles from my project" })
     .click();
+  await expect(page.locator(".role-list input:visible")).toHaveCount(0);
+  await expect(
+    page.locator(".role-list summary").filter({ hasText: "Trust" }),
+  ).toContainText("Outcome");
+  await expand(page, "Trust", page.locator(".role-list"));
   await expect(
     page
       .getByRole("group", { name: "Trust", exact: true })
       .getByLabel("Outcome"),
   ).toBeChecked();
+  await expand(page, "Contact", page.locator(".role-list"));
   await page
     .getByRole("group", { name: "Contact", exact: true })
     .getByLabel("Explanatory")
@@ -1572,6 +1603,7 @@ test("review question roles, apply selections and reopen a saved visual", async 
   await page.getByRole("button", { name: "Confirm and explore" }).click();
   const field = page.getByLabel("Choose a question or column");
   const original = await page.locator("#graphic0").textContent();
+  await expand(page, "Chart settings");
   await page.getByLabel("Update the visual as I select").uncheck();
   await field.selectOption({ label: "Contact · Explanatory" });
   await expect(page.locator("#graphic0")).toHaveText(original);
@@ -1616,6 +1648,11 @@ test("open survey questions keep their research role and reopen reviewed written
   );
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: "Choose question roles" }).click();
+  await expand(
+    page,
+    "What makes travel difficult?",
+    page.locator(".role-list"),
+  );
   const question = page.getByRole("group", {
     name: "What makes travel difficult?",
     exact: true,
@@ -1631,11 +1668,9 @@ test("open survey questions keep their research role and reopen reviewed written
   expect(sourceSurvey).toContain(
     "What makes travel difficult? · Explanatory / Open question",
   );
-  await page
-    .getByLabel("Choose a question or column")
-    .selectOption({
-      label: "What makes travel difficult? · Explanatory / Open question",
-    });
+  await page.getByLabel("Choose a question or column").selectOption({
+    label: "What makes travel difficult? · Explanatory / Open question",
+  });
   await expect(page.locator("#graphic0")).toContainText("2 written answers");
   await page
     .getByRole("button", { name: "Read and code answers", exact: true })
@@ -1649,21 +1684,19 @@ test("open survey questions keep their research role and reopen reviewed written
     .getByRole("button", { name: "Mark reviewed / apply code" })
     .click();
   await page
-    .getByRole("radio", { name: "Compare themes across answers" })
-    .check();
+    .getByLabel("What would you like to find out?")
+    .selectOption({ label: "Compare themes across answers" });
   await expect(page.locator("#graphic0")).toContainText("Travel cost");
   await expect(page.locator("#graphic0")).toContainText(
     "1 of 2 written answers reviewed",
   );
-  await page
-    .getByLabel("Current dataset")
-    .selectOption({
-      label: await page
-        .getByLabel("Current dataset")
-        .locator("option")
-        .first()
-        .textContent(),
-    });
+  await page.getByLabel("Current dataset").selectOption({
+    label: await page
+      .getByLabel("Current dataset")
+      .locator("option")
+      .first()
+      .textContent(),
+  });
   await page
     .getByRole("button", { name: "Read and code answers", exact: true })
     .click();
