@@ -64,32 +64,46 @@ function candidates(fields, phrase) {
   });
 }
 
-// "X by Y" specifies the axes. Match both before choosing a within-group denominator.
+// Students can name the axes together or assign each question a role in a later sentence.
 export function namedSurveyComparison(fields, question) {
   const chart = namedChartRequest(question);
   if (!["bars", "dots", "grid", "small", "table", "stack"].includes(chart))
     return null;
-  const pair = question
-    .trim()
-    .replace(/[.?!]+$/u, "")
-    .match(
-      /\b(?:of|showing)\s+(.+?)\s+by\s+([^,]+?)(?:,?\s+(?:showing|using|as)\s+(counts?|numbers?|percentages?|percents?)(?:\s+within\s+each\s+(.+))?)?$/i,
-    );
   if (
-    !pair ||
-    /\b(?:only|excluding|include|except|weighted|adjust|control for|instead|filter)\b/i.test(
+    /\b(?:only|excluding|include|except|weighted|adjust|control for|instead|filter|overall|among|without|rather than|left panel|right panel)\b/i.test(
       question,
     )
   )
     return null;
+  const instruction = question.trim().replace(/[.?!]+$/u, "");
+  const by = instruction.match(
+    /\b(?:of|showing)\s+(.+?)\s+by\s+([^,]+?)(?:,?\s+(?:showing|using|as)\s+(counts?|numbers?|percentages?|percents?)(?:\s+within\s+each\s+(.+))?)?$/i,
+  );
+  const roles = instruction.match(
+    /\buse\s+([^.!?]+?)\s+(?:for|as)\s+(?:the\s+)?(answers?|outcomes?|groups?)\s+and\s+([^.!?]+?)\s+(?:for|as)\s+(?:the\s+)?(answers?|outcomes?|groups?)(?:[.,;]\s*(?:show|use|showing|using)\s+(counts?|numbers?|percentages?|percents?)(?:\s+within\s+each\s+([^.!?]+))?)?$/i,
+  );
+  let axes, unit, within;
+  if (roles) {
+    const firstGroups = /^group/i.test(roles[2]);
+    if (firstGroups === /^group/i.test(roles[4])) return null;
+    axes = firstGroups ? [roles[3], roles[1]] : [roles[1], roles[3]];
+    unit = roles[5];
+    within = roles[6];
+  } else if (by) {
+    axes = [by[1], by[2]];
+    unit = by[3];
+    within = by[4];
+  } else return null;
   const options = fields.filter(
     (f) =>
       ["ordered", "category", "multiple", "number"].includes(f.type) &&
       f.levels.length &&
       !f.roles?.includes("open"),
   );
-  const x = options.find((f) => f.id === resolveAxis(options, pair[1]));
-  const y = options.find((f) => f.id === resolveAxis(options, pair[2]));
+  const [x, y] = axes.map((axis) => {
+    const id = resolveAxis(options, axis);
+    return options.find((field) => field.id === id);
+  });
   if (
     !x ||
     !y ||
@@ -99,12 +113,12 @@ export function namedSurveyComparison(fields, question) {
   )
     return null;
   if (
-    pair[4] &&
-    pair[4].toLowerCase() !== "group" &&
-    !tokens(pair[4]).every((t) => tokens(y.label).includes(t))
+    within &&
+    within.toLowerCase() !== "group" &&
+    !tokens(within).every((t) => tokens(y.label).includes(t))
   )
     return null;
-  if (chart === "stack" && /count|number/i.test(pair[3] || "")) return null;
+  if (chart === "stack" && /count|number/i.test(unit || "")) return null;
   return {
     action: "draw",
     task: "group",
@@ -112,7 +126,7 @@ export function namedSurveyComparison(fields, question) {
     x: x.id,
     y: y.id,
     measure:
-      chart === "stack" || /percent/i.test(pair[3] || "") ? "percent" : "count",
+      chart === "stack" || /percent/i.test(unit || "") ? "percent" : "count",
   };
 }
 
@@ -201,13 +215,15 @@ export function resolveAxis(fields, value) {
 // Enforce an explicitly requested visual in a draw instruction. Recommendations
 // and comparative questions about several chart types still go to the tutor.
 export function namedChartRequest(question) {
-  const match = question
-    .trim()
-    .match(
-      /^(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:draw|create|make|show|plot|build)\s+(?:me\s+)?(?:a |an |the )?(100% stacked bar(?: chart)?s?|stacked bar(?: chart)?s?|bar (?:chart|plot)|dot plot|heat\s?map|scatter\s?plot|histogram|presence (?:grid|matrix)|line (?:chart|graph)|small multiples|data table)\b/i,
-    );
-  if (!match) return;
-  const name = match[1].toLowerCase();
+  const commands = [
+    ...question
+      .trim()
+      .matchAll(
+        /(?:^|[.!?]\s+)(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:draw|create|make|show|plot|build)\s+(?:me\s+)?(?:a |an |the )?(100% stacked bar(?: chart)?s?|stacked bar(?: chart)?s?|bar (?:chart|plot)|dot plot|heat\s?map|scatter\s?plot|histogram|presence (?:grid|matrix)|line (?:chart|graph)|small multiples|data table)\b/gi,
+      ),
+  ];
+  if (commands.length !== 1) return;
+  const name = commands[0][1].toLowerCase();
   if (name.includes("stacked")) return "stack";
   if (name.startsWith("bar")) return "bars";
   if (name.startsWith("dot")) return "dots";

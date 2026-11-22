@@ -206,3 +206,63 @@ test("requested cross-tab uses the named grouping and distinguishes counts from 
     null,
   );
 });
+
+test("a conversational heatmap command can set both roles and its denominator after the request", async () => {
+  const { namedSurveyComparison, namedChartRequest } =
+    await import("../src/question-matching.js");
+  const cols = [
+    {
+      id: "v1",
+      label: "Library visits",
+      type: "category",
+      levels: ["Often", "Never"],
+    },
+    {
+      id: "v2",
+      label: "Home region",
+      type: "ordered",
+      levels: ["East", "West"],
+    },
+  ];
+  const command = "Do the regions differ? Please draw a heatmap now. ";
+  const measure = ". Show percentages within each region.";
+  const expected = {
+    action: "draw",
+    task: "group",
+    chart: "grid",
+    x: "v1",
+    y: "v2",
+    measure: "percent",
+  };
+  for (const axes of [
+    "Use Library visits for the answers and Home region for the groups",
+    "Use Home region as the group and Library visits as the outcome",
+  ]) {
+    assert.deepEqual(
+      namedSurveyComparison(cols, command + axes + measure),
+      expected,
+    );
+    assert.equal(
+      namedSurveyComparison(
+        cols,
+        command + axes + ". Show percentages within each answer.",
+      ),
+      null,
+    );
+  }
+  assert.equal(
+    namedChartRequest("Would a heatmap help? Explain the pros and cons."),
+    undefined,
+  );
+  assert.equal(
+    namedChartRequest("Draw a heatmap. Make a bar chart."),
+    undefined,
+  );
+  assert.equal(
+    namedSurveyComparison(
+      cols,
+      command + "Use Library visits for the answers and Unknown as the group.",
+    ),
+    null,
+  );
+});

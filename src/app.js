@@ -819,6 +819,7 @@ function botContext(question = "") {
             }
           : null,
         availableCharts: available(d, project.views[i]),
+        chartListScope: "These options apply to restyling the current selection. For a new comparison, use the project chart options and choose the requested questions.",
         categoricalPattern:
           project.views[i].task !== "patterns" &&
           d.kind === "table" &&

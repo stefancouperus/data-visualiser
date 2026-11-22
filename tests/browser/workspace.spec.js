@@ -624,6 +624,54 @@ test("an explicitly requested heatmap takes precedence over a different model ch
   await expect(page.locator("#graphic0 [data-code]")).toHaveCount(4);
 });
 
+test("a student can request a grouped heatmap from a single-question view even when the model would decline", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  let modelCalls = 0;
+  await page.route("https://tutor.example.test/ask", (route) => {
+    modelCalls++;
+    return route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          action: "answer",
+          explanation: "A heatmap is unavailable for this selection.",
+        }),
+      },
+    });
+  });
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "class.csv",
+    "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Turnout,Study year\n2026,2026,Yes,First\n2026,2026,Yes,First\n2026,2026,No,Second\n2026,2026,Yes,Second",
+  );
+  await page.getByRole("button", { name: "Confirm and explore" }).click();
+  await page.getByRole("button", { name: "Data bot", exact: true }).click();
+  await page
+    .locator("#question")
+    .fill(
+      "Can I see how voting differs between the two years? Please draw a heatmap now. Use Turnout for the answers and Study year for the groups. Show percentages within each year.",
+    );
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(
+    page.locator('[data-chart][aria-pressed="true"]'),
+  ).toHaveAttribute("data-chart", "grid");
+  for (const [answer, year, percent] of [
+    ["Yes", "First", 100],
+    ["No", "First", 0],
+    ["Yes", "Second", 50],
+    ["No", "Second", 50],
+  ]) {
+    await expect(
+      page.locator(
+        `#graphic0 [data-code="${answer}"][data-source="${year}"] text`,
+      ),
+    ).toHaveText(String(percent));
+  }
+  expect(modelCalls).toBe(0);
+});
+
 test("portable download reopens from the start screen with optional bot memory", async ({
   page,
 }) => {
