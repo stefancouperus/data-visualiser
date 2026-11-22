@@ -1,3 +1,4 @@
+import { termHelp } from "./term-help.js";
 import { figureStyles, styleFor } from "./figure-styles.js";
 import { esc } from "./chart.js";
 import { button as b, opts, select, input, table, icon, pict } from "./ui.js";
@@ -124,7 +125,7 @@ function patternPicker(d, v, i) {
       )
       .join(
         "",
-      )}</fieldset>${grouping}${text ? b("addgroups", "Add interview groups", "plain", 'data-i="' + i + '"') : ""}${units}</div>`;
+      )}</fieldset>${grouping}<small>${text ? "Interviews that share the same recorded detail form a group." : "Each answer in the column you choose forms a group."} Choose “Everyone together” to skip this split.</small>${termHelp("group", d, v)}${text ? b("addgroups", "Add interview groups", "plain", 'data-i="' + i + '"') : ""}${units}</div>`;
 }
 const chartLabels = {
   bars: "Bars",
@@ -220,7 +221,14 @@ export function panel(d, v, i, comparing = false) {
                 [...(v.task === "one" ? [["", "All passages"]] : []), ...codes],
                 v.x,
               )
-          : select("x", "Choose a question or column", choices, v.x);
+          : select(
+              "x",
+              v.task === "group"
+                ? "Which answers do you want to compare?"
+                : "Choose a question or column",
+              choices,
+              v.x,
+            );
   const second =
     v.task === "two" || (!text && v.task === "group")
       ? select(
@@ -228,7 +236,9 @@ export function panel(d, v, i, comparing = false) {
           text
             ? "Choose another theme"
             : v.task === "group"
-              ? "Which question defines the groups?"
+              ? d.unit === "response"
+                ? "Which question splits respondents into groups?"
+                : "Which column splits the rows into groups?"
               : "Choose a second question",
           text
             ? codes.filter((c) => c !== v.x)
@@ -246,6 +256,9 @@ export function panel(d, v, i, comparing = false) {
   return `<section class="plotcard ${comparing ? "comparison-card" : "explore-card"}" data-panel="${i}">${comparing ? `<div class="view-heading"><h2>${side} view</h2><span>${esc(kinds[v.chart])}</span></div><details data-chart-options="edit-${i}"><summary>Change ${side.toLowerCase()} view</summary>` : ""}
   <fieldset class="goal-picker"><legend>What would you like to find out?</legend><div>${goals}</div></fieldset>
   <div class="selection-tools"><div class="formgrid">${setup}${second}</div>
+  ${!text && v.task === "group" && d.unit === "response" ? "<small>People who gave the same answer to the second question form one group. Compare how those groups answered the first question.</small>" : ""}
+  ${v.task !== "patterns" && (!text || codes.length) ? termHelp("group", d, v) : ""}
+  ${text ? termHelp("theme", d, v) : ""}
   ${v.task === "model" ? "<p>Choose the result you want to understand and the factors to compare. Regression estimates how each factor relates to that result while holding the other selected factors constant.</p>" : ""}
   ${
     v.task === "model"
@@ -263,7 +276,7 @@ export function panel(d, v, i, comparing = false) {
   ${comparing ? "</details>" : ""}
   <div class="live-figure"><div class="figure-toolbar"><strong>Live figure</strong><div>${b("describechart", icon("bot") + " Describe a figure", "", 'data-i="' + i + '"')} ${b("figurestyle", "Figure style · " + figureStyles[styleFor(v.style)].label, "", 'data-i="' + i + '"')}</div>
   </div><div class="figure-stage"><div class="graphic" id="graphic${i}"></div>${options.length > 1 ? chartTools(options, v.chart, i) : ""}</div>${v.task === "patterns" && v.items?.length ? `<small>Click a ${v.chart === "grid" ? "cell" : "row"} to read the ${text ? "passages" : "responses"} behind it.</small>` : ""}<div id="modeldetails${i}"></div></div>
-  <details data-chart-options="${i}"><summary>Chart settings</summary><div class="formgrid">
+  <details data-chart-options="${i}"><summary>Chart settings</summary>${termHelp("percent", d, v)}<div class="formgrid">
  ${
    v.task !== "patterns" &&
    !text &&
@@ -273,7 +286,12 @@ export function panel(d, v, i, comparing = false) {
          "Show",
          [
            ["count", "Counts"],
-           ["percent", "Percent within each group"],
+           [
+             "percent",
+             v.task === "one"
+               ? "Percent of valid responses"
+               : "Percent within each group",
+           ],
          ],
          v.measure,
        )
@@ -293,7 +311,7 @@ export function panel(d, v, i, comparing = false) {
        : ""
  }
  ${v.chart === "scatter" || v.chart === "line" ? select("z", "Colour by", [["", "One series"], ...choices.filter(([k]) => k !== v.x && k !== v.y)], v.z) : ""}
- </div><details data-chart-options="${i}-appearance"><summary>Filters and appearance</summary><div class="formgrid">${select("filter", "Keep a subset", [["", "All records"], ...(text ? [["source", "Source"], ...meta] : choices)], v.filter)}${
+ </div><details data-chart-options="${i}-appearance"><summary>Filters and appearance</summary>${termHelp("filter", d, v)}<div class="formgrid">${select("filter", "Keep a subset", [["", "All records"], ...(text ? [["source", "Source"], ...meta] : choices)], v.filter)}${
    v.filter
      ? select(
          "value",

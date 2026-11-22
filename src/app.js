@@ -1,3 +1,4 @@
+import { termHelp, bindTermHelp, termMeaning } from "./term-help.js";
 import "./style.css";
 import {
   indicatorColumns,
@@ -145,7 +146,7 @@ function botWorkspaceControls() {
         ? b("suggestgroups", "Suggest groups to compare")
         : "") +
       b("botcaption", "Draft a caption");
-  return `<div class="bot-selection">${target}<strong>${esc(names)}</strong>${included}<div class="bar">${controls}</div></div>`;
+  return `<div class="bot-selection">${target}<strong>${esc(names)}</strong>${included}<div class="bar">${controls}</div>${!both ? termHelp("group", d, view) : ""}</div>`;
 }
 let checkingGroups = false;
 let undoViews = [],
@@ -254,6 +255,7 @@ function render() {
   const asideBot = bot && isDocked();
   get("app").innerHTML =
     `<div class="shell ${compact ? "compact" : ""}"><aside class="rail"><div class="brand">${mark}<span>Data<br>visualiser</span></div><nav class="nav" aria-label="Workflow">${steps.map((s, i) => `<button title="${s}" aria-label="${s}" data-act="nav" data-i="${i}" ${step === i ? 'aria-current="step"' : ""} ${(i > 0 && !d) || (i > 1 && !confirmed) ? "disabled" : ""}>${icon(icons[i])}<span>${s}</span></button>`).join("")}${b("bot", icon("bot") + "<span>Data bot</span>", "botnav", 'aria-label="Data bot" title="Data bot" aria-expanded="' + bot + '"')}</nav><div class="rail-bottom">${b("compact", icon("menu") + "<span>Collapse sidebar</span>", "plain", 'aria-label="Toggle sidebar"')}</div></aside><main class="main" id="workspace"><header class="top"><span>${esc(project.name)} &nbsp; / &nbsp; ${steps[step]}</span></header><div class="content"><div class="${asideBot ? "withbot" : ""}"><div>${content}</div>${asideBot ? botBox() : ""}</div>${bot && !asideBot ? botBox() : ""}</div></main></div>`;
+  bindTermHelp(get("app"));
   if (bot) {
     layoutBot();
     document.querySelector(".botprefs").open = !!settingsOpen;
@@ -282,7 +284,7 @@ function render() {
     }
     const hint =
       project.mode === "guided"
-        ? "Compare the unit and denominator in two views of the same selection."
+        ? "Check what each figure counts and how many responses or interviews each percentage is based on."
         : project.mode === "hints" &&
             d.kind === "text" &&
             d.passages.some((p) => !p.reviewed)
@@ -2165,7 +2167,7 @@ async function action(act, el) {
       const view = project.views[i];
       modal(
         "Add interview groups",
-        '<label>Name of the grouping<input id="group-name" required maxlength="100"></label><p>Enter one group for each interview. Leave a box blank if the group is unknown.</p>' +
+        '<p>Choose a detail you recorded about the people you interviewed. Interviews with the same value form one group.</p><label>Which detail will you use to form groups?<input id="group-name" required maxlength="100"></label><p>Enter the recorded value for each interview. Use the same wording for interviews that belong together. Leave the box blank if you do not know.</p>' +
           d.sources
             .map(
               (source, j) =>
@@ -2463,6 +2465,22 @@ async function action(act, el) {
       const q = val("question").trim();
       if (!q) throw Error("Enter a question.");
       if (
+        /^(?:what (?:is|are) (?:a |the )?(?:sub[- ]?)?groups?|what (?:does|do) (?:a |the )?["'“”‘’]?(?:sub[- ]?)?groups?["'“”‘’]? mean|what do you mean by (?:a |the )?["'“”‘’]?(?:sub[- ]?)?groups?["'“”‘’]?)(?: (?:here|in (?:this|my|our) (?:chart|project|data|survey|interviews?)))?[?!. ]*$/i.test(
+          q,
+        )
+      ) {
+        lastQuestion = "";
+        const view =
+          step === 2 || (step === 3 && botFocus !== "both")
+            ? project.views[focusIndex()]
+            : undefined;
+        history.push(
+          { role: "user", content: q },
+          { role: "assistant", content: termMeaning("group", d, view) },
+        );
+        break;
+      }
+      if (
         /^(?:(?:our|my|the) (?:project|study|research) is (?:about|on)|(?:our|my) research question is|(?:we|I) (?:want|aim) to find out)\b/i.test(
           q,
         )
@@ -2747,6 +2765,16 @@ document.addEventListener("input", (e) => {
   if (e.target.id === "question") lastQuestion = e.target.value;
 });
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const help =
+      e.target.closest(".term-help[open]") ||
+      document.querySelector(".term-help[open]:hover");
+    if (help) {
+      help.open = false;
+      e.preventDefault();
+      return;
+    }
+  }
   if (
     (e.key === "Enter" || e.key === " ") &&
     e.target.hasAttribute("data-pattern-row")

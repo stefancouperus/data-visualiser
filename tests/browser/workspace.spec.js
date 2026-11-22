@@ -234,7 +234,7 @@ test("questionnaire labels reach charts and the bot can move, resize and dock", 
     .getByRole("radio", { name: "Compare groups", exact: true })
     .check();
   await expect(
-    page.getByLabel("Which question defines the groups?"),
+    page.getByLabel("Which question splits respondents into groups?"),
   ).toBeVisible();
   await page
     .getByRole("navigation")
@@ -1102,7 +1102,9 @@ test("enter interview groups, compare theme coverage and retrieve only that grou
   await btn("Confirm and explore").click();
   await page.getByRole("radio", { name: "Look across several themes" }).check();
   await btn("Add interview groups").click();
-  await page.getByLabel("Name of the grouping").fill("Study year");
+  await page
+    .getByLabel("Which detail will you use to form groups?")
+    .fill("Study year");
   for (const [id, group] of [
     ["A", "First"],
     ["B", "First"],
@@ -1238,7 +1240,9 @@ for (const text of [false, true]) {
           .getByRole("radio", { name: "Look across several themes" })
           .check();
         await btn("Add interview groups").click();
-        await page.getByLabel("Name of the grouping").fill("Shift");
+        await page
+          .getByLabel("Which detail will you use to form groups?")
+          .fill("Shift");
         await page.getByLabel("A", { exact: true }).fill("Day");
         await page.getByLabel("B", { exact: true }).fill("Night");
         await btn("Show groups").click();
@@ -1278,3 +1282,92 @@ for (const text of [false, true]) {
     },
   );
 }
+
+test("students can preview, pin and dismiss an explanation using their own survey labels", async ({
+  page,
+}) => {
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "service.csv",
+    "Bus reliability,Work shift\nLate,Day\nEarly,Night\nEarly,Day\nLate,Night",
+  );
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Confirm and explore" }).click();
+  await page
+    .getByRole("radio", { name: "Compare groups", exact: true })
+    .check();
+  const help = page
+    .locator(".term-help")
+    .filter({ has: page.getByText("What is a group?", { exact: true }) });
+  const trigger = help.locator("summary"),
+    note = help.locator("p");
+  await trigger.hover();
+  await expect(note).toContainText("People who gave the same answer");
+  await expect(note).toContainText(
+    "“Day” and “Night” are two groups for “Work shift”",
+  );
+  await page.getByRole("heading", { name: "Explore your data" }).hover();
+  await expect(note).toBeHidden();
+  await trigger.click();
+  await page.getByRole("heading", { name: "Explore your data" }).hover();
+  await expect(note).toBeVisible();
+  await trigger.press("Escape");
+  await expect(note).toBeHidden();
+  await trigger.press("Enter");
+  await expect(note).toBeVisible();
+  await page.getByRole("button", { name: "Data bot", exact: true }).click();
+  await page.locator("#question").fill("What do you mean by groups here?");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.locator(".chatlog")).toContainText(
+    "two groups for “Work shift”",
+  );
+  await expect(page.locator("[data-act=botdraw]")).toHaveCount(0);
+});
+
+test("touch users can read how interview groups are formed and what each theme counts", async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({
+    baseURL,
+    hasTouch: true,
+    viewport: { width: 600, height: 850 },
+  });
+  try {
+    const page = await context.newPage();
+    await upload(
+      page,
+      /I have coded interviews/,
+      "repairs.tsv",
+      "Interview\tPassage\tCodes\nA\tOrder pending\tDelay\nB\tSeal replaced\tRepair",
+    );
+    const btn = (name) => page.getByRole("button", { name, exact: true });
+    await btn("Continue").click();
+    await btn("Continue").click();
+    await btn("Confirm and explore").click();
+    await page
+      .getByRole("radio", { name: "Look across several themes" })
+      .check();
+    await btn("Add interview groups").click();
+    await page
+      .getByLabel("Which detail will you use to form groups?")
+      .fill("Workplace");
+    await page.getByLabel("A", { exact: true }).fill("Depot");
+    await page.getByLabel("B", { exact: true }).fill("Office");
+    await btn("Show groups").click();
+    const trigger = page.getByText("What is a group?", { exact: true });
+    await trigger.tap();
+    const note = page.locator(".term-help[open] p");
+    await expect(note).toContainText(
+      "interviews that share something you recorded",
+    );
+    await expect(note).toContainText("“Depot” and “Office”");
+    await trigger.tap();
+    await expect(note).toHaveCount(0);
+    await page.getByText("What are codes and passages?", { exact: true }).tap();
+    await expect(note).toContainText("A passage is a piece of text");
+  } finally {
+    await context.close();
+  }
+});

@@ -805,3 +805,8 @@ dialog h2 {
 .pattern-mode { border: 0; padding: 0; margin: .8rem 0; min-width: 0; }
 .pattern-mode legend { font-weight:650; }
 .pattern-mode .tick { align-items:baseline; margin:.4rem 0; }
+
+.term-help { margin: .35rem 0 .65rem; }
+.term-help summary { width: fit-content; max-width: 100%; color: var(--blue); font-size: .86rem; cursor: help; text-decoration: underline dotted; text-underline-offset: .2em; }
+.term-help summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.term-help p { margin: .35rem 0 .5rem; padding: .45rem .65rem; border-left: 2px solid var(--line); font-size: .9rem; line-height: 1.45; overflow-wrap: anywhere; }
