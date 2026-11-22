@@ -1119,3 +1119,41 @@ test("enter interview groups, compare theme coverage and retrieve only that grou
   await expect(page.locator("dialog")).toContainText("combined both");
   await expect(page.locator("dialog")).not.toContainText("also late");
 });
+
+test("a group suggestion explains the comparison, keeps the figure until consent and supports declining", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "survey.csv",
+    "Vote,Trust,Study year\nYes,High,First\nYes,High,First\nNo,Low,Final\nNo,Low,Final",
+  );
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Continue").click();
+  await btn("Confirm and explore").click();
+  await page
+    .getByRole("radio", { name: "Look across several questions" })
+    .check();
+  await page.getByLabel("Trust", { exact: true }).check();
+  const original = await page.locator("#graphic0").innerText();
+  await btn("Describe a figure").click();
+  const send = async (q) => {
+    await page.locator("#question").fill(q);
+    await btn("Send").click();
+  };
+  await send("Do any groups stand out?");
+  await expect(btn("Make this chart")).toBeVisible();
+  await expect(page.locator(".chatlog")).toContainText("2 of 2 responses");
+  expect(await page.locator("#graphic0").innerText()).toBe(original);
+  await send("Why that?");
+  await expect(btn("Make this chart")).toBeVisible();
+  await btn("No thanks").click();
+  await expect(btn("Make this chart")).toHaveCount(0);
+  await btn("Suggest groups to compare").click();
+  await expect(btn("Make this chart")).toBeVisible();
+  await send("Yes, please draw that comparison");
+  await expect(page.getByLabel("Compare by group")).toHaveValue("c2");
+  await expect(btn("Make this chart")).toHaveCount(0);
+});

@@ -36,6 +36,7 @@ import {
   groupChoices,
   groupValue,
 } from "./patterns.js";
+import { asksForGroupSuggestion } from "./group-suggestions.js";
 import { fitModel } from "./model.js";
 import { figureStyles, styleFor, highlightChoices } from "./figure-styles.js";
 import { esc, figure, combinedSVG, exportSVG, blobSave } from "./chart.js";
@@ -128,9 +129,13 @@ function botWorkspaceControls() {
       (available(d, view).length > 1
         ? b("botvariant", "Try another chart")
         : "") +
+      (["one", "two", "patterns"].includes(view.task)
+        ? b("suggestgroups", "Suggest groups to compare")
+        : "") +
       b("botcaption", "Draft a caption");
   return `<div class="bot-selection">${target}<strong>${esc(names)}</strong>${included}<div class="bar">${controls}</div></div>`;
 }
+let checkingGroups = false;
 let undoViews = [],
   project = fresh(),
   step = 0,
@@ -176,8 +181,8 @@ function botBox() {
           .activity.map((note) => "<li>" + esc(note) + "</li>")
           .join("")}</ul></details>`
       : ""
-  }<div class="chatlog">${history.map((t) => `<div class="msg"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`).join("")}</div>${requesting ? '<p role="status">Waiting for the university model…</p>' : ""}
- ${proposal ? b("botdraw", "Make this chart", "primary") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
+  }<div class="chatlog">${history.map((t) => `<div class="msg"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`).join("")}</div>${requesting ? `<p role="status">${checkingGroups ? "Checking possible groups in your selection…" : "Waiting for the university model…"}</p>` : ""}
+ ${proposal ? b("botdraw", "Make this chart", "primary") + (proposal.groupSuggestion ? b("declinegroups", "No thanks", "plain") : "") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
  ${captionDraft ? b("applycaption", "Add caption to figure") : ""}${botWorkspaceControls()}<label>Ask about your project<textarea id="question" maxlength="4000" placeholder="${getData()?.kind === "text" ? "Which of these themes come up in the same passage?" : "Show me which answers people gave together…"}">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></div><div class="botsize" data-window-handle="resize" title="Drag to resize"></div></section>`;
 }
 function render() {
@@ -788,6 +793,23 @@ function applyProposal(explanation) {
   )
     throw Error("The view has changed. Ask for a fresh chart suggestion.");
   const chart = summary(candidate.panel, candidate.view);
+  if (
+    candidate.groupSuggestion?.some(
+      (evidence) =>
+        !chart.records.some(
+          (row) =>
+            row.group === evidence.group &&
+            row.groupValue === evidence.groupValue &&
+            row.n === evidence.n &&
+            row.den === evidence.den,
+        ),
+    )
+  ) {
+    render();
+    throw Error(
+      "The data behind that comparison changed. Ask for a fresh group suggestion.",
+    );
+  }
   snapshotViews();
   project.views[candidate.panel] = candidate.view;
   tutorRecord(project).activity.push(
@@ -831,7 +853,7 @@ function applyProposal(explanation) {
       chart.title +
       ". " +
       chart.note +
-      groupInsight +
+      (candidate.groupSuggestion ? "" : groupInsight) +
       (typeof explanation === "string" ? " " + explanation : ""),
   });
   render();
@@ -888,6 +910,86 @@ async function extractCodebook(document, code) {
   });
   return structuredAnswer(answer).entries;
 }
+async function checkGroupSuggestion() {
+  proposal = captionDraft = null;
+  if (step === 3 && botFocus === "both") {
+    history.push({
+      role: "assistant",
+      content:
+        "Choose Left view or Right view under Use for this request, then ask me to suggest a group for that selection.",
+    });
+    return;
+  }
+  const d = getData(),
+    view = project.views[focusIndex()],
+    startView = JSON.stringify(view);
+  const stage = step,
+    target = botFocus,
+    chat = history;
+  checkingGroups = true;
+  render();
+  const worker = new Worker(
+    new URL("./group-search-worker.js", import.meta.url),
+    { type: "module" },
+  );
+  try {
+    const result = await new Promise((resolve, reject) => {
+      worker.onmessage = ({ data }) =>
+        data.error ? reject(new Error(data.error)) : resolve(data);
+      worker.onerror = () =>
+        reject(
+          new Error(
+            "I couldn’t check group comparisons. Try a smaller selection.",
+          ),
+        );
+      const dataset =
+        d.kind === "text"
+          ? {
+              kind: d.kind,
+              sources: d.sources,
+              metadata: d.metadata,
+              passages: d.passages.map(({ source, codes, reviewed }) => ({
+                source,
+                codes,
+                reviewed,
+              })),
+            }
+          : {
+              kind: d.kind,
+              unit: d.unit,
+              fields: d.fields,
+              rows: d.rows,
+              rules: d.rules,
+            };
+      worker.postMessage({ dataset, view });
+    });
+    if (getData() !== d || chat !== history) return;
+    if (
+      step !== stage ||
+      botFocus !== target ||
+      JSON.stringify(project.views[focusIndex()]) !== startView
+    ) {
+      history.push({
+        role: "assistant",
+        content:
+          "Your selection changed. Ask again to check the groups for the current view.",
+      });
+      return;
+    }
+    if (result.spec) {
+      const candidate = proposedChart(result.spec);
+      if (!candidate)
+        throw Error(
+          "The suggested grouping is no longer available. Ask again using the current selection.",
+        );
+      proposal = { ...candidate, groupSuggestion: result.evidence };
+    }
+    history.push({ role: "assistant", content: result.message });
+  } finally {
+    worker.terminate();
+    checkingGroups = false;
+  }
+}
 async function ask(question, skill, intent = "") {
   if (requesting) throw Error("A tutor request is already pending.");
   if (!botURL)
@@ -915,6 +1017,24 @@ async function ask(question, skill, intent = "") {
   const dataset = getData();
   const current =
     project.views[step === 3 && botFocus === "both" ? 1 : focusIndex()];
+  if (
+    skill === "recommend" &&
+    [2, 3].includes(step) &&
+    (intent === "suggestGroups" ||
+      (!intent && asksForGroupSuggestion(question)))
+  ) {
+    lastQuestion = "";
+    requesting = true;
+    history.push({ role: "user", content: question });
+    try {
+      await checkGroupSuggestion();
+    } finally {
+      requesting = false;
+      checkingGroups = false;
+      render();
+    }
+    return;
+  }
   const inPatterns = current?.task === "patterns";
   const grouping =
     skill === "recommend" &&
@@ -1148,6 +1268,10 @@ async function ask(question, skill, intent = "") {
           baseline: JSON.stringify(project.views[panel]),
         };
         history.push({ role: "assistant", content: captionDraft.text });
+        return;
+      }
+      if (pick.action === "suggestGroups" && !intent && [2, 3].includes(step)) {
+        await checkGroupSuggestion();
         return;
       }
       if (intent === "suggest" && pick.action === "draw")
@@ -2074,6 +2198,13 @@ async function action(act, el) {
       }
       bot = false;
       break;
+    case "declinegroups":
+      proposal = null;
+      history.push(
+        { role: "user", content: "No thanks." },
+        { role: "assistant", content: "Kept your current figure." },
+      );
+      break;
     case "botdraw":
       applyProposal();
       return;
@@ -2104,6 +2235,7 @@ async function action(act, el) {
       break;
     case "discusspass":
     case "choose":
+    case "suggestgroups":
     case "botvariant":
     case "botcaption":
     case "askview":
@@ -2116,6 +2248,10 @@ async function action(act, el) {
         discusspass: [
           "excerpts",
           "Explain what the selected passages have in common or how they differ. Ground each point in a short exact quotation and name the source. Limit your claims to these passages.",
+        ],
+        suggestgroups: [
+          "suggestGroups",
+          "Do any groups stand out for my selection?",
         ],
         choose: [
           "suggest",
@@ -2204,8 +2340,39 @@ async function action(act, el) {
       const q = val("question").trim();
       if (!q) throw Error("Enter a question.");
       if (
+        proposal?.groupSuggestion &&
+        /^(?:why(?: this| that| those groups| this comparison| did you (?:choose|suggest|pick) (?:that|this|these groups))?|how did you (?:choose|decide|pick)(?: that| this)?)\s*[?!.]*$/i.test(
+          q,
+        )
+      ) {
+        lastQuestion = "";
+        history.push(
+          { role: "user", content: q },
+          {
+            role: "assistant",
+            content:
+              "I compared the shares for your selected items within each possible grouping I checked. I gave more weight to differences backed by more records or interviews and to grouping fields filled in for more of the sample. This is an exploratory comparison. Shall I draw it?",
+          },
+        );
+        break;
+      }
+      if (
+        proposal?.groupSuggestion &&
+        /^(?:no(?: thanks| thank you)?|cancel|skip(?: it)?|keep (?:this|my|the current) (?:view|chart|figure))[.!]?$/i.test(
+          q,
+        )
+      ) {
+        proposal = null;
+        lastQuestion = "";
+        history.push(
+          { role: "user", content: q },
+          { role: "assistant", content: "Kept your current figure." },
+        );
+        break;
+      }
+      if (
         proposal &&
-        /^(?:yes|sure|ok(?:ay)?|go ahead|please do|make (?:it|that|the chart)|show (?:me|it)|draw it)(?:[, !.]+(?:please|do it|make it|show me|draw it|go ahead))*[!. ]*$/i.test(
+        /^(?:yes|sure|ok(?:ay)?|go ahead|please do|I agree|sounds good|make (?:it|that|the chart)|show (?:me|it)|draw (?:it|that|the chart|the comparison))(?:[, !.]+(?:please|do it|make it|show me|draw (?:it|that comparison|the comparison)|go ahead))*[!. ]*$/i.test(
           q,
         )
       ) {
