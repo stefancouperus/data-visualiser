@@ -10,6 +10,7 @@ import {
 import {
   chartFields,
   directComparison,
+  patternRequest,
   namedChartRequest,
   resolveAxis,
 } from "./question-matching.js";
@@ -866,7 +867,37 @@ async function ask(question, skill, intent = "") {
     else if (left || right) focusBot(left ? "left" : "right");
   }
   const dataset = getData();
+  const current =
+    project.views[step === 3 && botFocus === "both" ? 1 : focusIndex()];
+  const pattern =
+    skill === "recommend" &&
+    !intent &&
+    [2, 3].includes(step) &&
+    dataset &&
+    patternRequest(
+      question,
+      dataset.kind === "text",
+      patternChoices(dataset),
+      current,
+    );
+  if (pattern?.items && pattern.items.length <= selectionLimit) {
+    const chart =
+      namedChartRequest(question) ||
+      (dataset.kind === "text" && pattern.patternMode === "sources"
+        ? "grid"
+        : "bars");
+    const spec = { action: "draw", task: "patterns", chart, ...pattern };
+    const candidate = proposedChart(spec);
+    if (candidate) {
+      history.push({ role: "user", content: question });
+      lastQuestion = "";
+      proposal = candidate;
+      applyProposal();
+      return;
+    }
+  }
   const direct =
+    !pattern &&
     skill === "recommend" &&
     dataset?.kind === "table" &&
     directComparison(dataset.fields, question);
@@ -896,6 +927,7 @@ async function ask(question, skill, intent = "") {
       }
     : botContext(question);
   if (intent) context.requestedOutput = intent;
+  if (pattern) context.requestedPattern = pattern;
   if (
     skill === "recommend" &&
     step === 3 &&

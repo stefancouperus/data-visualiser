@@ -155,3 +155,82 @@ export function namedChartRequest(question) {
   if (name === "small multiples") return "small";
   return "table";
 }
+
+// Recognise a student's stated unit before the model chooses a display. Resolve
+// a list locally only when every named item has exactly one match.
+export function patternRequest(question, text, choices, current) {
+  if (
+    !/^(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:show|make|draw|create|plot|build|compare)\b/i.test(
+      question.trim(),
+    ) ||
+    /\b(?:excluding|except|among|filter|only|weighted|regression|control for|instead of)\b/i.test(
+      question,
+    )
+  )
+    return null;
+  const mentioned = text
+    ? [
+        ["passages", /\bsame (?:coded )?(?:passages?|excerpts?|segments?)\b/i],
+        ["interviews", /\bsame (?:interviews?|transcripts?)\b/i],
+        ["sources", /\b(?:each|per|by) (?:interview|transcript)\b/i],
+      ]
+    : [
+        [
+          "together",
+          /\bsame (?:people|respondents?|persons?)\b|\b(?:answer combinations|combinations of answers)\b/i,
+        ],
+        [
+          "separate",
+          /\beach (?:question|item) (?:overall|separately|on its own)\b/i,
+        ],
+      ];
+  const modes = mentioned.filter(([, pattern]) => pattern.test(question));
+  if (modes.length !== 1) return null;
+  const patternMode = modes[0][0];
+  const named = text
+    ? question.match(
+        /\b(?:themes|codes)\s+(.+?)\s+(?:appear|turn up|occur|show up|come up|in the same)\b/i,
+      )?.[1]
+    : question.match(/\bfor\s+(.+)$/i)?.[1];
+  const result = { patternMode };
+  if (named) {
+    const normal = (word) =>
+      word === "importance" ? "important" : word === "voted" ? "vote" : word;
+    const words = (term) => tokens(term).map(normal);
+    const matched = named
+      .replace(/[?.!]+$/, "")
+      .split(/\s*,\s*(?:and\s+)?|\s+and\s+/i)
+      .map((term) => {
+        const exact = choices.filter(
+          ([, label]) => label.toLowerCase() === term.trim().toLowerCase(),
+        );
+        if (exact.length === 1) return exact[0][0];
+        const query = words(term);
+        const found = choices.filter(
+          ([, label]) =>
+            query.length && query.every((word) => words(label).includes(word)),
+        );
+        return found.length === 1 ? found[0][0] : null;
+      });
+    if (
+      matched.length >= 2 &&
+      matched.every(Boolean) &&
+      new Set(matched).size === matched.length
+    )
+      result.items = matched;
+  } else if (
+    current?.task === "patterns" &&
+    current.items?.length >= 2 &&
+    /\b(?:these|selected|ticked) (?:questions|items|themes|codes)\b/i.test(
+      question,
+    ) &&
+    !/\b(?:add|also|except|plus|without|along with)\b/i.test(question) &&
+    !choices.some(
+      ([id, label]) =>
+        !current.items.includes(id) &&
+        question.toLowerCase().includes(label.toLowerCase()),
+    )
+  )
+    result.items = current.items;
+  return result;
+}

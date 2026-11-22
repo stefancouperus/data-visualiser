@@ -81,3 +81,40 @@ test("an explicit chart type is distinguished from a question about chart altern
     undefined,
   );
 });
+
+test("a request stating the observation unit draws the complete list or leaves uncertain fields for clarification", async () => {
+  const { patternRequest } = await import("../src/question-matching.js");
+  const q = [
+    ["a", "Is voting important?"],
+    ["b", "Trust in parliament"],
+    ["c", "Did you vote?"],
+  ];
+  assert.deepEqual(
+    patternRequest(
+      "Show me which answers the same people gave together for voting importance, trust in parliament and whether they voted.",
+      false,
+      q,
+    ).items,
+    ["a", "b", "c"],
+  );
+  assert.equal(
+    patternRequest(
+      "Show the same people's answers for trust and satisfaction",
+      false,
+      q,
+    ).items,
+    undefined,
+  );
+  const t = [
+    ["Trust", "Trust"],
+    ["Duty", "Duty"],
+  ];
+  assert.deepEqual(
+    patternRequest(
+      "Make a figure showing which of the themes Trust and Duty turn up together in the very same passage.",
+      true,
+      t,
+    ),
+    { patternMode: "passages", items: ["Trust", "Duty"] },
+  );
+});
