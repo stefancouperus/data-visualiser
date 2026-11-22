@@ -3,6 +3,7 @@ import { analyticalEvidence, pairedStatistics } from "./tutor-evidence.js";
 import {
   chartFields,
   directComparison,
+  namedChartRequest,
   resolveAxis,
 } from "./question-matching.js";
 import { labelledSurvey } from "./survey-labels.js";
@@ -613,6 +614,12 @@ async function ask(question, skill) {
         pick.action === "suggest" ||
         (!pick.action && pick.chart)
       ) {
+        const requestedChart = namedChartRequest(question);
+        if (requestedChart) {
+          pick = { ...pick, chart: requestedChart };
+          if (dataset?.kind === "text" && requestedChart === "presence")
+            pick.task = "group";
+        }
         let candidate;
         try {
           candidate = proposedChart(pick);
@@ -620,7 +627,15 @@ async function ask(question, skill) {
           history.push({ role: "assistant", content: error.message });
           return;
         }
-        if (!candidate) {
+        if (!candidate && requestedChart) {
+          history.push({
+            role: "assistant",
+            content:
+              "I couldn’t draw the requested " +
+              kinds[requestedChart].toLowerCase() +
+              " with the selected questions. Which question or code belongs on each axis?",
+          });
+        } else if (!candidate) {
           const fields = dataset?.fields || [];
           const matched = [
             ...new Set(

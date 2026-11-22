@@ -133,3 +133,25 @@ export function resolveAxis(fields, value) {
   const results = exact.length ? exact : candidates(options, value);
   return results.length === 1 ? results[0].id : value;
 }
+
+// Enforce an explicitly requested visual in a draw instruction. Recommendations
+// and comparative questions about several chart types still go to the tutor.
+export function namedChartRequest(question) {
+  const match = question
+    .trim()
+    .match(
+      /^(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:draw|create|make|show|plot|build)\s+(?:me\s+)?(?:a |an |the )?(100% stacked bar(?: chart)?s?|stacked bar(?: chart)?s?|bar (?:chart|plot)|dot plot|heat\s?map|scatter\s?plot|histogram|presence (?:grid|matrix)|line (?:chart|graph)|small multiples|data table)\b/i,
+    );
+  if (!match) return;
+  const name = match[1].toLowerCase();
+  if (name.includes("stacked")) return "stack";
+  if (name.startsWith("bar")) return "bars";
+  if (name.startsWith("dot")) return "dots";
+  if (name.startsWith("heat")) return "grid";
+  if (name.startsWith("scatter")) return "scatter";
+  if (name === "histogram") return "hist";
+  if (name.startsWith("presence")) return "presence";
+  if (name.startsWith("line")) return "line";
+  if (name === "small multiples") return "small";
+  return "table";
+}

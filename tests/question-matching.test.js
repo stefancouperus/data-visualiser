@@ -62,3 +62,22 @@ test("ambiguous or qualified requests do not silently draw a different chart", (
     null,
   );
 });
+test("an explicit chart type is distinguished from a question about chart alternatives", async () => {
+  const { namedChartRequest } = await import("../src/question-matching.js");
+  assert.equal(
+    namedChartRequest(
+      "Draw a heatmap of Turnout by Study year, showing percentages within each year.",
+    ),
+    "grid",
+  );
+  assert.equal(
+    namedChartRequest(
+      "Could you draw a presence grid showing which themes appear in each interview?",
+    ),
+    "presence",
+  );
+  assert.equal(
+    namedChartRequest("Would a heatmap be clearer than a bar chart?"),
+    undefined,
+  );
+});

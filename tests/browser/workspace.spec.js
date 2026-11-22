@@ -535,3 +535,37 @@ test("UTF-16 TSV, interview bot matrix, evidence drill-down and accepted coding 
   await page.locator("#modalform button[type=submit]").click();
   await expect(page.locator("#graphic0")).toContainText("Schedule");
 });
+
+test("an explicitly requested heatmap takes precedence over a different model chart", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  await page.route("https://tutor.example.test/ask", (r) =>
+    r.fulfill({
+      json: {
+        answer: JSON.stringify({
+          action: "draw",
+          task: "group",
+          chart: "stack",
+          x: "c2",
+          y: "c3",
+          measure: "percent",
+        }),
+      },
+    }),
+  );
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "test.csv",
+    "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Turnout,Study year\n2026,2026,Yes,First\n2026,2026,No,Second",
+  );
+  await page.getByRole("button", { name: "Confirm and explore" }).click();
+  await page.getByRole("button", { name: "Data bot", exact: true }).click();
+  await page
+    .locator("#question")
+    .fill("Draw a heatmap of Turnout by Study year");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.locator('[data-key="chart"]')).toHaveValue("grid");
+  await expect(page.locator("#graphic0 [data-code]")).toHaveCount(4);
+});
