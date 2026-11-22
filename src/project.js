@@ -1,3 +1,4 @@
+import { filteredRows } from "./import.js";
 import { applyAnswerLabels } from "./survey-labels.js";
 export const fresh = () => ({
   format: "data-visualiser",
@@ -115,7 +116,7 @@ export function linkage(d, t, key, mapping) {
   if (d.kind !== "text" || t.kind !== "table")
     throw Error("Choose a text collection and a table.");
   const index = new Map();
-  for (const row of t.rows) {
+  for (const row of filteredRows(t)) {
     const k = row[key];
     if (!k) continue;
     if (index.has(k)) throw Error("Repeated identifier in the table: " + k);

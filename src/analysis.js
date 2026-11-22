@@ -62,7 +62,7 @@ export function analyse(d, v) {
     title: v.title || x.label + (y ? " by " + y.label : ""),
     series: "",
     x: x.label,
-    unit: "Responses",
+    unit: d.unit === "response" ? "Responses" : d.unit + " records",
     n: rows.length,
     records: [],
     points: [],
@@ -71,7 +71,11 @@ export function analyse(d, v) {
   };
   if (v.chart === "excerpts") {
     base.excerpt = rows
-      .filter((r) => r[x.id])
+      .filter(
+        (r) =>
+          r[x.id] &&
+          (!v.query || r[x.id].toLowerCase().includes(v.query.toLowerCase())),
+      )
       .map((r) => ({ source: y ? r[y.id] : d.name, text: r[x.id], codes: [] }));
     base.note = base.excerpt.length + " written answers in this selection.";
     return base;
@@ -104,10 +108,19 @@ export function analyse(d, v) {
         .map((b) => ({
           label: b.x0 === b.x1 ? String(b.x0) : b.x0 + "–" + b.x1,
           group: "",
-          value: b.length,
+          lo: b.x0,
+          hi: b.x1,
+          den: ns.length,
+          value:
+            v.measure === "percent" ? (100 * b.length) / ns.length : b.length,
           n: b.length,
         }));
-    base.note = ns.length + " numerical answers.";
+    base.unit = v.measure === "percent" ? "% of valid responses" : "Records";
+    base.note =
+      ns.length +
+      " valid numerical answers of " +
+      rows.length +
+      " selected records.";
     return base;
   }
   const cross = v.task !== "one" && y,
@@ -120,36 +133,53 @@ export function analyse(d, v) {
             .filter(Boolean)
         : [r[x.id]];
   const valid = rows.filter((r) => r[x.id] && (!cross || r[y.id]));
+  const tally = new Map(),
+    observed = new Set();
+  for (const row of valid) {
+    const group = cross ? row[y.id] : "";
+    if (!tally.has(group)) tally.set(group, { den: 0, counts: new Map() });
+    const entry = tally.get(group);
+    entry.den++;
+    for (const label of new Set(picks(row))) {
+      observed.add(label);
+      entry.counts.set(label, (entry.counts.get(label) || 0) + 1);
+    }
+  }
   const labels = [
     ...new Set([
       ...(x.levels || []).filter(
-        (s) =>
-          !multi && (x.type === "ordered" || valid.some((r) => r[x.id] === s)),
+        (s) => !multi && (x.type === "ordered" || observed.has(s)),
       ),
-      ...valid.flatMap(picks),
+      ...observed,
     ]),
   ];
-  const groups = cross ? [...new Set(valid.map((r) => r[y.id]))] : [""];
-  for (const group of groups) {
-    const slice = cross ? valid.filter((r) => r[y.id] === group) : valid;
+  if (tally.size * labels.length > 20000)
+    throw Error(
+      "This comparison has over 20,000 cells. Choose a grouping question with fewer distinct answers or narrow the selection.",
+    );
+  for (const [group, entry] of tally) {
     for (const label of labels) {
-      const n = slice.filter((r) => picks(r).includes(label)).length;
+      const n = entry.counts.get(label) || 0;
       base.records.push({
         group,
         label,
         n,
-        den: slice.length,
+        den: entry.den,
         value:
-          (v.measure === "percent" || v.chart === "stack") && slice.length
-            ? (100 * n) / slice.length
+          (v.measure === "percent" || v.chart === "stack") && entry.den
+            ? (100 * n) / entry.den
             : n,
       });
     }
   }
   base.unit =
     v.measure === "percent" || v.chart === "stack"
-      ? "% of valid responses"
-      : "Responses";
+      ? d.unit === "response"
+        ? "% of valid responses"
+        : "% of valid " + d.unit + " records"
+      : d.unit === "response"
+        ? "Responses"
+        : d.unit + " records";
   base.note =
     valid.length +
     " valid of " +
@@ -167,7 +197,16 @@ function qualitative(d, v) {
       !v.filter ||
       (v.filter === "source" ? s : d.metadata?.[s]?.[v.filter]) === v.value,
   );
-  const selected = d.passages.filter((p) => sources.includes(p.source));
+  const bySource = new Map(
+    sources.map((source) => [source, { total: 0, codes: new Map() }]),
+  );
+  const selected = d.passages.filter((p) => bySource.has(p.source));
+  for (const p of selected) {
+    const row = bySource.get(p.source);
+    row.total++;
+    for (const code of new Set(p.codes))
+      row.codes.set(code, (row.codes.get(code) || 0) + 1);
+  }
   const codes = allCodes(d);
   const base = {
     title:
@@ -196,12 +235,8 @@ function qualitative(d, v) {
   if (v.task === "two") {
     let units = selected;
     if (v.measure === "sources")
-      units = sources.map((s) => ({
-        codes: [
-          ...new Set(
-            selected.filter((p) => p.source === s).flatMap((p) => p.codes),
-          ),
-        ],
+      units = Array.from(bySource.values(), (row) => ({
+        codes: [...row.codes.keys()],
       }));
     for (const [label, a, b] of [
       [v.x + " only", true, false],
@@ -214,11 +249,17 @@ function qualitative(d, v) {
       base.records.push({ label, group: "", value: n, n });
     }
   } else if (v.task === "group") {
+    base.unit =
+      v.chart === "presence"
+        ? "Presence (1 = present, 0 = absent)"
+        : "Passages";
+    if (sources.length * codes.length > 20000)
+      throw Error(
+        "This grid has over 20,000 cells. Narrow the selection to fewer sources.",
+      );
     for (const source of sources)
       for (const code of codes) {
-        const n = selected.filter(
-          (p) => p.source === source && p.codes.includes(code),
-        ).length;
+        const n = bySource.get(source).codes.get(code) || 0;
         base.records.push({
           label: code,
           group: source,
@@ -228,9 +269,8 @@ function qualitative(d, v) {
       }
   } else
     for (const source of sources) {
-      const n = selected.filter(
-        (p) => p.source === source && (!v.x || p.codes.includes(v.x)),
-      ).length;
+      const row = bySource.get(source);
+      const n = v.x ? row.codes.get(v.x) || 0 : row.total;
       base.records.push({
         label: source,
         group: "",
@@ -238,6 +278,14 @@ function qualitative(d, v) {
         value: v.measure === "sources" ? Number(n > 0) : n,
       });
     }
+  if (v.x && v.task === "one") {
+    base.themeCounts = {
+      code: v.x,
+      matchingPassages: base.records.reduce((n, r) => n + r.n, 0),
+      interviewsWithCode: base.records.filter((r) => r.n > 0).length,
+      listedInterviews: sources.length,
+    };
+  }
   base.note =
     sources.length +
     " listed sources · " +

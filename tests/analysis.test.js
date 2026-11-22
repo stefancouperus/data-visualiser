@@ -152,3 +152,141 @@ test("QSF recodes use the instrument and settings-only projects restore the same
   );
   assert.equal(labelledSurvey(unfamiliar, definition).decoded, 0);
 });
+
+test("survey filters, repeated ticks, numerical and text views use their actual denominators", async () => {
+  const { analyticalEvidence, pairedStatistics } =
+    await import("../src/tutor-evidence.js");
+  const t = makeTable(
+    [
+      ["Group", "Age", "Tags", "Comment"],
+      ["A", "18", "Work;Work;Time", "One idea"],
+      ["A", "22", "Work", "Another"],
+      ["B", "60", "Time", "One more"],
+      ["B", "", "", ""],
+    ],
+    "survey",
+  );
+  t.fields[2].type = "multiple";
+  t.fields[3].type = "text";
+  const grouped = analyse(t, {
+    x: "c2",
+    y: "c0",
+    task: "group",
+    chart: "grid",
+    measure: "percent",
+  });
+  assert.deepEqual(
+    grouped.records.find((r) => r.label === "Work" && r.group === "A"),
+    { label: "Work", group: "A", n: 2, den: 2, value: 100 },
+  );
+  const view = {
+    task: "one",
+    x: "c1",
+    chart: "hist",
+    filter: "c0",
+    value: "A",
+    measure: "percent",
+  };
+  const bins = analyse(t, view).records;
+  assert.equal(
+    bins.reduce((n, r) => n + r.value, 0),
+    100,
+  );
+  assert.equal(
+    analyticalEvidence(t, view, "What is the average Age?").numericSummaries[0]
+      .median,
+    20,
+  );
+  assert.equal(
+    analyse(t, { x: "c3", chart: "excerpts", query: "one" }).excerpt.length,
+    2,
+  );
+  assert.equal(
+    pairedStatistics([
+      { a: 0, b: 4 },
+      { a: 1, b: 2 },
+      { a: 2, b: 0 },
+    ]).pearsonR,
+    -1,
+  );
+});
+test("source presence, passage counts, overlap and selected model context agree", async () => {
+  const { analyticalEvidence } = await import("../src/tutor-evidence.js");
+  const d = corpus(
+    "docs",
+    [
+      { source: "A", codes: ["X", "Y"], reviewed: true },
+      { source: "A", codes: ["X"], reviewed: true },
+      { source: "B", codes: ["Y"], reviewed: false },
+    ],
+    ["A", "B", "C"],
+  );
+  const v = { task: "group", chart: "presence", measure: "sources" };
+  const a = analyse(d, v);
+  assert.match(a.unit, /Presence/);
+  assert.deepEqual(
+    a.records.filter((r) => r.label === "X").map((r) => [r.n, r.value]),
+    [
+      [2, 1],
+      [0, 0],
+      [0, 0],
+    ],
+  );
+  const e = analyticalEvidence(d, v, "How many interviews mention X?");
+  assert.deepEqual(
+    e.codeCounts.find((r) => r.code === "X"),
+    { code: "X", matchingPassages: 2, distinctSourcesWithCode: 1 },
+  );
+  const filtered = analyticalEvidence(
+    d,
+    { ...v, filter: "source", value: "B" },
+    "",
+  );
+  assert.equal(filtered.listedSources, 1);
+  assert.equal(
+    analyse(d, {
+      x: "X",
+      y: "Y",
+      task: "two",
+      chart: "bars",
+      measure: "sources",
+    }).records[1].n,
+    1,
+  );
+});
+test("append and join honour exclusions and preserve the two inputs", async () => {
+  const { combineTables } = await import("../src/combine.js");
+  const left = makeTable(
+    [
+      ["ID", "answer"],
+      ["a", "yes"],
+      ["b", "no"],
+    ],
+    "responses",
+  );
+  const meta = makeTable(
+    [
+      ["ID", "group"],
+      ["a", "first"],
+      ["a", "omit"],
+      ["c", "second"],
+    ],
+    "attributes",
+  );
+  meta.rules = [{ field: "c1", value: "omit" }];
+  const joined = combineTables(left, meta, "join", "c0", "c0");
+  assert.equal(joined.matchCount, 1);
+  assert.deepEqual(
+    joined.rows.map((r) => r[joined.fields.at(-1).id]),
+    ["first", ""],
+  );
+  const add = makeTable(
+    [
+      ["answer", "ID"],
+      ["yes", "c"],
+    ],
+    "extra",
+  );
+  assert.equal(combineTables(left, add, "append").rows[2].c0, "c");
+  assert.equal(left.rows.length, 2);
+});

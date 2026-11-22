@@ -1,4 +1,5 @@
 import "./style.css";
+import { analyticalEvidence, pairedStatistics } from "./tutor-evidence.js";
 import {
   chartFields,
   directComparison,
@@ -156,9 +157,8 @@ function render() {
     if (hint) get("hint").innerHTML = `<p class="review">${esc(hint)}</p>`;
   }
 }
-function summary(i) {
-  const d = getData(),
-    v = project.views[i];
+function summary(i, v = project.views[i]) {
+  const d = getData();
   if (v.task !== "model") return analyse(d, v);
   const rows = filteredRows(d).filter(
       (r) => !v.filter || r[v.filter] === v.value,
@@ -274,6 +274,7 @@ function goto(i) {
     (i > 1 && !project.confirmed.includes(project.active))
   )
     return;
+  if (i === 2 || i === 3) project.figurePanels = i === 3 ? "both" : "left";
   step = i;
   render();
   window.scrollTo(0, 0);
@@ -317,7 +318,13 @@ function selectedPassages() {
 function botContext(question = "") {
   const d = getData();
   if (!d) return { step: "Upload" };
-  const basic = { stage: steps[step], dataset: d.name, unit: d.unit };
+  const basic = {
+    stage: steps[step],
+    dataset: d.name,
+    datasetKind:
+      d.kind === "text" ? "coded interviews or documents" : "survey or table",
+    unit: d.unit,
+  };
   if (step <= 1)
     return {
       ...basic,
@@ -329,6 +336,13 @@ function botContext(question = "") {
       const a = summary(i);
       return {
         ...a,
+        calculatedForSelection: analyticalEvidence(
+          d,
+          project.views[i],
+          question,
+        ),
+        pairedStatistics:
+          a.points?.length && !a.date ? pairedStatistics(a.points) : undefined,
         excerpt: undefined,
         points: a.points?.slice(0, 40),
         pointsTotal: a.points?.length,
@@ -345,6 +359,17 @@ function botContext(question = "") {
     pendingChart: proposal?.view,
     views,
     fields: d.fields ? chartFields(d.fields, question) : undefined,
+    ...(d.kind === "text"
+      ? {
+          presenceGrid: {
+            task: "group",
+            chart: "presence",
+            x: "",
+            y: "",
+            measure: "passages",
+          },
+        }
+      : {}),
     codebook: d.kind === "text" ? allCodes(d) : undefined,
     passages: selectedPassages().map((p) => ({
       id: p.id,
@@ -360,6 +385,57 @@ function proposedChart(pick) {
     keys = text
       ? allCodes(d)
       : d.fields.filter((f) => f.type !== "metadata").map((f) => f.id);
+  const panel = step === 3 && pick.panel !== "left" ? 1 : 0,
+    current = project.views[panel];
+  const candidate = (view) => ({
+    view,
+    panel,
+    step,
+    dataset: d.id,
+    baseline: JSON.stringify(current),
+  });
+  if (!text && pick.task === "model" && pick.chart === "model") {
+    if (!Array.isArray(pick.predictors) || !pick.predictors.length) return null;
+    const outcome = resolveAxis(d.fields, pick.outcome);
+    const predictors = [
+      ...new Set(pick.predictors.map((k) => resolveAxis(d.fields, k))),
+    ];
+    const target = d.fields.find((f) => f.id === outcome);
+    if (
+      !keys.includes(outcome) ||
+      predictors.includes(outcome) ||
+      predictors.some((k) => !keys.includes(k)) ||
+      !(
+        target.type === "number" ||
+        (["category", "ordered"].includes(target.type) &&
+          target.levels.length === 2 &&
+          target.levels.includes(pick.positive))
+      )
+    )
+      return null;
+    const view = {
+      ...newView(d),
+      task: "model",
+      chart: "model",
+      outcome,
+      predictors,
+      positive: pick.positive || "",
+      interaction: pick.interaction === true,
+      filter: current.filter,
+      value: current.value,
+      palette: current.palette,
+    };
+    summary(panel, view);
+    return candidate(view);
+  }
+  if (
+    text &&
+    pick.task === "group" &&
+    ["presence", "grid", "table"].includes(pick.chart)
+  ) {
+    // These views always use the full code × source matrix. Both axes are implicit.
+    pick = { ...pick, x: "", y: "", measure: "passages" };
+  }
   if (!text)
     pick = {
       ...pick,
@@ -375,8 +451,6 @@ function proposedChart(pick) {
   if (pick.task === "one" && pick.y) return null;
   const paired = pick.task !== "one" && !(text && pick.task === "group");
   if (paired && (!keys.includes(pick.y) || pick.y === pick.x)) return null;
-  const panel = step === 3 && pick.panel !== "left" ? 1 : 0,
-    current = project.views[panel];
   const measure = pick.measure || (text ? "passages" : "count");
   if (
     !(text ? ["passages", "sources"] : ["count", "percent"]).includes(measure)
@@ -394,13 +468,7 @@ function proposedChart(pick) {
     palette: current.palette,
   };
   if (!available(d, view).includes(view.chart)) return null;
-  return {
-    view,
-    panel,
-    step,
-    dataset: d.id,
-    baseline: JSON.stringify(current),
-  };
+  return candidate(view);
 }
 function applyProposal() {
   const candidate = proposal;
@@ -412,9 +480,9 @@ function applyProposal() {
     JSON.stringify(project.views[candidate.panel]) !== candidate.baseline
   )
     throw Error("The view has changed. Ask for a fresh chart suggestion.");
+  const chart = summary(candidate.panel, candidate.view);
   snapshotViews();
   project.views[candidate.panel] = candidate.view;
-  const chart = summary(candidate.panel);
   history.push({
     role: "assistant",
     content:
@@ -533,13 +601,25 @@ async function ask(question, skill) {
       } catch {
         pick = { explanation: data.answer };
       }
+      if (!pick || typeof pick !== "object")
+        pick = {
+          action: "answer",
+          explanation:
+            "I could not read the model response. Please try the question again.",
+        };
       proposal = null;
       if (
         pick.action === "draw" ||
         pick.action === "suggest" ||
         (!pick.action && pick.chart)
       ) {
-        const candidate = proposedChart(pick);
+        let candidate;
+        try {
+          candidate = proposedChart(pick);
+        } catch (error) {
+          history.push({ role: "assistant", content: error.message });
+          return;
+        }
         if (!candidate) {
           const fields = dataset?.fields || [];
           const matched = [
@@ -745,7 +825,12 @@ async function reviewAction(act, d, el) {
               ...new Set(p.codes.map((c) => (c === old ? name : c))),
             ]),
         );
-        project.views.forEach((v) => {
+        [
+          ...project.views,
+          ...project.saved
+            .filter((s) => s.dataset === d.id)
+            .flatMap((s) => s.views),
+        ].forEach((v) => {
           if (v.x === old) v.x = name;
           if (v.y === old) v.y = name;
         });
@@ -765,14 +850,19 @@ async function reviewAction(act, d, el) {
       () => {
         const key = val("textcol"),
           id = val("idcol");
-        const ids = d.rows.map((r, i) => (id ? r[id] : "Record " + (i + 1)));
+        const entries = d.rows
+          .map((r, i) => ({ r, source: id ? r[id] : "Record " + (i + 1) }))
+          .filter(({ r }) =>
+            (d.rules || []).every((rule) => r[rule.field] !== rule.value),
+          );
+        const ids = entries.map((entry) => entry.source);
         if (ids.some((x) => !x) || new Set(ids).size !== ids.length)
           throw Error(
             "Choose a unique, complete identifier or use row numbers.",
           );
         const passages = [],
           meta = {};
-        d.rows.forEach((r, i) => {
+        entries.forEach(({ r }, i) => {
           if (r[key]) passages.push(...texts(ids[i], [r[key]]));
           meta[ids[i]] = Object.fromEntries(
             fields
@@ -868,7 +958,13 @@ async function reviewAction(act, d, el) {
               s,
               [
                 ["", "Unmatched"],
-                ...[...new Set(t.rows.map((r) => r[key]).filter(Boolean))],
+                ...[
+                  ...new Set(
+                    filteredRows(t)
+                      .map((r) => r[key])
+                      .filter(Boolean),
+                  ),
+                ],
               ],
               s,
             ),
@@ -879,7 +975,8 @@ async function reviewAction(act, d, el) {
           d.sources.map((s, i) => [s, val("map" + i)]),
         );
         const joined = linkage(d, t, key, m);
-        d.metadata = { ...d.metadata, ...joined };
+        for (const [source, attributes] of Object.entries(joined))
+          d.metadata[source] = { ...d.metadata[source], ...attributes };
         render();
         notice(Object.keys(joined).length + " sources linked.");
       },
@@ -892,12 +989,20 @@ function evidence(i, match) {
     v = project.views[i],
     isText = d.kind === "text";
   if (!isText) {
+    const x = d.fields.find((f) => f.id === v.x);
     const rows = filteredRows(d).filter(
       (r) =>
         (!v.filter || r[v.filter] === v.value) &&
         (!match ||
-          (r[v.x] === match.code && (!v.y || r[v.y] === match.source))),
+          ((x?.type === "multiple"
+            ? r[v.x]
+                .split(x.separator || ";")
+                .map((s) => s.trim())
+                .includes(match.code)
+            : r[v.x] === match.code) &&
+            (!v.y || r[v.y] === match.source))),
     );
+
     const fields = d.fields.filter((f) => f.type !== "metadata");
     modal(
       "Underlying responses",
@@ -1305,7 +1410,9 @@ async function action(act, el) {
     }
     case "device":
       localStorage.setItem("dv-project", JSON.stringify(project));
-      notice("Saved on this device.");
+      notice(
+        "Saved. Choose Resume on this device in the same browser to reopen this project.",
+      );
       return;
     case "deviceOpen":
       setProject(JSON.parse(localStorage.getItem("dv-project")));
@@ -1363,7 +1470,7 @@ document.addEventListener("click", async (e) => {
       return;
     }
     const cell = e.target.closest("[data-code]");
-    if (cell)
+    if (cell?.closest("[data-panel]"))
       evidence(Number(cell.closest("[data-panel]").dataset.panel), {
         code: cell.dataset.code,
         source: cell.dataset.source,

@@ -39,6 +39,11 @@ export function chartFields(fields, question) {
         id: f.id,
         name: f.label,
         type: f.type,
+        ...(f.levels.length === 2 &&
+        ["category", "ordered"].includes(f.type) &&
+        f.levels.every((s) => s.length <= 60)
+          ? { binaryEventChoices: f.levels }
+          : {}),
         ...(matches.length
           ? { requestWordsMatchingAnswerChoices: matches }
           : {}),

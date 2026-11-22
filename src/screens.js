@@ -33,7 +33,7 @@ export function landing(local) {
     )
     .join(
       "",
-    )}</div><div class="bar">${b("open", icon("project") + " Reopen a project")}${local ? b("deviceOpen", "Resume on this device") : ""}</div>`;
+    )}</div><div class="bar">${b("open", icon("project") + " Open a downloaded project")}${local ? b("deviceOpen", "Resume on this device") : ""}</div>`;
 }
 export function datasetSelect(p) {
   if (p.datasets.length === 1) return "";
@@ -181,7 +181,7 @@ export function panel(d, v, i) {
   <div class="graphic" id="graphic${i}"></div><div id="modeldetails${i}"></div>
   <details data-chart-options="${i}"><summary>Chart settings</summary><div class="formgrid">
  ${
-   !text && v.task !== "model"
+   !text && !["model", "scatter", "line", "stack", "excerpts"].includes(v.chart)
      ? select(
          "measure",
          "Show",
@@ -191,7 +191,7 @@ export function panel(d, v, i) {
          ],
          v.measure,
        )
-     : text && v.task !== "group"
+     : text && v.task !== "group" && v.chart !== "excerpts"
        ? select(
            "measure",
            "Count",
@@ -204,7 +204,7 @@ export function panel(d, v, i) {
        : ""
  }
  ${v.chart === "scatter" || v.chart === "line" ? select("z", "Colour by", [["", "One series"], ...choices.filter(([k]) => k !== v.x && k !== v.y)], v.z) : ""}
- </div><details><summary>Filters and appearance</summary><div class="formgrid">${select("filter", "Keep a subset", [["", "All records"], ...(text ? [["source", "Source"], ...meta] : choices)], v.filter)}${
+ </div><details data-chart-options="${i}-appearance"><summary>Filters and appearance</summary><div class="formgrid">${select("filter", "Keep a subset", [["", "All records"], ...(text ? [["source", "Source"], ...meta] : choices)], v.filter)}${
    v.filter
      ? select(
          "value",
@@ -226,7 +226,7 @@ export function panel(d, v, i) {
  <div class="bar">${b("askview", "Explain this view", "", 'data-i="' + i + '"')}${text ? b("passages", "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></section>`;
 }
 export function saveScreen(p) {
-  return `<div class="card"><h2>Save an editable project</h2><p>Include data to reopen your work on another laptop. A settings-only file requires the original datasets to be reimported first.</p><div class="bar">${b("download", "Download project with data", "primary")}${b("device", "Save on this device")}${b("settings", "Download settings only")}</div></div><div class="card"><h2>Saved comparisons</h2><div class="bar">${b("savecompare", "Save current comparison")}</div>${p.saved.length ? p.saved.map((s, i) => `<div class="topline check-item"><div><strong>${esc(s.name)}</strong><p>${esc(s.note)}</p></div><div>${b("loadcomp", "Open", "", 'data-i="' + i + '"')} ${b("dupcomp", "Duplicate", "", 'data-i="' + i + '"')}</div></div>`).join("") : "<p>Your saved comparisons will appear here.</p>"}</div><div class="card"><h2>Export a figure</h2><div class="formgrid">${form(
+  return `<div class="card"><h2>Save an editable project</h2><p>Include data to reopen your work on another laptop. A settings-only file stores view settings. Use the full project to keep edited passages, codes, linked attributes or derived datasets.</p><div class="bar">${b("download", "Download project with data", "primary")}${b("device", "Save on this device")}${b("settings", "Download settings only")}</div></div><div class="card"><h2>Saved comparisons</h2><div class="bar">${b("savecompare", "Save current comparison")}</div>${p.saved.length ? p.saved.map((s, i) => `<div class="topline check-item"><div><strong>${esc(s.name)}</strong><p>${esc(s.note)}</p></div><div>${b("loadcomp", "Open", "", 'data-i="' + i + '"')} ${b("dupcomp", "Duplicate", "", 'data-i="' + i + '"')}</div></div>`).join("") : "<p>Your saved comparisons will appear here.</p>"}</div><div class="card"><h2>Export a figure</h2><div class="formgrid">${form(
     "panels",
     "Panels",
     [
@@ -234,6 +234,7 @@ export function saveScreen(p) {
       ["left", "Left view"],
       ["right", "Right view"],
     ],
+    p.figurePanels || "left",
   )}${form("layout", "Arrangement", [
     ["horizontal", "Side by side"],
     ["vertical", "Stacked"],
@@ -242,6 +243,6 @@ export function saveScreen(p) {
     ["940", "Presentation"],
   ])}</div><div class="bar">${b("previewexport", "Preview figure")}${b("svg", "Download SVG")}${b("png", "Download PNG")}${b("copyfig", "Copy figure")}${b("caption", "Help me caption this")}</div></div>`;
 }
-function form(id, title, values) {
-  return `<label>${title}<select id="${id}">${opts(values, values[0][0])}</select></label>`;
+function form(id, title, values, selected = values[0][0]) {
+  return `<label>${title}<select id="${id}">${opts(values, selected)}</select></label>`;
 }

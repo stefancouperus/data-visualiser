@@ -293,3 +293,245 @@ test("an informal comparison draws the attitude question by preferences mentione
     "Created 100% stacked bars",
   );
 });
+
+test("all survey chart families, regression, filters, comparison controls and figure outputs", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const rows = Array.from(
+    { length: 16 },
+    (_, i) =>
+      `2026,2026,${i},${3 * i + 2},${i % 3 ? "First" : "Second"},${i % 3 ? "Yes" : "No"}`,
+  );
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "analysis.csv",
+    "StartDate,EndDate,Q1,Q2,Q3,Q4\nStart Date,End Date,Age,Score,Year,Vote\n" +
+      rows.join("\n"),
+  );
+  const click = (name) =>
+    page.getByRole("button", { name, exact: true }).click();
+  await click("Confirm and explore");
+  const key = (k) => page.locator('[data-panel="0"] [data-key="' + k + '"]');
+  const svg = page.locator("#graphic0 svg");
+  const shown = async (chart) => {
+    await key("chart").selectOption(chart);
+    await expect(svg).toBeVisible();
+  };
+  for (const type of ["hist", "dots", "bars", "table"]) await shown(type);
+  await key("task").selectOption("group");
+  await key("x").selectOption("c5");
+  await key("y").selectOption("c4");
+  for (const type of ["bars", "dots", "grid", "stack", "small", "table"])
+    await shown(type);
+  await shown("grid");
+  await svg.locator('[data-code="Yes"][data-source="First"]').click();
+  await expect(page.locator("dialog")).toContainText("10 records");
+  await click("Done");
+  await key("task").selectOption("two");
+  await key("x").selectOption("c2");
+  await key("y").selectOption("c3");
+  await shown("scatter");
+  await shown("line");
+  await page.getByText("Chart settings", { exact: true }).click();
+  await key("z").selectOption("c4");
+  await page.getByText("Filters and appearance", { exact: true }).click();
+  await key("filter").selectOption("c4");
+  // The active filter control remains usable after the panel redraws.
+  if (!(await key("value").isVisible()))
+    await page.getByText("Filters and appearance", { exact: true }).click();
+  await key("value").selectOption("First");
+  await expect(svg).toContainText("10 paired");
+  await key("task").selectOption("model");
+  await key("outcome").selectOption("c3");
+  await page.locator('[data-predictor="c2"]').check();
+  await expect(svg).toContainText("Linear regression");
+  await page.getByText("Coefficients and model details").click();
+  await expect(page.locator("#modeldetails0")).toContainText("R squared");
+  await click("Compare two views");
+  await expect(page.locator("#graphic1 svg")).toBeVisible();
+  await page.locator("#linked").uncheck();
+  await page.locator("#linked").check();
+  await click("Save comparison");
+  await page.locator("#compname").fill("Test comparison");
+  await click("Apply");
+  await click("Save and export");
+  await click("Duplicate");
+  await expect(
+    page.getByText("Test comparison (copy)", { exact: true }),
+  ).toBeVisible();
+  await page.locator("#panels").selectOption("both");
+  await page.locator("#layout").selectOption("vertical");
+  await page.locator("#preset").selectOption("940");
+  await click("Preview figure");
+  await expect(page.locator("#previewFigure > svg > svg")).toHaveCount(2);
+  await click("Done");
+  const file = page.waitForEvent("download");
+  await click("Download PNG");
+  expect((await file).suggestedFilename()).toBe("data-visualiser.png");
+  await click("Copy figure");
+  await expect
+    .poll(() =>
+      page.evaluate(async () =>
+        (await navigator.clipboard.read()).flatMap((i) => i.types),
+      ),
+    )
+    .toContain("image/png");
+});
+test("tutor proposals fit a regression through the normal chart controls", async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    sessionStorage.setItem("dv-session", "test-session"),
+  );
+  await page.route("https://tutor.example.test/ask", (route) =>
+    route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          action: "draw",
+          task: "model",
+          chart: "model",
+          outcome: "Score",
+          predictors: ["Age"],
+        }),
+      },
+    }),
+  );
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "test.csv",
+    "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Age,Score\n2026,2026,20,5\n2026,2026,21,7\n2026,2026,22,8\n2026,2026,23,11",
+  );
+  await page.getByRole("button", { name: "Confirm and explore" }).click();
+  await page.getByRole("button", { name: "Data bot", exact: true }).click();
+  await page
+    .locator("#question")
+    .fill("Fit a linear regression of Score on Age");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.locator("#graphic0")).toContainText("Linear regression");
+  await expect(page.locator("#graphic0")).toContainText("4 complete records");
+});
+
+test("Check edits, exclusions and transforming open answers retain the right respondents", async ({
+  page,
+}) => {
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "test.csv",
+    "StartDate,EndDate,Q1,Q2,Q3,Q4\nStart Date,End Date,Status flag,Comment,Support,Plan\n2026,2026,Preview,Test wording,1,1\n2026,2026,Keep,I plan ahead,1,0\n2026,2026,Keep,I work late,0,1",
+  );
+  const button = (act) => page.locator('[data-act="' + act + '"]').first();
+  const settings = async () => {
+    const node = page.getByText("Review fields and import settings", {
+      exact: true,
+    });
+    if (!(await button("exclude").isVisible())) await node.click();
+  };
+  await settings();
+  await button("exclude").click();
+  await page.locator("#excludeField").selectOption("c2");
+  await page.locator("#excludeValue").fill("Preview");
+  await page.locator("#modalform button[type=submit]").click();
+  await settings();
+  await button("multi").click();
+  await page.locator("#multiTitle").fill("Options");
+  await page.locator("[name=mf][value=c4]").check();
+  await page.locator("[name=mf][value=c5]").check();
+  await page.locator("#modalform button[type=submit]").click();
+  await settings();
+  await button("tocorpus").click();
+  await page.locator("#textcol").selectOption("c3");
+  await page.locator("#modalform button[type=submit]").click();
+  await expect(page.locator("main .scroll")).toContainText("Record 2");
+  await expect(page.locator("main .scroll")).not.toContainText("Test wording");
+  await button("sources").click();
+  await page.locator("#sourceList").fill("Record 2\nRecord 3\nEmpty");
+  await page.locator("#modalform button[type=submit]").click();
+  await button("confirm").click();
+  await button("passages").click();
+  await page.locator("[name=pickp]").first().check();
+  await page.locator("#applycode").fill("Planning");
+  await page.locator("#modalform button[type=submit]").click();
+  await page.getByRole("button", { name: "Check", exact: true }).click();
+  await button("renamecode").click();
+  await page.locator("#newcode").fill("Preparation");
+  await page.locator("#modalform button[type=submit]").click();
+  await expect(page.locator("main .scroll")).toContainText("Preparation");
+});
+test("UTF-16 TSV, interview bot matrix, evidence drill-down and accepted coding suggestions", async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    sessionStorage.setItem("dv-session", "test-session"),
+  );
+  const replies = [];
+  await page.route("https://tutor.example.test/ask", (route) => {
+    const body = route.request().postDataJSON();
+    if (body.skill === "coding") {
+      const p = body.context.passages[0];
+      replies.push(p);
+      return route.fulfill({
+        json: {
+          answer: JSON.stringify({
+            suggestions: [
+              {
+                id: p.id,
+                quote: p.text,
+                code: "Barrier",
+                reason: "An obstacle.",
+              },
+            ],
+          }),
+        },
+      });
+    }
+    return route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          action: "draw",
+          task: "group",
+          chart: "presence",
+          x: "codes",
+          y: "sources",
+          measure: "count",
+        }),
+      },
+    });
+  });
+  await upload(
+    page,
+    /I have coded interviews/,
+    "codes.tsv",
+    Buffer.from(
+      "\ufeffInterview\tPassage\tCodes\nA\tI worked late\tTime;Work\nB\tI arrived early\tPlanning",
+      "utf16le",
+    ),
+  );
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Continue").click();
+  await btn("Continue").click();
+  await btn("Confirm and explore").click();
+  await btn("Data bot").click();
+  await page
+    .locator("#question")
+    .fill("Draw a grid of all codes across interviews");
+  await btn("Send").click();
+  await expect(page.locator("#graphic0")).toContainText(
+    "Presence (1 = present",
+  );
+  await page.locator("[data-act=closebot]").click();
+  await page.locator('#graphic0 [data-code="Time"][data-source="A"]').click();
+  await expect(page.locator("#passlist")).toContainText("1 matching passages");
+  await page.locator("input[name=pickp]").check();
+  await page.locator("#suggestpass").click();
+  await expect(page.locator("[data-act=acceptcode]")).toBeVisible();
+  expect(replies).toHaveLength(1);
+  await page.locator("[data-act=acceptcode]").click();
+  await page.locator("#approved").fill("Schedule");
+  await page.locator("#modalform button[type=submit]").click();
+  await expect(page.locator("#graphic0")).toContainText("Schedule");
+});

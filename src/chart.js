@@ -171,6 +171,42 @@ export function figure(a, v, { width = 700 } = {}) {
         });
       pos += 37;
     }
+  } else if (v.chart === "hist" && records.length) {
+    const lo = records[0].lo,
+      hi = records.at(-1).hi;
+    const x = d3.scaleLinear(
+      [lo === hi ? lo - 0.5 : lo, lo === hi ? hi + 0.5 : hi],
+      [65, w - 24],
+    );
+    const top = pos + 20,
+      bottom = top + 180;
+    const y = d3
+      .scaleLinear([0, d3.max(records, (r) => r.value) || 1], [bottom, top])
+      .nice();
+    line(a.unit, margin, pos, 12);
+    root
+      .append("g")
+      .attr("transform", "translate(65,0)")
+      .call(d3.axisLeft(y).ticks(5));
+    root
+      .append("g")
+      .attr("transform", "translate(0," + bottom + ")")
+      .call(d3.axisBottom(x).ticks(6));
+    for (const r of records) {
+      const start = x(lo === hi ? lo - 0.5 : r.lo),
+        end = x(lo === hi ? hi + 0.5 : r.hi);
+      root
+        .append("rect")
+        .attr("x", start)
+        .attr("y", y(r.value))
+        .attr("width", Math.max(1, end - start - 1))
+        .attr("height", bottom - y(r.value))
+        .attr("fill", ink(0))
+        .append("title")
+        .text(r.label + " · " + r.n + " of " + r.den);
+    }
+    pos = bottom + 38;
+    block(a.x, Math.floor((w - 52) / 8), 13);
   } else if (v.chart === "stack") {
     for (const g of groups) {
       const series = records.filter((r) => r.group === g);
@@ -217,7 +253,7 @@ export function figure(a, v, { width = 700 } = {}) {
     const isModel = v.chart === "model",
       ps = isModel
         ? (a.predictions || []).map((p, i) => ({
-            a: i,
+            a: a.numericalPredictor ? Number(p.label) : i,
             b: p.value,
             g: "",
             ...p,
@@ -240,7 +276,7 @@ export function figure(a, v, { width = 700 } = {}) {
         .nice()
         .range([bottom, top]);
       let axis = d3.axisBottom(x).ticks(5);
-      if (isModel)
+      if (isModel && !a.numericalPredictor)
         axis = axis
           .tickValues(ps.map((p) => p.a))
           .tickFormat((i) => shorten(ps[i]?.label || "", 12));

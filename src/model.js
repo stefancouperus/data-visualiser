@@ -36,14 +36,22 @@ export function fitModel(
       terms:
         f.type === "number"
           ? [{ name: f.label, fn: (r) => Number(r[k]) }]
-          : values
-              .slice(1)
-              .map((v) => ({
-                name: f.label + " = " + v,
-                fn: (r) => +(r[k] === v),
-              })),
+          : values.slice(1).map((v) => ({
+              name: f.label + " = " + v,
+              fn: (r) => +(r[k] === v),
+            })),
     };
   });
+  const termCount =
+    1 +
+    specs.reduce((n, s) => n + s.terms.length, 0) +
+    (interaction && specs.length >= 2
+      ? specs[0].terms.length * specs[1].terms.length
+      : 0);
+  if (termCount > 45 || termCount >= used.length)
+    throw Error(
+      "The model needs more complete records or fewer predictor categories.",
+    );
   const terms = [
     { name: "Intercept", fn: () => 1 },
     ...specs.flatMap((s) => s.terms),
@@ -182,6 +190,7 @@ export function fitModel(
     coefficients,
     predictions,
     predictor: s.f.label,
+    numericalPredictor: s.f.type === "number",
     held: specs
       .slice(1)
       .map((q) => q.f.label + " = " + String(base[q.k]))

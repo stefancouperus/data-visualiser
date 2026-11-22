@@ -223,12 +223,25 @@ export function parseLines(s) {
 export async function readFile(file) {
   const name = file.name,
     ext = name.split(".").pop().toLowerCase();
-  if (ext === "csv" || ext === "tsv")
+  if (ext === "csv" || ext === "tsv") {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const encoding =
+      bytes[0] === 255 && bytes[1] === 254
+        ? "utf-16le"
+        : bytes[0] === 254 && bytes[1] === 255
+          ? "utf-16be"
+          : "utf-8";
     return {
       name,
       kind: "grid",
-      sheets: [{ name: "Data", grid: parseCSV(await file.text()) }],
+      sheets: [
+        {
+          name: "Data",
+          grid: parseCSV(new TextDecoder(encoding).decode(bytes)),
+        },
+      ],
     };
+  }
   if (ext === "xlsx") {
     const ExcelJS = (await import("exceljs")).default;
     const book = new ExcelJS.Workbook();
