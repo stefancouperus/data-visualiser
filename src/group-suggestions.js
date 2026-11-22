@@ -17,12 +17,6 @@ export function asksForGroupSuggestion(question) {
   );
 }
 
-function background(label) {
-  return /\b(?:study year|year of study|age group|education|occupation|region|cohort|programme|faculty|department|gender|year group|employment|studiejaar|opleiding)\b/i.test(
-    label,
-  );
-}
-
 export function suggestGrouping(d, view) {
   const text = d.kind === "text",
     options = new Map(patternChoices(d));
@@ -59,7 +53,7 @@ export function suggestGrouping(d, view) {
     return {
       message: text
         ? "I need a characteristic recorded for the interviews. Choose Add interview groups in Explore, enter a group for each interview, then ask again."
-        : "I need a separate grouping column, such as study year, alongside the selected questions. Check the columns in your upload.",
+        : "I need a separate column that records group membership for the selected responses. Check the columns in your upload.",
     };
   const entries = text
     ? d.sources.filter(
@@ -91,18 +85,17 @@ export function suggestGrouping(d, view) {
       counts.set(value, (counts.get(value) || 0) + 1);
       if (counts.size > 12) break;
     }
-    if (
-      copies.size ||
-      counts.size > 12 ||
-      [...counts.values()].filter((n) => n >= 2).length < 2
-    )
-      continue;
-    candidates.push({ key, label, coverage: recorded / entries.length });
+    const groupSizes = [...counts.values()].sort((a, b) => b - a);
+    if (copies.size || counts.size > 12 || !(groupSizes[1] >= 2)) continue;
+    candidates.push({
+      key,
+      label,
+      coverage: recorded / entries.length,
+      comparisonBase: groupSizes[1],
+    });
   }
   candidates.sort(
-    (a, b) =>
-      Number(background(b.label)) - Number(background(a.label)) ||
-      b.coverage - a.coverage,
+    (a, b) => b.coverage - a.coverage || b.comparisonBase - a.comparisonBase,
   );
   let best = null,
     checked = 0,

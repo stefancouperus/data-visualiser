@@ -194,9 +194,12 @@ export function patternRequest(question, text, choices, current) {
     : question.match(/\bfor\s+(.+)$/i)?.[1];
   const result = { patternMode };
   if (named) {
-    const normal = (word) =>
-      word === "importance" ? "important" : word === "voted" ? "vote" : word;
-    const words = (term) => tokens(term).map(normal);
+    // Match ordinary word forms against the actual question label.
+    const wordMatches = (word, labelWord) =>
+      word === labelWord ||
+      (word.endsWith("ed") &&
+        [word.slice(0, -1), word.slice(0, -2)].includes(labelWord)) ||
+      (/(ance|ence)$/.test(word) && word.slice(0, -2) + "t" === labelWord);
     const matched = named
       .replace(/[?.!]+$/, "")
       .split(/\s*,\s*(?:and\s+)?|\s+and\s+/i)
@@ -205,10 +208,13 @@ export function patternRequest(question, text, choices, current) {
           ([, label]) => label.toLowerCase() === term.trim().toLowerCase(),
         );
         if (exact.length === 1) return exact[0][0];
-        const query = words(term);
+        const query = tokens(term);
         const found = choices.filter(
           ([, label]) =>
-            query.length && query.every((word) => words(label).includes(word)),
+            query.length &&
+            query.every((word) =>
+              tokens(label).some((labelWord) => wordMatches(word, labelWord)),
+            ),
         );
         return found.length === 1 ? found[0][0] : null;
       });
@@ -320,6 +326,6 @@ export function groupingRequest(question, groups, current, text) {
             "."
           : text
             ? "Open Look across several themes and choose Add interview groups. Give each interview a group, then ask me again."
-            : "There is no suitable grouping column for these selected questions. Use a separate column such as study year.",
+            : "There is no suitable grouping column for these selected questions. Choose a separate column that records group membership.",
   };
 }

@@ -75,3 +75,62 @@ test("interview recommendations count distinct interviews or passages under thei
     false,
   );
 });
+
+test("shortlisting depends on the survey data even when many competing fields have familiar demographic labels", () => {
+  const familiar = [
+    "Study year",
+    "Age group",
+    "Education",
+    "Occupation",
+    "Region",
+    "Cohort",
+    "Programme",
+    "Faculty",
+    "Department",
+    "Gender",
+    "Employment",
+    "Year group",
+  ];
+  const d = makeTable(
+    [
+      ["Damage reported", "Packing method", ...familiar],
+      ...Array.from({ length: 8 }, (_, i) => [
+        i < 4 ? "Damaged" : "Intact",
+        i < 4 ? "Paper" : "Foam",
+        ...familiar.map(() => (i % 2 ? "A" : "B")),
+      ]),
+    ],
+    "Delivery survey",
+  );
+  const result = suggestGrouping(d, view);
+  assert.equal(result.spec?.groupBy, "c1");
+  assert.match(result.message, /Packing method/);
+  for (const [i, f] of d.fields.entries()) f.label = "Field " + i;
+  assert.deepEqual(suggestGrouping(d, view).spec, result.spec);
+});
+
+test("interview group suggestions follow the project's own codes and metadata labels", () => {
+  const d = {
+    kind: "text",
+    sources: ["A", "B", "C", "D"],
+    metadata: Object.fromEntries(
+      ["A", "B", "C", "D"].map((s, i) => [
+        s,
+        { "Repair setting": i < 2 ? "Workshop" : "On site" },
+      ]),
+    ),
+    passages: ["A", "B", "C", "D"].map((source, i) => ({
+      source,
+      codes: i < 2 ? ["Parts unavailable"] : ["Stock ready"],
+      reviewed: true,
+    })),
+  };
+  const result = suggestGrouping(d, {
+    task: "patterns",
+    items: ["Parts unavailable"],
+    patternMode: "sources",
+  });
+  assert.equal(result.spec?.groupBy, "Repair setting");
+  for (const label of ["Parts unavailable", "Workshop", "On site"])
+    assert.ok(result.message.includes(label));
+});

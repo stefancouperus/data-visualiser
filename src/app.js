@@ -2049,7 +2049,7 @@ async function action(act, el) {
       const view = project.views[i];
       modal(
         "Add interview groups",
-        '<label>Name of the grouping<input id="group-name" placeholder="e.g. Study year" required maxlength="100"></label><p>Enter one group for each interview. Leave a box blank if the group is unknown.</p>' +
+        '<label>Name of the grouping<input id="group-name" required maxlength="100"></label><p>Enter one group for each interview. Leave a box blank if the group is unknown.</p>' +
           d.sources
             .map(
               (source, j) =>
