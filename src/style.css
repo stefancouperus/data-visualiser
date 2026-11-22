@@ -749,3 +749,6 @@ dialog h2 {
 @media (max-width: 520px) {
   .style-choices { grid-template-columns: 1fr; }
 }
+
+.book-source { white-space: pre-wrap; overflow: auto; max-height: 13rem; }
+.book-row { border-bottom: 1px solid var(--line); padding: 0.6rem 0; }

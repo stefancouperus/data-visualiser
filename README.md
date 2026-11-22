@@ -18,6 +18,8 @@ Use **Download project with data** for a portable JSON file. On the start page, 
 
 **Data bot.** The Worker sends the current summary and selected evidence to the university gateway, using Gemma as primary and Qwen as fallback. Review the context before adding whole sources. For suggested coding, select up to ten passages and approve or dismiss each grounded suggestion. Ordinary visualisation does not contact the gateway. Full project downloads include data and should be shared accordingly.
 
+**Interview coding.** For an uncoded transcript, start with **Written responses or documents**, then choose **Read and code passages** in Explore. Give an optional research focus and select one to ten passages. Inductive coding reuses accepted labels and meanings, with at most two new labels per batch and up to eight distinct labels before the bot stops proposing new ones. Deductive coding accepts a codebook in DOCX, text-based PDF, TXT, XLSX, CSV or TSV. Choose **Extract labels** to send its text to the bot, check the draft against the document, then choose **Use these labels**. Coding suggestions use only the approved vocabulary in this mode. Both modes allow up to two codes per passage, including existing codes, and students review suggestions individually. A full project download retains the approved codebook and coding decisions.
+
 ## Development and deployment
 
 Use Node 22. Run `npm ci`, `npm run dev`, `npm test` and `npm run build`. Run the interaction checks with `npx playwright test`; install the Playwright Chromium browser on systems without the configured macOS Chrome. Browser test fixtures are synthetic and are not included in the landing page.

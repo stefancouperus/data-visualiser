@@ -1,10 +1,11 @@
 import tutor from "./data-bot.md";
 import charts from "./skills/charts.md";
+import codebook from "./skills/codebook.md";
 import coding from "./skills/coding.md";
 import imports from "./skills/import.md";
 import regression from "./skills/regression.md";
 import recommend from "./skills/recommend.md";
-const skills = { charts, coding, imports, regression, recommend };
+const skills = { charts, coding, codebook, imports, regression, recommend };
 const gateway = "https://llm.k8s.rug.nl/v1/chat/completions";
 const models = ["gemma-26B-MoE", "Qwen3.6-35B-A3B-AWQ-4bit"];
 const enc = new TextEncoder();
@@ -137,7 +138,12 @@ export default {
               model,
               messages,
               temperature: 0.3,
-              max_tokens: data.skill === "coding" ? 2400 : 950,
+              max_tokens:
+                data.skill === "codebook"
+                  ? 6000
+                  : data.skill === "coding"
+                    ? 2400
+                    : 950,
             }),
             signal: AbortSignal.timeout(75000),
           });
@@ -149,7 +155,13 @@ export default {
           return reply(502, {
             error: "The university gateway could not process this request.",
           });
-        const answer = (await upstream.json()).choices?.[0]?.message?.content;
+        const choice = (await upstream.json()).choices?.[0];
+        if (data.skill === "codebook" && choice?.finish_reason === "length")
+          return reply(422, {
+            error:
+              "The draft exceeded the response limit. Upload a shorter codebook section containing your coding labels and definitions.",
+          });
+        const answer = choice?.message?.content;
         if (typeof answer === "string" && answer.trim())
           return reply(200, { answer, model });
       }

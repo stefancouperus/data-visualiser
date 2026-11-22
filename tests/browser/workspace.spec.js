@@ -508,7 +508,7 @@ test("UTF-16 TSV, interview bot matrix, evidence drill-down and accepted coding 
     /I have coded interviews/,
     "codes.tsv",
     Buffer.from(
-      "\ufeffInterview\tPassage\tCodes\nA\tI worked late\tTime;Work\nB\tI arrived early\tPlanning",
+      "\ufeffInterview\tPassage\tCodes\nA\tI worked late\tTime\nB\tI arrived early\tPlanning",
       "utf16le",
     ),
   );
@@ -742,4 +742,94 @@ test("figure styles preview the current data and survive comparison, export and 
     "data-style",
     "presentation",
   );
+});
+
+test("uncoded interview uses a reviewed PDF codebook and only approved labels", async ({
+  page,
+  context,
+}) => {
+  const doc = await context.newPage();
+  await doc.setContent(
+    "<p>Work conflict: A shift overlaps with voting time.</p>",
+  );
+  const pdf = await doc.pdf();
+  await doc.close();
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  await page.route("https://tutor.example.test/ask", async (route) => {
+    const request = route.request().postDataJSON();
+    if (request.skill === "codebook") {
+      expect(Object.keys(request.context)).toEqual(["document"]);
+      expect(request.context.document).toContain("Work conflict");
+      return route.fulfill({
+        json: {
+          answer: JSON.stringify({
+            entries: [
+              {
+                label: "Work conflict",
+                definition: "A shift overlaps with voting time.",
+              },
+            ],
+          }),
+        },
+      });
+    }
+    expect(request.skill).toBe("coding");
+    expect(request.context.guide.mode).toBe("deductive");
+    const p = request.context.passages[0],
+      label = request.context.guide.vocabulary[0].label;
+    expect(label).toBe("Shift conflict");
+    return route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          suggestions: ["Busyness", label].map((code) => ({
+            id: p.id,
+            quote: "work",
+            code,
+            reason: "A shift overlapped.",
+          })),
+        }),
+      },
+    });
+  });
+  await upload(
+    page,
+    /Written responses or documents/,
+    "interview.txt",
+    "I had to work until the polling station closed.\nI like dogs.",
+  );
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Confirm and explore").click();
+  await btn("Read and code passages").click();
+  await page.locator("input[name=pickp]").first().check();
+  await page.locator("#coding-method").selectOption("deductive");
+  await page
+    .locator("#book-file")
+    .setInputFiles({
+      name: "codebook.pdf",
+      mimeType: "application/pdf",
+      buffer: pdf,
+    });
+  await btn("Extract labels").click();
+  await expect(page.locator("[data-label]")).toHaveValue("Work conflict");
+  await expect(page.locator("#suggestpass")).toBeDisabled();
+  await page.locator("[data-label]").fill("Shift conflict");
+  await btn("Use these labels").click();
+  await page.locator("#suggestpass").click();
+  await expect(page.locator("[data-act=acceptcode]")).toHaveCount(1);
+  await btn("Review label").click();
+  await expect(page.locator("#approved option")).toHaveCount(1);
+  await btn("Apply").click();
+  await page.locator("[data-act=closebot]").click();
+  await btn("Save and export").click();
+  const pending = page.waitForEvent("download");
+  await btn("Download project with data").click();
+  const chunks = [];
+  for await (const c of await (await pending).createReadStream())
+    chunks.push(c);
+  const saved = JSON.parse(Buffer.concat(chunks));
+  expect(saved.datasets[0].passages.map((p) => p.codes)).toEqual([
+    ["Shift conflict"],
+    [],
+  ]);
+  expect(saved.datasets[0].coding.book[0].label).toBe("Shift conflict");
 });

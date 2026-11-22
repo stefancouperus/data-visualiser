@@ -1,4 +1,6 @@
 import "./style.css";
+import { codingGuide, checkedSuggestions } from "./coding.js";
+import { codingControls, bindCodingControls } from "./codebook-ui.js";
 import { tutorRecord, projectPackage, previousWork } from "./tutor-history.js";
 import { analyticalEvidence, pairedStatistics } from "./tutor-evidence.js";
 import {
@@ -594,6 +596,57 @@ function applyProposal() {
   render();
   get("graphic" + candidate.panel)?.scrollIntoView({ block: "nearest" });
 }
+async function unlockBot(code) {
+  if (!botURL)
+    throw Error("The workshop tutor service has not been connected.");
+  const res = await fetch(botURL + "/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  const json = await res.json();
+  if (!res.ok) throw Error(json.error || "Could not unlock the tutor.");
+  sessionStorage.setItem("dv-session", json.token);
+}
+
+async function requestTutor(payload) {
+  const res = await fetch(botURL + "/ask", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + sessionStorage.getItem("dv-session"),
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    if (res.status === 401) sessionStorage.removeItem("dv-session");
+    throw Error(data.error || "Tutor unavailable.");
+  }
+  return data.answer;
+}
+function structuredAnswer(answer) {
+  return JSON.parse(
+    answer
+      .trim()
+      .replace(/^```(?:json)?/i, "")
+      .replace(/```$/, "")
+      .trim(),
+  );
+}
+async function extractCodebook(document, code) {
+  if (!sessionStorage.getItem("dv-session")) {
+    if (!code.trim())
+      throw Error("Enter your workshop course code to extract labels.");
+    await unlockBot(code.trim());
+  }
+  const answer = await requestTutor({
+    skill: "codebook",
+    question: "Extract the code labels and their meanings for review.",
+    context: { document },
+  });
+  return structuredAnswer(answer).entries;
+}
 async function ask(question, skill) {
   if (requesting) throw Error("A tutor request is already pending.");
   if (!botURL)
@@ -621,7 +674,17 @@ async function ask(question, skill) {
       return;
     }
   }
-  const context = botContext(question);
+  const coding = skill === "coding";
+  if (coding && (!chosen.size || chosen.size > 10))
+    throw Error("Select one to ten passages first.");
+  const context = coding
+    ? {
+        guide: codingGuide(dataset),
+        passages: dataset.passages
+          .filter((p) => chosen.has(p.id))
+          .map(({ id, source, text, codes }) => ({ id, source, text, codes })),
+      }
+    : botContext(question);
   if (JSON.stringify(context).length > 115000)
     throw Error("Choose fewer sources or passages for the bot.");
   const previous = history.slice(-4),
@@ -635,25 +698,13 @@ async function ask(question, skill) {
   history.push({ role: "user", content: question });
   render();
   try {
-    const res = await fetch(botURL + "/ask", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + sessionStorage.getItem("dv-session"),
-      },
-      body: JSON.stringify({
-        question,
-        skill,
-        mode: project.mode,
-        context,
-        history: previous,
-      }),
+    const answer = await requestTutor({
+      question,
+      skill,
+      mode: project.mode,
+      context,
+      history: coding ? [] : previous,
     });
-    const data = await res.json();
-    if (!res.ok) {
-      if (res.status === 401) sessionStorage.removeItem("dv-session");
-      throw Error(data.error || "Tutor unavailable.");
-    }
     if (
       project !== activeProject ||
       history !== activeChat ||
@@ -672,20 +723,19 @@ async function ask(question, skill) {
       return;
     }
     if (skill === "coding") {
-      const clean = data.answer
-        .trim()
-        .replace(/^```(?:json)?/i, "")
-        .replace(/```$/, "")
-        .trim();
-      const proposed = JSON.parse(clean).suggestions;
-      if (!Array.isArray(proposed))
-        throw Error("No readable coding suggestions returned.");
-      const sources = new Map(context.passages.map((p) => [p.id, p.text]));
-      suggestions = proposed.filter(
-        (p) =>
-          typeof p.code === "string" &&
-          p.quote &&
-          sources.get(p.id)?.includes(p.quote),
+      if (
+        JSON.stringify(context.guide) !== JSON.stringify(codingGuide(dataset))
+      ) {
+        suggestions = [];
+        notice(
+          "Your coding guide changed. Request suggestions with the updated labels.",
+        );
+        return;
+      }
+      suggestions = checkedSuggestions(
+        structuredAnswer(answer).suggestions,
+        context.passages,
+        context.guide,
       );
       tutorRecord(project).activity.push(
         "Requested coding suggestions for " +
@@ -696,7 +746,10 @@ async function ask(question, skill) {
         role: "assistant",
         content:
           suggestions.length +
-          " suggestions for review." +
+          " suggestions for review. " +
+          (context.passages.length -
+            new Set(suggestions.map((s) => s.id)).size) +
+          " selected passages have no new suggestion." +
           suggestions
             .map(
               (s) => "\n" + s.code + " — “" + s.quote + "” " + (s.reason || ""),
@@ -707,14 +760,14 @@ async function ask(question, skill) {
       let pick;
       try {
         pick = JSON.parse(
-          data.answer
+          answer
             .trim()
             .replace(/^\x60\x60\x60(?:json)?/i, "")
             .replace(/\x60\x60\x60$/, "")
             .trim(),
         );
       } catch {
-        pick = { explanation: data.answer };
+        pick = { explanation: answer };
       }
       if (!pick || typeof pick !== "object")
         pick = {
@@ -808,7 +861,7 @@ async function ask(question, skill) {
       tutorRecord(project).activity.push(
         "Asked the Data bot about " + steps[step].toLowerCase() + ".",
       );
-      history.push({ role: "assistant", content: data.answer });
+      history.push({ role: "assistant", content: answer });
     }
   } finally {
     requesting = false;
@@ -963,6 +1016,13 @@ async function reviewAction(act, d, el) {
         const old = val("oldcode"),
           name = val("newcode").trim();
         if (!name) throw Error("Enter a label.");
+        if (d.coding?.meanings && old !== name) {
+          const entry = d.coding.meanings.find((e) => e.label === old);
+          if (entry && !d.coding.meanings.some((e) => e.label === name))
+            entry.label = name;
+          d.coding.meanings = d.coding.meanings.filter((e) => e.label !== old);
+        }
+        suggestions = [];
         d.passages.forEach(
           (p) =>
             (p.codes = [
@@ -1190,7 +1250,7 @@ function evidence(i, match) {
   }
   modal(
     "Read and code passages",
-    `<label>Find a passage<input id="searchPass"></label><div id="passlist">${list()}</div><button type="button" id="shortpass">Use highlighted words as a passage</button><label>Code to apply<input id="applycode" list="knowncodes"></label><datalist id="knowncodes">${opts(allCodes(d), "")}</datalist><div class="bar"><button type="button" id="suggestpass">Suggest codes for selected passages</button></div>`,
+    `<label>Find a passage<input id="searchPass"></label><div id="passlist">${list()}</div><button type="button" id="shortpass">Use highlighted words as a passage</button><label>Code to apply<input id="applycode" list="knowncodes"></label><datalist id="knowncodes">${opts(allCodes(d), "")}</datalist>${codingControls(d)}`,
     () => {
       if (!selected.size) throw Error("Choose one or more passages.");
       const code = val("applycode").trim();
@@ -1273,11 +1333,25 @@ function evidence(i, match) {
     get("formerror").textContent =
       "Shorter passage selected. You can apply a code or request suggestions.";
   };
+  bindCodingControls(d, extractCodebook, () => {
+    suggestions = [];
+    render();
+  });
   get("suggestpass").onclick = async () => {
+    if (requesting) {
+      get("formerror").textContent = "Wait for the current bot reply first.";
+      return;
+    }
     if (!selected.size || selected.size > 10) {
       get("formerror").textContent = "Choose 1–10 passages for a batch.";
       return;
     }
+    d.coding = {
+      ...d.coding,
+      mode: val("coding-method"),
+      focus: val("coding-focus").trim(),
+    };
+    suggestions = [];
     chosen = selected;
     scope = [];
     get("dialog").close();
@@ -1465,14 +1539,7 @@ async function action(act, el) {
       return;
     }
     case "unlock": {
-      const res = await fetch(botURL + "/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: val("course") }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw Error(json.error || "Could not unlock the tutor.");
-      sessionStorage.setItem("dv-session", json.token);
+      await unlockBot(val("course"));
       break;
     }
     case "send": {
@@ -1508,15 +1575,59 @@ async function action(act, el) {
       break;
     case "acceptcode": {
       const s = suggestions[i];
+      const guide = codingGuide(d);
+      const deductive = guide.mode === "deductive";
+      if (
+        !s ||
+        !checkedSuggestions(
+          [s],
+          d.passages.filter((p) => p.id === s.id),
+          guide,
+        ).length
+      )
+        throw Error(
+          "The labels or passage changed. Request fresh suggestions.",
+        );
       modal(
         "Review suggested code",
-        `<p>${esc(s.quote)}</p><label>Code label<input id="approved" value="${esc(s.code)}" required></label>`,
+        `<p>“${esc(s.quote)}”</p><p>${esc(s.reason)}</p>${
+          deductive
+            ? formselect(
+                "approved",
+                "Codebook label",
+                guide.vocabulary.map((e) => e.label),
+                s.code,
+              )
+            : `<label>Code label<input id="approved" value="${esc(s.code)}" required></label>`
+        }<label>Meaning<textarea id="approved-meaning" ${deductive ? "readonly" : ""}>${esc(s.definition)}</textarea></label>`,
         () => {
           const p = d.passages.find((p) => p.id === s.id);
           const code = val("approved").trim();
           if (!p || !code)
             throw Error("A matching passage and label are required.");
           if (!p.codes.includes(code)) p.codes.push(code);
+          if (!deductive) {
+            d.coding ||= {};
+            d.coding.meanings ||= [];
+            const meaning = d.coding.meanings.find(
+              (entry) => entry.label === code,
+            );
+            if (meaning && !meaning.definition)
+              meaning.definition = val("approved-meaning").trim();
+            if (!meaning)
+              d.coding.meanings.push({
+                label: code,
+                definition: val("approved-meaning").trim(),
+              });
+            const previousLabel = s.code;
+            for (const remaining of suggestions)
+              if (remaining.code === previousLabel) {
+                remaining.code = code;
+                remaining.definition = d.coding.meanings.find(
+                  (entry) => entry.label === code,
+                ).definition;
+              }
+          }
           p.reviewed = true;
           tutorRecord(project).activity.push(
             "Accepted the code “" +
@@ -1529,6 +1640,15 @@ async function action(act, el) {
           render();
         },
       );
+      const updateMeaning = () => {
+        const known = guide.vocabulary.find((e) => e.label === val("approved"));
+        const field = get("approved-meaning");
+        field.readOnly = deductive || !!known?.definition;
+        if (known?.definition || deductive)
+          field.value = known?.definition || "";
+      };
+      get("approved").oninput = updateMeaning;
+      updateMeaning();
       return;
     }
     case "savecompare":
