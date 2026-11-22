@@ -342,3 +342,62 @@ test("a focus declaration can carry a separate plain-language request", async ()
   });
   assert.equal(projectFocusMessage("What data are included?"), null);
 });
+
+test("explicit numerical axes use actual project fields in their requested orientation", async () => {
+  const { namedSurveyComparison } = await import("../src/question-matching.js");
+  const fields = [
+    ["a", "Travel distance", "number"],
+    ["b", "Travel time", "number"],
+    ["c", "Start day", "date"],
+    ["d", "Ticket", "category"],
+  ].map(([id, label, type]) => ({ id, label, type, levels: ["a", "b"] }));
+  const plot = (q, chosen) => namedSurveyComparison(fields, q, chosen);
+  assert.deepEqual(
+    plot(
+      "Could you plot Travel distance on the horizontal axis and Travel time on the vertical axis as a scatterplot?",
+    ),
+    {
+      action: "draw",
+      task: "two",
+      chart: "scatter",
+      x: "a",
+      y: "b",
+      measure: "count",
+    },
+  );
+  assert.deepEqual(
+    plot(
+      "Draw a line graph with Travel time on the y-axis and Start day on the x-axis.",
+    ),
+    {
+      action: "draw",
+      task: "two",
+      chart: "line",
+      x: "c",
+      y: "b",
+      measure: "count",
+    },
+  );
+  const ambiguous =
+    "Draw a scatter plot of Travel on the x-axis and Travel time on the y-axis";
+  assert.equal(plot(ambiguous).action, "clarifyAxes");
+  assert.equal(plot(ambiguous, ["a", "b"]).x, "a");
+  assert.equal(
+    plot(
+      "Draw a line graph with Start day on the y-axis and Travel time on the x-axis.",
+    ).action,
+    "answer",
+  );
+  assert.equal(
+    plot(
+      "Draw a scatterplot of Ticket on the x-axis and Travel distance on the y-axis.",
+    ).action,
+    "answer",
+  );
+  assert.equal(
+    plot(
+      "Draw a scatterplot of Travel time on the x-axis and Travel distance on the y-axis only among cyclists.",
+    ),
+    null,
+  );
+});

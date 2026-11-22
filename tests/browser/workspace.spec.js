@@ -2073,20 +2073,10 @@ test("a focus statement followed by a plotting request uses the new focus and dr
   page,
 }) => {
   await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
-  let requested;
+  const requests=[];
   await page.route("https://tutor.example.test/ask", (route) => {
-    requested = route.request().postDataJSON();
-    return route.fulfill({
-      json: {
-        answer: JSON.stringify({
-          action: "draw",
-          task: "two",
-          chart: "scatter",
-          x: "c2",
-          y: "c3",
-        }),
-      },
-    });
+    requests.push(route.request().postDataJSON());
+    return route.fulfill({json:{answer:JSON.stringify({action:"answer", explanation:"The paired data address commuting."})}});
   });
   const csv =
     "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Distance cycled,Minutes cycling\n" +
@@ -2106,8 +2096,14 @@ test("a focus statement followed by a plotting request uses the new focus and dr
   await expect(
     page.locator('[data-chart][aria-pressed="true"]'),
   ).toHaveAttribute("data-chart", "scatter");
-  expect(requested.question).toMatch(/^Could you plot/);
-  expect(requested.context.projectFocus).toBe("My project is about commuting");
+  expect(requests).toHaveLength(0);
+  await expect(page.locator('#graphic0 svg')).toContainText("15 paired observations");
+  await page.locator('#question').fill("My project is about cycle travel. Please explain the chart.");
+  await btn("Send").click();
+  await expect(page.locator(".chatlog .msg-assistant").last()).toContainText("The paired data address commuting");
+  expect(requests).toHaveLength(1);
+  expect(requests[0].question).toBe("Please explain the chart.");
+  expect(requests[0].context.projectFocus).toBe("My project is about cycle travel");
   await expect(page.locator("dialog[open]")).toHaveCount(0);
 });
 

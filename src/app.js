@@ -1497,8 +1497,8 @@ async function ask(question, skill, intent = "") {
       directComparison(dataset.fields, question));
   if (direct?.action === "clarifyAxes") {
     const axes = direct.axes;
-    const controls = axes.map(({ phrase, choices }, i) => {
-      const label = i ? "Group respondents by" : "Compare answers to";
+    const controls = axes.map(({ phrase, choices, role }, i) => {
+      const label = role || (i ? "Group respondents by" : "Compare answers to");
       const values =
         choices.length === 1
           ? choices
@@ -1516,7 +1516,7 @@ async function ask(question, skill, intent = "") {
         const ids = axes.map((_, i) => val("resolve-axis-" + i));
         if (ids.some((id) => !id)) throw Error("Choose both questions.");
         const spec = namedSurveyComparison(dataset.fields, question, ids);
-        if (!spec || !proposedChart(spec))
+        if (spec?.action !== "draw" || !proposedChart(spec))
           throw Error(
             "Choose two different questions that support this comparison and its requested measure.",
           );

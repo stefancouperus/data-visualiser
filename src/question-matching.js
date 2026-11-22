@@ -74,6 +74,84 @@ function axisChoices(fields, phrase) {
   return exact.length ? exact : candidates(fields, phrase);
 }
 
+// A coordinate request specifies the direction on each axis. Match those roles
+// directly so a scatterplot cannot be replaced by a categorical comparison.
+function coordinateComparison(fields, question, chosen) {
+  const command = question
+    .trim()
+    .replace(/[.?!]+$/, "")
+    .match(
+      /^(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:plot|draw|create|make|show|build)\s+(?:me\s+)?(.+)$/i,
+    );
+  if (!command) return null;
+  const body = command[1];
+  const prefix = body.match(
+    /^(?:a |an |the )?(scatter\s?plot|line (?:chart|graph|plot))\s+(?:of|showing|with)\s+(.+)$/i,
+  );
+  const suffix = body.match(
+    /^(.+?)\s+as\s+(?:a |an |the )?(scatter\s?plot|line (?:chart|graph|plot))$/i,
+  );
+  if (!prefix && !suffix) return null;
+  const chart = /^scatter/i.test(prefix?.[1] || suffix[2]) ? "scatter" : "line";
+  const placement = (prefix?.[2] || suffix[1]).match(
+    /^(.+?)\s+on\s+(?:the\s+)?(horizontal|vertical|x|y)[ -]axis(?:,?\s+and\s+|,\s*)(.+?)\s+on\s+(?:the\s+)?(horizontal|vertical|x|y)[ -]axis$/i,
+  );
+  if (!placement) return null;
+  const isHorizontal = (axis) => /^(?:horizontal|x)$/i.test(axis);
+  const horizontalFirst = isHorizontal(placement[2]);
+  if (horizontalFirst === isHorizontal(placement[4]))
+    return {
+      action: "answer",
+      explanation:
+        "Which question belongs on the horizontal axis, and which on the vertical axis?",
+    };
+  const phrases = horizontalFirst
+    ? [placement[1], placement[3]]
+    : [placement[3], placement[1]];
+  const options = fields.filter(
+    (f) => f.levels.length && !f.roles?.includes("open"),
+  );
+  const choices = phrases.map((phrase, i) =>
+    axisChoices(options, phrase).filter(
+      (f) => f.type === "number" || (i === 0 && f.type === "date"),
+    ),
+  );
+  if (choices.some((list) => !list.length)) {
+    const i = choices.findIndex((list) => !list.length);
+    return {
+      action: "answer",
+      explanation:
+        i === 0
+          ? "Which numeric or date question should go on the horizontal axis? I could not match “" +
+            phrases[i] +
+            "” to one."
+          : "Which numeric question should go on the vertical axis? I could not match “" +
+            phrases[i] +
+            "” to one.",
+    };
+  }
+  if (!chosen && choices.some((list) => list.length > 1))
+    return {
+      action: "clarifyAxes",
+      axes: choices.map((list, i) => ({
+        role: i === 0 ? "Horizontal axis" : "Vertical axis",
+        phrase: phrases[i],
+        choices: list.map((f) => [f.id, f.label]),
+      })),
+    };
+  const [x, y] = chosen || choices.map((list) => list[0].id);
+  if (
+    x === y ||
+    !choices[0].some((f) => f.id === x) ||
+    !choices[1].some((f) => f.id === y)
+  )
+    return {
+      action: "answer",
+      explanation: "Choose two different questions for the two axes.",
+    };
+  return { action: "draw", task: "two", chart, x, y, measure: "count" };
+}
+
 // Students can name the axes together or assign each question a role in a later sentence.
 export function namedSurveyComparison(fields, question, chosen) {
   const namedChart = namedChartRequest(question);
@@ -83,13 +161,15 @@ export function namedSurveyComparison(fields, question, chosen) {
       /^(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:show|plot|compare)\s+(?:me\s+)?(.+?)\s+by\s+([^,.;?!]+)[.?!]?$/i,
     );
   const chart = namedChart || (plainComparison && "bars");
-  if (!["bars", "dots", "grid", "small", "table", "stack"].includes(chart))
-    return null;
   if (
     /\b(?:only|excluding|include|except|weighted|adjust|control for|instead|filter|overall|among|without|rather than|left panel|right panel)\b/i.test(
       question,
     )
   )
+    return null;
+  const numericPair = coordinateComparison(fields, question, chosen);
+  if (numericPair) return numericPair;
+  if (!["bars", "dots", "grid", "small", "table", "stack"].includes(chart))
     return null;
   const instruction = question.trim().replace(/[.?!]+$/u, "");
   const by = instruction.match(
