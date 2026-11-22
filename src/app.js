@@ -41,6 +41,12 @@ import {
   groupChoices,
   groupValue,
 } from "./patterns.js";
+import {
+  focusLimit,
+  readFocus,
+  researchCatalogue,
+  researchChart,
+} from "./research-focus.js";
 import { asksForGroupSuggestion } from "./group-suggestions.js";
 import { fitModel } from "./model.js";
 import { figureStyles, styleFor, highlightChoices } from "./figure-styles.js";
@@ -179,8 +185,32 @@ const modeNames = [
   ["guided", "Guided exploration"],
 ];
 const botURL = (import.meta.env.VITE_BOT_URL || "").replace(/\/$/, "");
+function projectFocusControls() {
+  const focus = project.researchFocus;
+  return `<div class="bot-selection"><strong>Research question</strong>${focus ? "<details><summary>View saved focus</summary><p>" + esc(focus) + "</p></details>" : "<small>Tell the bot what you want to find out for suggestions that fit your project.</small>"}<div class="bar">${b("editfocus", focus ? "Edit project focus" : "Tell the bot about your project")}${focus && [2, 3].includes(step) ? b("researchsuggest", "Suggest what to explore", "primary") : ""}</div></div>`;
+}
+function editProjectFocus(draft) {
+  modal(
+    "Your project focus",
+    `<label>What is your project about, and what do you want to find out?<textarea id="research-focus" rows="4" maxlength="${focusLimit}">${esc(draft ?? project.researchFocus)}</textarea></label><p>A sentence or two is enough. This is optional and saved with your project. Leave it blank to clear it.</p>`,
+    () => {
+      if (val("research-focus").trim().length > focusLimit)
+        throw Error("Keep your project focus to 2,000 characters or fewer.");
+      project.researchFocus = readFocus(val("research-focus"));
+      proposal = captionDraft = queuedShortcut = null;
+      if (draft !== undefined) lastQuestion = "";
+      render();
+      notice(
+        project.researchFocus
+          ? "Project focus saved."
+          : "Project focus cleared.",
+      );
+    },
+    "Save project focus",
+  );
+}
 function botBox() {
-  return `<section id="data-bot" aria-label="Data bot workspace" class="bot ${isDocked() ? "docked" : "floating"}"><header class="bothead" data-window-handle="move"><h2 title="Drag the title bar to move the floating window">Data bot</h2><div class="bottools">${innerWidth >= 900 ? b("dockbot", isDocked() ? "Float window" : "Dock right") : ""}${b("closebot", "Close", "plain")}</div></header><div class="botbody"><details class="botprefs"><summary>Help settings</summary><label>Help mode<select id="mode">${opts(modeNames, project.mode)}</select></label>${b("scope", "What the bot can see")}</details>${!history.length && !requesting ? "<p>Ask about a pattern or ask me to make a chart.</p>" : ""}${!botURL ? "<p>Live help will be available when the workshop service is connected. You can explore, compare and export your data now.</p>" : !sessionStorage.getItem("dv-session") ? '<label>Workshop course code<input id="course" type="password" autocomplete="off"></label>' + b("unlock", "Unlock the bot") : ""}${
+  return `<section id="data-bot" aria-label="Data bot workspace" class="bot ${isDocked() ? "docked" : "floating"}"><header class="bothead" data-window-handle="move"><h2 title="Drag the title bar to move the floating window">Data bot</h2><div class="bottools">${innerWidth >= 900 ? b("dockbot", isDocked() ? "Float window" : "Dock right") : ""}${b("closebot", "Close", "plain")}</div></header><div class="botbody"><details class="botprefs"><summary>Help settings</summary><label>Help mode<select id="mode">${opts(modeNames, project.mode)}</select></label>${b("scope", "What the bot can see")}</details>${projectFocusControls()}${!history.length && !requesting ? "<p>Ask about a pattern or ask me to make a chart.</p>" : ""}${!botURL ? "<p>Live help will be available when the workshop service is connected. You can explore, compare and export your data now.</p>" : !sessionStorage.getItem("dv-session") ? '<label>Workshop course code<input id="course" type="password" autocomplete="off"></label>' + b("unlock", "Unlock the bot") : ""}${
     tutorRecord(project).activity.length
       ? `<details><summary>Project activity</summary><ul>${tutorRecord(project)
           .activity.map((note) => "<li>" + esc(note) + "</li>")
@@ -534,8 +564,10 @@ function selectedPassages() {
 }
 function botContext(question = "") {
   const d = getData();
-  if (!d) return { step: "Upload" };
+  if (!d)
+    return { step: "Upload", projectFocus: project.researchFocus || undefined };
   const basic = {
+    projectFocus: project.researchFocus || undefined,
     pastProjectWork: previousWork(tutorRecord(project), question),
     stage: steps[step],
     dataset: d.name,
@@ -1022,6 +1054,25 @@ async function ask(question, skill, intent = "") {
   const dataset = getData();
   const current =
     project.views[step === 3 && botFocus === "both" ? 1 : focusIndex()];
+  if (skill === "recommend" && project.researchFocus && [2, 3].includes(step)) {
+    const wantsGroups = asksForGroupSuggestion(question);
+    if (
+      intent === "suggestGroups" ||
+      (!intent &&
+        wantsGroups &&
+        !/stand out|largest|biggest|strongest/i.test(question))
+    )
+      intent = "researchGroups";
+    else if (
+      intent === "suggest" ||
+      (!intent &&
+        /(?:what (?:could|should|can) (?:we|I) (?:explore|compare|look at)|which (?:questions|themes|measures|comparisons) (?:should|could|would|can|fit|relate)|(?:suggest|recommend|choose).{0,75}(?:research question|project focus))/i.test(
+          question,
+        ))
+    )
+      intent = "research";
+  }
+  const research = intent === "research" || intent === "researchGroups";
   if (
     skill === "recommend" &&
     [2, 3].includes(step) &&
@@ -1107,6 +1158,7 @@ async function ask(question, skill, intent = "") {
   }
   const direct =
     !pattern &&
+    !intent &&
     skill === "recommend" &&
     dataset?.kind === "table" &&
     directComparison(dataset.fields, question);
@@ -1134,7 +1186,33 @@ async function ask(question, skill, intent = "") {
           .filter((p) => chosen.has(p.id))
           .map(({ id, source, text, codes }) => ({ id, source, text, codes })),
       }
-    : botContext(question);
+    : research
+      ? researchCatalogue(
+          dataset,
+          current,
+          project.researchFocus,
+          question,
+          intent === "researchGroups",
+        )
+      : botContext(question);
+  if (
+    intent === "researchGroups" &&
+    (!context.selectionToKeep.length || !context.groupingFields.length)
+  ) {
+    const message = !context.selectionToKeep.length
+      ? "Tick the questions or themes you want to split by group, then ask again."
+      : dataset.kind === "text"
+        ? "I need a recorded characteristic with at least two interview groups in this view. Use Add interview groups if you collected that information."
+        : "This selection needs a separate survey column with at least two groups under the current filter.";
+    proposal = null;
+    lastQuestion = "";
+    history.push(
+      { role: "user", content: question },
+      { role: "assistant", content: message },
+    );
+    render();
+    return;
+  }
   if (intent) context.requestedOutput = intent;
   if (pattern) context.requestedPattern = pattern;
   if (
@@ -1168,6 +1246,7 @@ async function ask(question, skill, intent = "") {
     activeProject = project,
     activeChat = history,
     activeId = project.active,
+    startProjectFocus = project.researchFocus,
     startStep = step,
     startFocus = botFocus,
     startEvidence = JSON.stringify([[...chosen], scope]),
@@ -1179,10 +1258,10 @@ async function ask(question, skill, intent = "") {
   try {
     const answer = await requestTutor({
       question,
-      skill,
+      skill: research ? "research" : skill,
       mode: project.mode,
       context,
-      history: coding ? [] : previous,
+      history: coding || research ? [] : previous,
     });
     if (
       project !== activeProject ||
@@ -1192,7 +1271,8 @@ async function ask(question, skill, intent = "") {
       return;
     if (
       skill === "recommend" &&
-      (step !== startStep ||
+      (project.researchFocus !== startProjectFocus ||
+        step !== startStep ||
         botFocus !== startFocus ||
         JSON.stringify([[...chosen], scope]) !== startEvidence ||
         JSON.stringify(project.views) !== startViews)
@@ -1200,7 +1280,7 @@ async function ask(question, skill, intent = "") {
       history.push({
         role: "assistant",
         content:
-          "Your view changed while I was replying. Ask again using the current view.",
+          "Your view or project focus changed while I was replying. Ask again with the current selection.",
       });
       return;
     }
@@ -1258,6 +1338,29 @@ async function ask(question, skill, intent = "") {
             "I could not read the model response. Please try the question again.",
         };
       proposal = null;
+      if (research) {
+        let message;
+        if (
+          pick.action === "answer" &&
+          typeof pick.explanation === "string" &&
+          pick.explanation.trim()
+        ) {
+          message = pick.explanation;
+        } else {
+          const spec = researchChart(pick, context);
+          const candidate = spec && proposedChart(spec);
+          if (candidate) {
+            proposal = candidate;
+            message =
+              viewName(dataset, candidate.view) + "\n" + pick.explanation;
+          } else {
+            message =
+              "I couldn’t match that suggestion to an available comparison. Which part of your research question would you like to explore first?";
+          }
+        }
+        history.push({ role: "assistant", content: message });
+        return;
+      }
       if (
         (step === 2 || (step === 3 && botFocus !== "both")) &&
         pick.action === "caption" &&
@@ -2023,6 +2126,9 @@ async function action(act, el) {
     i = Number(el.dataset.i || 0);
   if (reviewActs.includes(act)) return reviewAction(act, d, el);
   switch (act) {
+    case "editfocus":
+      editProjectFocus();
+      return;
     case "original": {
       const names = Object.keys(d.originals || {});
       modal(
@@ -2235,6 +2341,7 @@ async function action(act, el) {
       break;
     case "discusspass":
     case "choose":
+    case "researchsuggest":
     case "suggestgroups":
     case "botvariant":
     case "botcaption":
@@ -2249,9 +2356,15 @@ async function action(act, el) {
           "excerpts",
           "Explain what the selected passages have in common or how they differ. Ground each point in a short exact quotation and name the source. Limit your claims to these passages.",
         ],
+        researchsuggest: [
+          "research",
+          "Which questions or themes, and which groups if useful, would help us explore our research question? Explain the link and anything we cannot measure.",
+        ],
         suggestgroups: [
           "suggestGroups",
-          "Do any groups stand out for my selection?",
+          project.researchFocus
+            ? "Which grouping fits our research question for the current selection?"
+            : "Do any groups stand out for my selection?",
         ],
         choose: [
           "suggest",
@@ -2339,6 +2452,15 @@ async function action(act, el) {
     case "send": {
       const q = val("question").trim();
       if (!q) throw Error("Enter a question.");
+      if (
+        /^(?:(?:our|my|the) (?:project|study|research) is (?:about|on)|(?:our|my) research question is|(?:we|I) (?:want|aim) to find out)\b/i.test(
+          q,
+        )
+      ) {
+        lastQuestion = q;
+        editProjectFocus(q);
+        return;
+      }
       if (
         proposal?.groupSuggestion &&
         /^(?:why(?: this| that| those groups| this comparison| did you (?:choose|suggest|pick) (?:that|this|these groups))?|how did you (?:choose|decide|pick)(?: that| this)?)\s*[?!.]*$/i.test(

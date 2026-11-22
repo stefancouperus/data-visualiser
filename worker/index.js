@@ -5,7 +5,16 @@ import coding from "./skills/coding.md";
 import imports from "./skills/import.md";
 import regression from "./skills/regression.md";
 import recommend from "./skills/recommend.md";
-const skills = { charts, coding, codebook, imports, regression, recommend };
+import research from "./skills/research.md";
+const skills = {
+  research,
+  charts,
+  coding,
+  codebook,
+  imports,
+  regression,
+  recommend,
+};
 const gateway = "https://llm.k8s.rug.nl/v1/chat/completions";
 const models = ["gemma-26B-MoE", "Qwen3.6-35B-A3B-AWQ-4bit"];
 const enc = new TextEncoder();

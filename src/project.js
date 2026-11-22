@@ -1,9 +1,11 @@
+import { readFocus } from "./research-focus.js";
 import { readTutorHistory } from "./tutor-history.js";
 import { filteredRows } from "./import.js";
 import { applyAnswerLabels } from "./survey-labels.js";
 export const fresh = () => ({
   tutorHistory: Object.create(null),
   includeBotChat: false,
+  researchFocus: "",
   format: "data-visualiser",
   version: 1,
   name: "Untitled project",
@@ -54,6 +56,7 @@ export function verifyProject(p) {
   return {
     ...fresh(),
     ...p,
+    researchFocus: readFocus(p.researchFocus),
     includeBotChat: p.includeBotChat === true,
     tutorHistory: readTutorHistory(
       p.tutorHistory,

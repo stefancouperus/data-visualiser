@@ -40,3 +40,15 @@ test("per-dataset history can be revisited without leaking other datasets or exp
   delete old.tutorHistory;
   assert.deepEqual(tutorRecord(verifyProject(old)).activity, []);
 });
+
+test("project focus survives a project download without chat and older projects open without a focus", () => {
+  const p = fresh();
+  p.researchFocus = "Which services reach shift workers?";
+  assert.equal(verifyProject(projectPackage(p)).researchFocus, p.researchFocus);
+  assert.equal(
+    verifyProject(settingsProject(p)).researchFocus,
+    p.researchFocus,
+  );
+  delete p.researchFocus;
+  assert.equal(verifyProject(p).researchFocus, "");
+});

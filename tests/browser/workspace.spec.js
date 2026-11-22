@@ -1191,3 +1191,86 @@ test("spreadsheet interviews apply only marker values confirmed for each project
     "Supply delay",
   );
 });
+
+for (const text of [false, true]) {
+  test(
+    "research focus guides a reviewed " +
+      (text ? "interview" : "survey") +
+      " comparison",
+    async ({ page }) => {
+      const btn = (name) => page.getByRole("button", { name, exact: true });
+      await page.addInitScript(() =>
+        sessionStorage.setItem("dv-session", "test"),
+      );
+      let context,
+        invalid = false;
+      await page.route("https://tutor.example.test/ask", (route) => {
+        const req = route.request().postDataJSON();
+        expect(req.skill).toBe("research");
+        context = req.context;
+        return route.fulfill({
+          json: {
+            answer: JSON.stringify({
+              action: "suggest",
+              items: [text ? "Late bus" : "c1"],
+              groupBy: invalid ? "Fabricated" : text ? "Shift" : "c2",
+              explanation: "Compare travel reliability across shifts.",
+            }),
+          },
+        });
+      });
+      await upload(
+        page,
+        text ? /I have coded interviews/ : /I have a Qualtrics export/,
+        text ? "commutes.tsv" : "commutes.csv",
+        text
+          ? "Interview\tPassage\tCodes\nA\tPrivate passage A\tLate bus\nB\tPrivate passage B\tReliable bus"
+          : "Lunch,Bus punctuality,Shift\nSoup,Late,Day\nSalad,On time,Night\nSoup,On time,Day\nSalad,Late,Night",
+      );
+      await btn("Continue").click();
+      if (text) await btn("Continue").click();
+      await btn("Confirm and explore").click();
+      if (text) {
+        await page
+          .getByRole("radio", { name: "Look across several themes" })
+          .check();
+        await btn("Add interview groups").click();
+        await page.getByLabel("Name of the grouping").fill("Shift");
+        await page.getByLabel("A", { exact: true }).fill("Day");
+        await page.getByLabel("B", { exact: true }).fill("Night");
+        await btn("Show groups").click();
+      }
+      await btn("Data bot").click();
+      const focus =
+        "Our research question is whether bus reliability differs by shift.";
+      await page.locator("#question").fill(focus);
+      await btn("Send").click();
+      await expect(page.locator("#research-focus")).toHaveValue(focus);
+      await btn("Save project focus").click();
+      const first = await page.locator("#graphic0").innerText();
+      await btn("Suggest what to explore").click();
+      await expect(btn("Make this chart")).toBeVisible();
+      expect(context.projectFocus).toBe(focus);
+      expect(JSON.stringify(context)).not.toContain("Private passage");
+      await expect(page.locator(".chatlog")).toContainText(
+        (text ? "Late bus" : "Bus punctuality") + " by Shift",
+      );
+      expect(await page.locator("#graphic0").innerText()).toBe(first);
+      await btn("Make this chart").click();
+      await expect(page.getByLabel("Compare by group")).toHaveValue(
+        text ? "Shift" : "c2",
+      );
+      invalid = true;
+      await btn("Suggest groups to compare").click();
+      await expect(page.locator(".chatlog")).toContainText(
+        "couldn’t match that suggestion",
+      );
+      expect(context.selectionToKeep).toEqual([text ? "Late bus" : "c1"]);
+      await expect(btn("Make this chart")).toHaveCount(0);
+      await btn("Edit project focus").click();
+      await page.locator("#research-focus").fill("");
+      await btn("Save project focus").click();
+      await expect(btn("Suggest what to explore")).toHaveCount(0);
+    },
+  );
+}
