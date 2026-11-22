@@ -1,3 +1,4 @@
+import { figureStyles, styleFor } from "./figure-styles.js";
 import { esc } from "./chart.js";
 import { button as b, opts, select, input, table, icon, pict } from "./ui.js";
 import { kinds, allCodes } from "./analysis.js";
@@ -176,6 +177,7 @@ export function panel(d, v, i) {
           v.chart,
         )
   }
+  <div class="figure-toolbar">${b("figurestyle", "Figure style · " + figureStyles[styleFor(v.style)].label, "", 'data-i="' + i + '"')}</div>
   <div class="graphic" id="graphic${i}"></div><div id="modeldetails${i}"></div>
   <details data-chart-options="${i}"><summary>Chart settings</summary><div class="formgrid">
  ${

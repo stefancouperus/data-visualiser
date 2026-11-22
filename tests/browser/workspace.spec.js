@@ -660,3 +660,86 @@ test("portable download reopens from the start screen with optional bot memory",
   }, bytes.toString());
   await expect(page.locator("#graphic1 svg")).toBeVisible();
 });
+
+test("figure styles preview the current data and survive comparison, export and reopening", async ({
+  page,
+}) => {
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "survey.csv",
+    "Vote,Age,Group\nYes,19,A\nNo,21,A\nYes,23,B\nNo,20,B\n",
+  );
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Continue").click();
+  await btn("Confirm and explore").click();
+  const chart = page.locator("#graphic0 svg");
+  await expect(chart).toHaveAttribute("data-style", "workshop");
+  const labels = await chart.locator("text").allTextContents();
+  await btn("Figure style · Workshop").click();
+  for (const style of ["report", "presentation", "workshop", "policy"]) {
+    await page
+      .locator('input[name="figure-style"][value="' + style + '"]')
+      .check();
+    await expect(page.locator("#style-preview svg")).toHaveAttribute(
+      "data-style",
+      style,
+    );
+    expect(
+      await page.locator("#style-preview svg text").allTextContents(),
+    ).toEqual(labels);
+  }
+  await btn("Close").click();
+  await expect(chart).toHaveAttribute("data-style", "workshop");
+  await btn("Figure style · Workshop").click();
+  await page.getByRole("radio", { name: /Policy brief/ }).check();
+  await page.getByLabel("Highlight one category or group").selectOption("Yes");
+  await page.getByLabel("Greyscale", { exact: true }).check();
+  await btn("Apply style").click();
+  await expect(chart).toHaveAttribute("data-style", "policy");
+  await expect(chart.locator('rect[fill="#303030"]')).toHaveCount(1);
+  await btn("Compare two views").click();
+  await page.locator('[data-panel="1"] [data-act="figurestyle"]').click();
+  await page.getByRole("radio", { name: /Presentation/ }).check();
+  await btn("Apply style").click();
+  await expect(page.locator("#graphic1 svg")).toHaveAttribute(
+    "data-style",
+    "presentation",
+  );
+  await expect(chart).toHaveAttribute("data-style", "policy");
+  await btn("Save and export").click();
+  async function downloaded(button) {
+    const pending = page.waitForEvent("download");
+    await btn(button).click();
+    const chunks = [];
+    for await (const chunk of await (await pending).createReadStream())
+      chunks.push(chunk);
+    return Buffer.concat(chunks);
+  }
+  await page
+    .getByRole("combobox", { name: "Panels", exact: true })
+    .selectOption("both");
+  const svg = (await downloaded("Download SVG")).toString();
+  expect(svg).toContain('data-style="policy"');
+  expect(svg).toContain('data-style="presentation"');
+  expect((await downloaded("Download PNG")).subarray(1, 4).toString()).toBe(
+    "PNG",
+  );
+  const data = await downloaded("Download project with data");
+  await page.reload();
+  const picked = page.waitForEvent("filechooser");
+  await btn("Open a saved project").click();
+  await (
+    await picked
+  ).setFiles({
+    name: "styled.json",
+    mimeType: "application/json",
+    buffer: data,
+  });
+  await expect(chart).toHaveAttribute("data-style", "policy");
+  await expect(chart.locator('rect[fill="#303030"]')).toHaveCount(1);
+  await expect(page.locator("#graphic1 svg")).toHaveAttribute(
+    "data-style",
+    "presentation",
+  );
+});

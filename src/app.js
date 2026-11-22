@@ -21,6 +21,7 @@ import {
 } from "./project.js";
 import { newView, analyse, allCodes, kinds } from "./analysis.js";
 import { fitModel } from "./model.js";
+import { figureStyles, styleFor, highlightChoices } from "./figure-styles.js";
 import { esc, figure, combinedSVG, exportSVG, blobSave } from "./chart.js";
 import {
   icon,
@@ -213,7 +214,48 @@ function draw(i) {
       ) +
       "</details>";
 }
+function chooseFigureStyle(i) {
+  const view = project.views[i];
+  const analysis = summary(i);
+  const choices = highlightChoices(analysis, view).filter(Boolean);
+  const current = styleFor(view.style);
+  const cards = Object.entries(figureStyles)
+    .map(
+      ([id, style]) =>
+        `<label class="style-choice"><input type="radio" name="figure-style" value="${id}" ${current === id ? "checked" : ""}><span><strong>${esc(style.label)}</strong><small>${esc(style.description)}</small></span></label>`,
+    )
+    .join("");
+  const read = () => ({
+    style: get("modalform").elements["figure-style"].value,
+    palette: get("style-grey").checked ? "grey" : "colour",
+    highlight: val("style-highlight"),
+  });
+  modal(
+    "Figure style",
+    `<fieldset class="style-choices"><legend>Choose a style for this view</legend>${cards}</fieldset>
+    <label class="tick"><input type="checkbox" id="style-grey" ${view.palette === "grey" ? "checked" : ""}>Greyscale</label>
+    <div id="highlight-control">${formselect("style-highlight", "Highlight one category or group", [["", "No highlight"], ...choices], view.highlight)}</div>
+    <div class="style-preview" id="style-preview" aria-label="Figure preview"></div>`,
+    () => {
+      snapshotViews();
+      Object.assign(view, read());
+      render();
+    },
+    "Apply style",
+  );
+  function preview() {
+    const draft = read();
+    get("highlight-control").hidden =
+      draft.style !== "policy" || !choices.length;
+    get("style-preview").replaceChildren(
+      figure(analysis, { ...view, ...draft }),
+    );
+  }
+  get("modalform").onchange = preview;
+  preview();
+}
 function tidy(v, key) {
+  if (["task", "x", "y", "z", "outcome"].includes(key)) delete v.highlight;
   const d = getData(),
     fs =
       d.fields?.filter((f) => f.type !== "metadata" && f.levels.length) || [];
@@ -469,6 +511,7 @@ function proposedChart(pick) {
       filter: current.filter,
       value: current.value,
       palette: current.palette,
+      style: styleFor(current.style),
     };
     summary(panel, view);
     return candidate(view);
@@ -511,6 +554,7 @@ function proposedChart(pick) {
     filter: current.filter,
     value: current.value,
     palette: current.palette,
+    style: styleFor(current.style),
   };
   if (!available(d, view).includes(view.chart)) return null;
   return candidate(view);
@@ -1284,6 +1328,9 @@ async function action(act, el) {
       if (!undoViews.length) throw Error("There are no view changes to undo.");
       project.views = undoViews.pop();
       break;
+    case "figurestyle":
+      chooseFigureStyle(i);
+      return;
     case "resetview":
       snapshotViews();
       project.views[i] = newView(d);

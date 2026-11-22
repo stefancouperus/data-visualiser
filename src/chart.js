@@ -1,3 +1,4 @@
+import { figureStyles, styleFor, highlightChoices } from "./figure-styles.js";
 import * as d3 from "d3";
 export const esc = (s) =>
   String(s ?? "").replace(
@@ -17,7 +18,16 @@ const colours = [
   "#526c40",
   "#745c48",
 ];
-const grey = ["#26333c", "#4b5863", "#697884", "#87929a", "#a5abb1"];
+const grey = [
+  "#303030",
+  "#626262",
+  "#898989",
+  "#b3b3b3",
+  "#494949",
+  "#757575",
+  "#9e9e9e",
+  "#c5c5c5",
+];
 const num = (v) => d3.format("~g")(Number(v.toPrecision(4)));
 const shorten = (v, n = 28) =>
   String(v).length > n ? String(v).slice(0, n - 1) + "…" : v;
@@ -33,64 +43,111 @@ function wrap(value, max) {
   return [...lines, s];
 }
 export function figure(a, v, { width = 700 } = {}) {
+  const style = styleFor(v.style),
+    theme = figureStyles[style],
+    mono = v.palette === "grey";
+  const accent = mono ? "#303030" : theme.accent;
+  const highlighted =
+    style === "policy" &&
+    v.highlight &&
+    highlightChoices(a, v).includes(v.highlight)
+      ? v.highlight
+      : null;
   const root = d3
     .create("svg")
     .attr("xmlns", "http://www.w3.org/2000/svg")
     .attr("role", "img")
     .attr("aria-label", a.title)
-    .attr("font-family", "Arial, sans-serif")
+    .attr("font-family", theme.font)
+    .attr("data-style", style)
     .attr("font-size", 14)
-    .attr("fill", "#253346");
+    .attr("fill", mono || style === "report" ? "#252525" : "#253346");
   const w = width,
     margin = 22,
     palette = v.palette === "grey" ? grey : colours;
-  let pos = 27;
+  let pos = Math.max(27, theme.title + 8);
+  function rule(y, x2, colour, weight) {
+    root
+      .append("line")
+      .attr("x1", margin)
+      .attr("x2", x2)
+      .attr("y1", y)
+      .attr("y2", y)
+      .attr("stroke", colour)
+      .attr("stroke-width", weight);
+  }
+  if (style === "policy") {
+    rule(8, margin + 52, accent, 4);
+    pos += 12;
+  }
   function line(t, x = margin, y = pos, size = 14, bold = false) {
     return root
       .append("text")
       .attr("x", x)
       .attr("y", y)
-      .attr("font-size", size)
+      .attr("font-size", size * theme.scale)
       .attr("font-weight", bold ? 650 : 400)
       .text(t);
   }
   function block(s, n, size = 14, bold = false) {
-    for (const t of wrap(s, n)) {
+    for (const t of wrap(s, Math.max(8, Math.floor(n / theme.scale)))) {
       line(t, margin, pos, size, bold);
-      pos += size + 6;
+      pos += size * theme.scale + 6;
     }
   }
-  block(a.title, Math.floor((w - 48) / 10), 18, true);
+  for (const t of wrap(a.title, Math.floor((w - 48) / (theme.title * 0.55)))) {
+    line(t, margin, pos, theme.title / theme.scale, true).attr(
+      "font-family",
+      theme.headingFont,
+    );
+    pos += theme.title + 6;
+  }
   pos += 12;
   const records = a.records || [],
     groups = [...new Set(records.map((r) => r.group))],
     labels = [...new Set(records.map((r) => r.label))];
   const ink = (i) => palette[i % palette.length];
+  const muted = mono
+    ? ["#858585", "#bcbcbc", "#9b9b9b", "#cecece", "#737373"]
+    : ["#788b91", "#b7c4cb", "#8b9aa8", "#cad4d6", "#74818e"];
+  const markInk = (i, key) =>
+    highlighted
+      ? key === highlighted
+        ? accent
+        : muted[i % muted.length]
+      : ink(i);
   function bars(list, mark) {
     if (!list.length) return;
     const max = Math.max(1, ...records.map((r) => r.value)),
       left = Math.min(w * 0.36, 215);
     const scale = d3.scaleLinear([0, max], [0, w - left - 85]);
     for (const r of list) {
-      line(shorten(r.label, Math.floor(left / 8.1)), margin, pos + 5)
+      line(
+        shorten(r.label, Math.floor(left / (8.1 * theme.scale))),
+        margin,
+        pos + 5,
+      )
         .append("title")
         .text(r.label);
-      const colour = ink(Math.max(0, groups.indexOf(r.group)));
+      const colour = markInk(
+        Math.max(0, groups.indexOf(r.group)),
+        groups.length > 1 ? r.group : r.label,
+      );
       if (mark === "dots")
         root
           .append("circle")
           .attr("cx", left + scale(r.value))
           .attr("cy", pos)
-          .attr("r", 4.6)
+          .attr("r", 4.6 * theme.scale)
           .attr("fill", colour);
       else
         root
           .append("rect")
           .attr("x", left)
-          .attr("y", pos - 7)
+          .attr("y", pos - theme.bar / 2)
           .attr("width", scale(r.value))
-          .attr("height", 13)
-          .attr("rx", 2)
+          .attr("height", theme.bar)
+          .attr("rx", theme.radius)
           .attr("fill", colour);
       line(
         num(r.value) + (a.unit.startsWith("%") ? "%" : ""),
@@ -98,7 +155,7 @@ export function figure(a, v, { width = 700 } = {}) {
         pos + 5,
         13,
       );
-      pos += 24;
+      pos += theme.row;
     }
   }
   if (v.chart === "excerpts") {
@@ -115,6 +172,7 @@ export function figure(a, v, { width = 700 } = {}) {
       true,
     );
     for (const r of records) {
+      const emphasise = highlighted && r.label === highlighted;
       block(
         (r.group ? r.group + "  /  " : "") +
           r.label +
@@ -123,6 +181,8 @@ export function figure(a, v, { width = 700 } = {}) {
           (a.unit.startsWith("%") ? "%" : "") +
           (r.den != null ? "   (" + r.n + " of " + r.den + ")" : ""),
         Math.floor((w - 52) / 8),
+        14,
+        emphasise,
       );
     }
   } else if (["grid", "presence"].includes(v.chart)) {
@@ -132,7 +192,7 @@ export function figure(a, v, { width = 700 } = {}) {
     root.attr("data-width", Math.max(w, labelW + 45 + cw * labels.length));
     labels.forEach((name, i) =>
       line(
-        shorten(name, Math.max(7, Math.floor(cw / 8))),
+        shorten(name, Math.max(7, Math.floor(cw / (8 * theme.scale)))),
         margin + labelW + i * cw,
         pos,
         11,
@@ -159,13 +219,18 @@ export function figure(a, v, { width = 700 } = {}) {
             .attr("width", cw - 3)
             .attr("height", 33)
             .attr("rx", 3)
-            .attr("fill", d3.interpolate("#f1f4f8", ink(0))(value / max));
+            .attr(
+              "fill",
+              d3.interpolate(mono ? "#f4f4f4" : "#f1f4f8", ink(0))(value / max),
+            )
+            .attr("stroke", r.label === highlighted ? accent : "none")
+            .attr("stroke-width", 2);
           cell
             .append("text")
             .attr("x", margin + labelW + (i + 0.5) * cw)
             .attr("y", pos + 22)
             .attr("text-anchor", "middle")
-            .attr("fill", value / max > 0.55 ? "white" : "#253346")
+            .attr("fill", value / max > 0.55 ? "white" : "#202020")
             .text(num(value));
           cell.append("title").text(g + " · " + r.label + " · " + value);
         });
@@ -187,11 +252,11 @@ export function figure(a, v, { width = 700 } = {}) {
     root
       .append("g")
       .attr("transform", "translate(65,0)")
-      .call(d3.axisLeft(y).ticks(5));
+      .call(d3.axisLeft(y).ticks(theme.ticks));
     root
       .append("g")
       .attr("transform", "translate(0," + bottom + ")")
-      .call(d3.axisBottom(x).ticks(6));
+      .call(d3.axisBottom(x).ticks(theme.ticks + 1));
     for (const r of records) {
       const start = x(lo === hi ? lo - 0.5 : r.lo),
         end = x(lo === hi ? hi + 0.5 : r.hi);
@@ -201,7 +266,7 @@ export function figure(a, v, { width = 700 } = {}) {
         .attr("y", y(r.value))
         .attr("width", Math.max(1, end - start - 1))
         .attr("height", bottom - y(r.value))
-        .attr("fill", ink(0))
+        .attr("fill", markInk(0, r.label))
         .append("title")
         .text(r.label + " · " + r.n + " of " + r.den);
     }
@@ -227,8 +292,10 @@ export function figure(a, v, { width = 700 } = {}) {
           .attr("x", x)
           .attr("y", pos)
           .attr("width", n)
-          .attr("height", 22)
-          .attr("fill", ink(labels.indexOf(r.label)))
+          .attr("height", 22 * theme.scale)
+          .attr("stroke", "white")
+          .attr("stroke-width", 0.7)
+          .attr("fill", markInk(labels.indexOf(r.label), r.label))
           .append("title")
           .text(r.label + " " + num(r.value) + "%");
         x += n;
@@ -241,9 +308,11 @@ export function figure(a, v, { width = 700 } = {}) {
         .attr("cx", margin + 4)
         .attr("cy", pos - 4)
         .attr("r", 4)
-        .attr("fill", ink(i));
-      line(l, margin + 17, pos, 13);
-      pos += 20;
+        .attr("fill", markInk(i, l));
+      for (const t of wrap(l, Math.floor((w - 65) / (7.5 * theme.scale)))) {
+        line(t, margin + 17, pos, 13, l === highlighted);
+        pos += 20 * theme.scale;
+      }
     });
   } else if (
     v.chart === "model" ||
@@ -275,7 +344,7 @@ export function figure(a, v, { width = 700 } = {}) {
         .domain(d3.extent(ps.flatMap((p) => [p.low ?? p.b, p.high ?? p.b])))
         .nice()
         .range([bottom, top]);
-      let axis = d3.axisBottom(x).ticks(5);
+      let axis = d3.axisBottom(x).ticks(theme.ticks);
       if (isModel && !a.numericalPredictor)
         axis = axis
           .tickValues(ps.map((p) => p.a))
@@ -289,7 +358,7 @@ export function figure(a, v, { width = 700 } = {}) {
       root
         .append("g")
         .attr("transform", "translate(" + left + ",0)")
-        .call(d3.axisLeft(y).ticks(5));
+        .call(d3.axisLeft(y).ticks(theme.ticks));
       line(a.y || a.unit, margin, pos - 4, 12);
       const series = [...new Set(ps.map((p) => p.g))];
       for (const [i, g] of series.entries()) {
@@ -305,7 +374,7 @@ export function figure(a, v, { width = 700 } = {}) {
                 .y((p) => y(p.b))(points),
             )
             .attr("fill", "none")
-            .attr("stroke", ink(i))
+            .attr("stroke", markInk(i, g))
             .attr("stroke-width", 2);
         for (const p of points) {
           if (isModel)
@@ -315,14 +384,14 @@ export function figure(a, v, { width = 700 } = {}) {
               .attr("x2", x(p.a))
               .attr("y1", y(p.low))
               .attr("y2", y(p.high))
-              .attr("stroke", ink(i))
+              .attr("stroke", markInk(i, g))
               .attr("stroke-width", 2);
           root
             .append("circle")
             .attr("cx", x(p.a))
             .attr("cy", y(p.b))
-            .attr("r", 4)
-            .attr("fill", ink(i))
+            .attr("r", 4 * theme.scale)
+            .attr("fill", markInk(i, g))
             .attr("opacity", 0.85)
             .append("title")
             .text(
@@ -331,11 +400,16 @@ export function figure(a, v, { width = 700 } = {}) {
         }
       }
       pos = bottom + 43;
-      line(a.x || "", left, pos, 13);
-      pos += 21;
+      block(a.x || "", Math.floor((w - 52) / 8), 13);
       for (const [i, g] of series.entries())
         if (g) {
-          line(g, margin, pos, 13).attr("fill", ink(i));
+          root
+            .append("circle")
+            .attr("cx", margin + 4)
+            .attr("cy", pos - 4)
+            .attr("r", 4 * theme.scale)
+            .attr("fill", markInk(i, g));
+          line(g, margin + 17, pos, 13, g === highlighted);
           pos += 18;
         }
     }
@@ -355,7 +429,7 @@ export function figure(a, v, { width = 700 } = {}) {
     for (const g of groups) {
       if (g) {
         line(g, margin, pos, 14, true);
-        pos += 24;
+        pos += theme.row;
       }
       bars(
         records.filter((r) => r.group === g),
@@ -372,7 +446,18 @@ export function figure(a, v, { width = 700 } = {}) {
   ) {
     block("No matching observations.", 65);
   }
+  root
+    .selectAll(".tick text")
+    .attr("font-size", theme.axis)
+    .attr("font-family", theme.font);
+  root
+    .selectAll(".domain, .tick line")
+    .attr("stroke", style === "presentation" ? "#303030" : "#777");
   pos += 8;
+  if (style === "report") {
+    rule(pos - 3, w - margin, "#777", 0.8);
+    pos += 14;
+  }
   block(
     (a.unit ? a.unit + " · " : "") + a.note,
     Math.floor((w - 52) / 7.3),

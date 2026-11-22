@@ -24,6 +24,7 @@ export function newView(d) {
       task: "one",
       measure: "passages",
       title: "",
+      style: "workshop",
       palette: "colour",
     };
   const fields = d.fields.filter((f) => f.type !== "metadata"),
@@ -45,6 +46,7 @@ export function newView(d) {
     task: "one",
     measure: "count",
     title: "",
+    style: "workshop",
     palette: "colour",
   };
 }

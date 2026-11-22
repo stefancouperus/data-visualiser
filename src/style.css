@@ -711,3 +711,41 @@ dialog h2 {
 .project-open small {
   color: #42516a;
 }
+
+.figure-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.75rem;
+}
+.style-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  border: 0;
+  padding: 0;
+  margin: 0 0 1rem;
+}
+.style-choices legend { margin-bottom: 0.5rem; }
+.style-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.style-choice:has(:checked) { border-color: var(--blue); background: #f4f7fc; }
+.style-choice input { width: auto; margin: 0.25rem 0 0; }
+.style-choice small { display: block; }
+.style-preview {
+  max-height: 36vh;
+  overflow: auto;
+  margin: 0.8rem 0;
+  border: 1px solid var(--line);
+  background: white;
+}
+.style-preview svg { display: block; width: 100%; height: auto; }
+@media (max-width: 520px) {
+  .style-choices { grid-template-columns: 1fr; }
+}
