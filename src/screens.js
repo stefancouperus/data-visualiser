@@ -1,5 +1,5 @@
 import { termHelp } from "./term-help.js";
-import { figureStyles, styleFor } from "./figure-styles.js";
+import { figureStyles, styleFor, paletteOptions } from "./figure-styles.js";
 import { esc } from "./chart.js";
 import { button as b, opts, select, input, table, icon, pict } from "./ui.js";
 import { kinds, allCodes } from "./analysis.js";
@@ -322,11 +322,8 @@ export function panel(d, v, i, comparing = false) {
      : ""
  }${input("title", "Figure title", v.title)}${input("annotation", "Caption or annotation", v.annotation)}${select(
    "palette",
-   "Palette",
-   [
-     ["colour", "Colour"],
-     ["grey", "Greyscale"],
-   ],
+   "Colour palette",
+   paletteOptions,
    v.palette,
  )}${v.chart === "excerpts" ? input("query", "Find text", v.query) : ""}</div>${b("resetview", "Reset this view", "plain", 'data-i="' + i + '"')}</details>
  </details>

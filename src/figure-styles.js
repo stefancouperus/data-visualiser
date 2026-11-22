@@ -1,7 +1,7 @@
 export const figureStyles = {
   workshop: {
     label: "Workshop",
-    description: "Clear labels for exploring your data.",
+    description: "Solid bars and round points on a clean white chart.",
     font: "Arial, sans-serif",
     headingFont: "Arial, sans-serif",
     title: 18,
@@ -11,11 +11,12 @@ export const figureStyles = {
     bar: 13,
     axis: 11,
     ticks: 5,
-    accent: "#2859be",
+    palette: "studio",
   },
   report: {
     label: "Research report",
-    description: "Compact spacing, serif headings and a ruled figure note.",
+    description:
+      "Outlined bars, open squares and serif headings on warm paper.",
     font: "Arial, sans-serif",
     headingFont: "Georgia, serif",
     title: 19,
@@ -25,11 +26,12 @@ export const figureStyles = {
     bar: 11,
     axis: 10,
     ticks: 5,
-    accent: "#303030",
+    palette: "archive",
   },
   policy: {
     label: "Policy brief",
-    description: "A headline and an optional highlight for one comparison.",
+    description:
+      "Slim bars with end caps, ring markers and an optional highlight.",
     font: "Arial, sans-serif",
     headingFont: "Arial, sans-serif",
     title: 23,
@@ -39,23 +41,123 @@ export const figureStyles = {
     bar: 15,
     axis: 12,
     ticks: 5,
-    accent: "#086858",
+    palette: "forest",
   },
   presentation: {
     label: "Presentation",
-    description: "Large type and heavier marks for a classroom screen.",
+    description: "A dark title band, bold rounded bars and diamond markers.",
     font: "Arial, sans-serif",
     headingFont: "Arial, sans-serif",
     title: 27,
     scale: 1.22,
     row: 33,
-    radius: 3,
-    bar: 19,
+    radius: 12,
+    bar: 21,
     axis: 15,
     ticks: 4,
-    accent: "#224486",
+    palette: "bright",
   },
 };
+
+// Categorical colours distinguish named series; each heatmap uses a separate
+// light-to-dark ramp so a larger number is always shown with a darker cell.
+export const palettes = {
+  studio: {
+    label: "Studio blue",
+    series: [
+      "#2859be",
+      "#10837c",
+      "#c16a19",
+      "#8754a3",
+      "#50832f",
+      "#bf4e78",
+      "#477d96",
+      "#725b46",
+    ],
+    ramp: ["#eff5ff", "#91b7ef", "#173d86"],
+  },
+  archive: {
+    label: "Burgundy and slate",
+    series: [
+      "#823447",
+      "#49627a",
+      "#937638",
+      "#4e7165",
+      "#86627e",
+      "#4e4257",
+      "#ac6550",
+      "#77796a",
+    ],
+    ramp: ["#faf3ef", "#d2a5a7", "#662238"],
+  },
+  forest: {
+    label: "Forest and ochre",
+    series: [
+      "#086858",
+      "#bc7716",
+      "#427f98",
+      "#84556f",
+      "#73923d",
+      "#9d5832",
+      "#426b83",
+      "#605344",
+    ],
+    ramp: ["#edf7ed", "#8cc9a3", "#075346"],
+  },
+  bright: {
+    label: "Violet and coral",
+    series: [
+      "#7040ce",
+      "#c44b51",
+      "#007b98",
+      "#ba7510",
+      "#367446",
+      "#b43c87",
+      "#3d64bf",
+      "#80553a",
+    ],
+    ramp: ["#f4efff", "#bb9bf2", "#50228d"],
+  },
+  coast: {
+    label: "Ocean blues",
+    series: [
+      "#00658a",
+      "#3784ad",
+      "#16416c",
+      "#008078",
+      "#6664a0",
+      "#517c89",
+      "#2c5294",
+      "#77577f",
+    ],
+    ramp: ["#eef9fb", "#80c8d1", "#123e68"],
+  },
+  grey: {
+    label: "Greyscale",
+    series: [
+      "#303030",
+      "#727272",
+      "#959595",
+      "#545454",
+      "#ababab",
+      "#656565",
+      "#848484",
+      "#474747",
+    ],
+    ramp: ["#f5f5f5", "#b0b0b0", "#333333"],
+  },
+};
+
+export const paletteOptions = [
+  ["colour", "Use the style’s colours"],
+  ...Object.entries(palettes).map(([key, p]) => [key, p.label]),
+];
+export const paletteFor = (style, choice) =>
+  palettes[
+    Object.hasOwn(palettes, choice)
+      ? choice
+      : figureStyles[styleFor(style)].palette
+  ];
 
 export const styleFor = (name) =>
   Object.hasOwn(figureStyles, name) ? name : "workshop";
@@ -76,8 +178,12 @@ export function highlightChoices(a, v) {
     ].includes(v.chart)
   )
     return [];
+  if (v.task === "patterns" && a.groupLabel)
+    return [...new Set(a.records.map((r) => r.groupValue))];
   const groups = [...new Set(a.records.map((r) => r.group).filter(Boolean))];
-  return ["bars", "dots", "small"].includes(v.chart) && groups.length > 1
+  return (["bars", "dots", "small"].includes(v.chart) ||
+    (v.task === "patterns" && v.chart === "table")) &&
+    groups.length > 1
     ? groups
     : [...new Set(a.records.map((r) => r.label))];
 }

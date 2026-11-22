@@ -691,6 +691,7 @@ test("figure styles preview the current data and survive comparison, export and 
   await expect(chart).toHaveAttribute("data-style", "workshop");
   const labels = await chart.locator("text").allTextContents();
   await btn("Figure style · Workshop").click();
+  const marks = new Map();
   for (const style of ["report", "presentation", "workshop", "policy"]) {
     await page
       .locator('input[name="figure-style"][value="' + style + '"]')
@@ -702,19 +703,45 @@ test("figure styles preview the current data and survive comparison, export and 
     expect(
       await page.locator("#style-preview svg text").allTextContents(),
     ).toEqual(labels);
+    const bar = page.locator("#style-preview .bar-mark").first();
+    marks.set(style, [
+      await bar.getAttribute("height"),
+      await bar.getAttribute("rx"),
+      await bar.getAttribute("fill"),
+    ]);
   }
+  expect(new Set([...marks.values()].map((m) => m[2])).size).toBe(4);
+  expect(Number(marks.get("presentation")[1])).toBeGreaterThan(
+    Number(marks.get("workshop")[1]),
+  );
+  expect(Number(marks.get("policy")[0])).toBeLessThan(
+    Number(marks.get("report")[0]),
+  );
+  await page.locator("#style-palette").selectOption("coast");
+  await expect(
+    page.locator("#style-preview .bar-mark").first(),
+  ).toHaveAttribute("fill", "#00658a");
+  await page.getByRole("radio", { name: /Presentation/ }).check();
+  await expect(page.locator("#style-palette")).toHaveValue("coast");
+  await expect(
+    page.locator("#style-preview .bar-mark").first(),
+  ).toHaveAttribute("fill", "#00658a");
   await btn("Close").click();
   await expect(chart).toHaveAttribute("data-style", "workshop");
   await btn("Figure style · Workshop").click();
   await page.getByRole("radio", { name: /Policy brief/ }).check();
   await page.getByLabel("Highlight one category or group").selectOption("Yes");
-  await page.getByLabel("Greyscale", { exact: true }).check();
+  await page
+    .getByRole("dialog")
+    .getByRole("combobox", { name: "Colour palette", exact: true })
+    .selectOption("grey");
   await btn("Apply style").click();
   await expect(chart).toHaveAttribute("data-style", "policy");
-  await expect(chart.locator('rect[fill="#303030"]')).toHaveCount(1);
+  await expect(chart.locator('.bar-mark[fill="#303030"]')).toHaveCount(1);
   await btn("Compare two views").click();
   await page.locator('[data-panel="1"] [data-act="figurestyle"]').click();
   await page.getByRole("radio", { name: /Presentation/ }).check();
+  await page.locator("#style-palette").selectOption("coast");
   await btn("Apply style").click();
   await expect(page.locator("#graphic1 svg")).toHaveAttribute(
     "data-style",
@@ -736,6 +763,7 @@ test("figure styles preview the current data and survive comparison, export and 
   const svg = (await downloaded("Download SVG")).toString();
   expect(svg).toContain('data-style="policy"');
   expect(svg).toContain('data-style="presentation"');
+  expect(svg).toContain("#00658a");
   expect((await downloaded("Download PNG")).subarray(1, 4).toString()).toBe(
     "PNG",
   );
@@ -751,7 +779,10 @@ test("figure styles preview the current data and survive comparison, export and 
     buffer: data,
   });
   await expect(chart).toHaveAttribute("data-style", "policy");
-  await expect(chart.locator('rect[fill="#303030"]')).toHaveCount(1);
+  await expect(chart.locator('.bar-mark[fill="#303030"]')).toHaveCount(1);
+  await expect(
+    page.locator('#graphic1 path[fill="#00658a"]').first(),
+  ).toBeVisible();
   await expect(page.locator("#graphic1 svg")).toHaveAttribute(
     "data-style",
     "presentation",
@@ -1370,4 +1401,41 @@ test("touch users can read how interview groups are formed and what each theme c
   } finally {
     await context.close();
   }
+});
+
+test("interview heatmaps use the chosen colour ramp and pattern dots use the style's markers", async ({
+  page,
+}) => {
+  await upload(
+    page,
+    /I have coded interviews/,
+    "codes.tsv",
+    "Interview\tPassage\tCodes\nA\tFirst\tDelay\nA\tSecond\tDelay\nB\tThird\tRepair",
+  );
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Continue").click();
+  await btn("Continue").click();
+  await btn("Confirm and explore").click();
+  await page.getByRole("radio", { name: "Look across several themes" }).check();
+  await page.getByLabel("Repair", { exact: true }).check();
+  await btn("Figure style · Workshop").click();
+  await page.getByRole("radio", { name: /Presentation/ }).check();
+  await page.locator("#style-palette").selectOption("archive");
+  await btn("Apply style").click();
+  const chart = page.locator("#graphic0 svg");
+  await expect(
+    chart.locator('[data-code="Delay"][data-source="A"] rect'),
+  ).toHaveAttribute("fill", "rgb(102, 34, 56)");
+  await expect(
+    chart.locator('[data-code="Repair"][data-source="A"] text'),
+  ).toHaveAttribute("fill", "#000000");
+  await expect(
+    chart.locator('[data-code="Delay"][data-source="A"] text'),
+  ).toHaveAttribute("fill", "#ffffff");
+  await page
+    .getByRole("radio", { name: /themes appear together in the same passage/i })
+    .check();
+  await btn("Dot plot").click();
+  await expect(chart.locator('path[fill="#823447"]').first()).toBeVisible();
+  await expect(chart.locator("[data-pattern-row]").first()).toBeVisible();
 });

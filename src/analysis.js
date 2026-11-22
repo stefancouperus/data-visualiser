@@ -65,6 +65,7 @@ export function analyse(d, v) {
     title: v.title || x.label + (y ? " by " + y.label : ""),
     series: "",
     x: x.label,
+    xType: x.type,
     unit: d.unit === "response" ? "Responses" : d.unit + " records",
     n: rows.length,
     records: [],

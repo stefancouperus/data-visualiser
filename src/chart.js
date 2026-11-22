@@ -1,4 +1,9 @@
-import { figureStyles, styleFor, highlightChoices } from "./figure-styles.js";
+import {
+  figureStyles,
+  styleFor,
+  highlightChoices,
+  paletteFor,
+} from "./figure-styles.js";
 import * as d3 from "d3";
 export const esc = (s) =>
   String(s ?? "").replace(
@@ -8,26 +13,6 @@ export const esc = (s) =>
         c
       ],
   );
-const colours = [
-  "#2859be",
-  "#13806f",
-  "#9d541e",
-  "#8052aa",
-  "#1d839a",
-  "#bc5275",
-  "#526c40",
-  "#745c48",
-];
-const grey = [
-  "#303030",
-  "#626262",
-  "#898989",
-  "#b3b3b3",
-  "#494949",
-  "#757575",
-  "#9e9e9e",
-  "#c5c5c5",
-];
 const num = (v) => d3.format("~g")(Number(v.toPrecision(4)));
 const shorten = (v, n = 28) =>
   String(v).length > n ? String(v).slice(0, n - 1) + "…" : v;
@@ -42,11 +27,95 @@ function wrap(value, max) {
   }
   return [...lines, s];
 }
+// Draw every quantity from the same baseline to the same endpoint in every style.
+function horizontalMark(root, style, x, y, length, height, colour, paper) {
+  if (!(length > 0)) return;
+  const capped = style === "policy";
+  const h = capped ? Math.max(2, height * 0.27) : height;
+  const outline = style === "report" ? Math.min(1.6, length / 2) : 0;
+  root
+    .append("rect")
+    .attr("class", "bar-mark")
+    .attr("x", x + outline / 2)
+    .attr("y", y - h / 2 + outline / 2)
+    .attr("width", length - outline)
+    .attr("height", h - outline)
+    .attr("rx", Math.min(figureStyles[style].radius, h / 2, length / 2))
+    .attr("fill", outline ? d3.interpolateRgb(paper, colour)(0.15) : colour)
+    .attr("stroke", outline ? colour : "none")
+    .attr("stroke-width", outline);
+  if (capped) {
+    const cap = Math.min(length, 3);
+    root
+      .append("line")
+      .attr("x1", x + length - cap / 2)
+      .attr("x2", x + length - cap / 2)
+      .attr("y1", y - height / 2)
+      .attr("y2", y + height / 2)
+      .attr("stroke", colour)
+      .attr("stroke-width", cap);
+  }
+}
+function pointMark(root, style, x, y, r, colour, paper) {
+  if (style === "report")
+    return root
+      .append("rect")
+      .attr("x", x - r * 0.83)
+      .attr("y", y - r * 0.83)
+      .attr("width", r * 1.66)
+      .attr("height", r * 1.66)
+      .attr("fill", paper)
+      .attr("stroke", colour)
+      .attr("stroke-width", 1.8);
+  if (style === "presentation")
+    return root
+      .append("path")
+      .attr(
+        "d",
+        `M${x} ${y - r * 1.25}l${r * 1.25} ${r * 1.25}l${-r * 1.25} ${r * 1.25}l${-r * 1.25} ${-r * 1.25}Z`,
+      )
+      .attr("fill", colour);
+  return root
+    .append("circle")
+    .attr("cx", x)
+    .attr("cy", y)
+    .attr("r", r)
+    .attr("fill", style === "policy" ? paper : colour)
+    .attr("stroke", style === "policy" ? colour : "none")
+    .attr("stroke-width", 2.2);
+}
+function readableText(fill) {
+  const c = d3.rgb(fill);
+  const [r, g, b] = [c.r, c.g, c.b].map((channel) => {
+    const n = channel / 255;
+    return n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.179 ? "#000000" : "#ffffff";
+}
+function paperFor(style, mono) {
+  return style === "report" && !mono ? "#faf7f1" : "#ffffff";
+}
+export function styleSample(style, palette) {
+  const svg = d3
+    .create("svg")
+    .attr("viewBox", "0 0 100 36")
+    .attr("aria-hidden", "true");
+  const scheme = paletteFor(style, palette),
+    paper = paperFor(style, palette === "grey");
+  svg.append("rect").attr("width", 100).attr("height", 36).attr("fill", paper);
+  [66, 44, 55].forEach((n, i) =>
+    horizontalMark(svg, style, 4, 7 + i * 11, n, 7, scheme.series[i], paper),
+  );
+  pointMark(svg, style, 85, 18, 5, scheme.series[0], paper);
+  return svg.node();
+}
 export function figure(a, v, { width = 700 } = {}) {
   const style = styleFor(v.style),
     theme = figureStyles[style],
     mono = v.palette === "grey";
-  const accent = mono ? "#303030" : theme.accent;
+  const scheme = paletteFor(style, v.palette),
+    accent = scheme.series[0],
+    paper = paperFor(style, mono);
   const highlighted =
     style === "policy" &&
     v.highlight &&
@@ -64,7 +133,7 @@ export function figure(a, v, { width = 700 } = {}) {
     .attr("fill", mono || style === "report" ? "#252525" : "#253346");
   const w = width,
     margin = 22,
-    palette = v.palette === "grey" ? grey : colours;
+    palette = scheme.series;
   let pos = Math.max(27, theme.title + 8);
   function rule(y, x2, colour, weight) {
     root
@@ -76,10 +145,23 @@ export function figure(a, v, { width = 700 } = {}) {
       .attr("stroke", colour)
       .attr("stroke-width", weight);
   }
-  if (style === "policy") {
-    rule(8, margin + 52, accent, 4);
-    pos += 12;
+  if (style === "policy" || style === "presentation") pos += 8;
+  if (style === "report") {
+    rule(8, w - margin, accent, 1.3);
+    rule(11, w - margin, accent, 0.6);
+    pos += 8;
   }
+  const header = ["presentation", "policy"].includes(style)
+    ? root
+        .append("rect")
+        .attr("width", "100%")
+        .attr(
+          "fill",
+          style === "presentation"
+            ? d3.interpolateRgb(mono ? "#171717" : "#15161f", accent)(0.21)
+            : d3.interpolateRgb(paper, accent)(0.12),
+        )
+    : null;
   function line(t, x = margin, y = pos, size = 14, bold = false) {
     return root
       .append("text")
@@ -96,16 +178,35 @@ export function figure(a, v, { width = 700 } = {}) {
     }
   }
   for (const t of wrap(a.title, Math.floor((w - 48) / (theme.title * 0.55)))) {
-    line(t, margin, pos, theme.title / theme.scale, true).attr(
-      "font-family",
-      theme.headingFont,
-    );
+    line(t, margin, pos, theme.title / theme.scale, true)
+      .attr("font-family", theme.headingFont)
+      .attr(
+        "fill",
+        style === "presentation"
+          ? "white"
+          : style === "policy"
+            ? accent
+            : mono || style === "report"
+              ? "#252525"
+              : "#253346",
+      );
     pos += theme.title + 6;
   }
+  if (header) {
+    header.attr("height", pos - 8);
+    if (style === "policy")
+      root
+        .append("rect")
+        .attr("width", 6)
+        .attr("height", pos - 8)
+        .attr("fill", accent);
+  }
+  if (style === "workshop") rule(pos - 7, w - margin, accent, 1.4);
   pos += 12;
   const records = a.records || [],
     groups = [...new Set(records.map((r) => r.group))],
     labels = [...new Set(records.map((r) => r.label))];
+  const labelIndex = new Map(labels.map((key, i) => [key, i]));
   const ink = (i) => palette[i % palette.length];
   const muted = mono
     ? ["#858585", "#bcbcbc", "#9b9b9b", "#cecece", "#737373"]
@@ -130,25 +231,35 @@ export function figure(a, v, { width = 700 } = {}) {
         .append("title")
         .text(r.label);
       const colour = markInk(
-        Math.max(0, groups.indexOf(r.group)),
+        groups.length === 1 &&
+          labels.length <= palette.length &&
+          a.xType !== "ordered" &&
+          a.xType !== "number"
+          ? labelIndex.get(r.label)
+          : Math.max(0, groups.indexOf(r.group)),
         groups.length > 1 ? r.group : r.label,
       );
       if (mark === "dots")
-        root
-          .append("circle")
-          .attr("cx", left + scale(r.value))
-          .attr("cy", pos)
-          .attr("r", 4.6 * theme.scale)
-          .attr("fill", colour);
+        pointMark(
+          root,
+          style,
+          left + scale(r.value),
+          pos,
+          4.6 * theme.scale,
+          colour,
+          paper,
+        );
       else
-        root
-          .append("rect")
-          .attr("x", left)
-          .attr("y", pos - theme.bar / 2)
-          .attr("width", scale(r.value))
-          .attr("height", theme.bar)
-          .attr("rx", theme.radius)
-          .attr("fill", colour);
+        horizontalMark(
+          root,
+          style,
+          left,
+          pos,
+          scale(r.value),
+          theme.bar,
+          colour,
+          paper,
+        );
       line(
         num(r.value) + (a.unit.startsWith("%") ? "%" : ""),
         left + scale(r.value) + 9,
@@ -165,6 +276,12 @@ export function figure(a, v, { width = 700 } = {}) {
       for (const [i, name] of a.selectedLabels.entries())
         block(i + 1 + ". " + name, Math.floor((w - 52) / 8), 13);
     const max = Math.max(1, ...records.map((r) => r.value));
+    const patternKeys = a.groupLabel
+      ? [...new Set(records.map((r) => r.groupValue))]
+      : groups.length > 1
+        ? groups
+        : labels;
+    const patternIndex = new Map(patternKeys.map((key, i) => [key, i]));
     let group;
     for (const [index, r] of records.entries()) {
       if (r.group && group !== r.group) {
@@ -186,28 +303,38 @@ export function figure(a, v, { width = 700 } = {}) {
         : a.unit.startsWith("%")
           ? num(r.value) + "% (" + r.n + " of " + r.den + ")"
           : String(r.n);
-      block(label + "   —   " + amount, Math.floor((w - 52) / 8), 14);
+      const key = a.groupLabel
+        ? r.groupValue
+        : groups.length > 1
+          ? r.group
+          : r.label;
+      const colour = markInk(patternIndex.get(key), key);
+      block(
+        label + "   —   " + amount,
+        Math.floor((w - 52) / 8),
+        14,
+        Boolean(highlighted && highlighted === key),
+      );
       if (v.chart !== "table" && !r.undefinedShare) {
         const end =
           margin +
           ((w - 2 * margin) * r.value) / (a.unit.startsWith("%") ? 100 : max);
+        const h = theme.bar * 0.75;
         if (v.chart === "dots") {
-          rule(pos - 3, w - margin, "#d6dfeb", 1);
-          root
-            .append("circle")
-            .attr("cx", end)
-            .attr("cy", pos - 3)
-            .attr("r", 4)
-            .attr("fill", accent);
+          rule(pos, w - margin, mono ? "#dddddd" : "#d6dfdf", 1);
+          pointMark(root, style, end, pos, 4 * theme.scale, colour, paper);
         } else
-          root
-            .append("rect")
-            .attr("x", margin)
-            .attr("y", pos - 7)
-            .attr("width", end - margin)
-            .attr("height", 7)
-            .attr("fill", accent);
-        pos += 12;
+          horizontalMark(
+            root,
+            style,
+            margin,
+            pos,
+            end - margin,
+            h,
+            colour,
+            paper,
+          );
+        pos += h / 2 + 10;
       }
       root
         .append("rect")
@@ -229,6 +356,7 @@ export function figure(a, v, { width = 700 } = {}) {
     }
   } else if (v.chart === "excerpts") {
     for (const p of a.excerpt) {
+      rule(pos - 14, margin + 24, accent, 2);
       block(p.source + "  ·  " + (p.codes?.join(", ") || "Text"), 74, 13, true);
       block(p.text, Math.floor((w - 52) / 8));
       pos += 12;
@@ -240,7 +368,17 @@ export function figure(a, v, { width = 700 } = {}) {
       13,
       true,
     );
-    for (const r of records) {
+    for (const [index, r] of records.entries()) {
+      const rowTop = pos - 14;
+      const band =
+        index % 2 === 0 && style !== "report"
+          ? root
+              .append("rect")
+              .attr("x", margin - 3)
+              .attr("y", rowTop)
+              .attr("width", w - 2 * margin + 6)
+              .attr("fill", d3.interpolateRgb(paper, accent)(0.075))
+          : null;
       const emphasise = highlighted && r.label === highlighted;
       block(
         (r.group ? r.group + "  /  " : "") +
@@ -253,11 +391,15 @@ export function figure(a, v, { width = 700 } = {}) {
         14,
         emphasise,
       );
+      band?.attr("height", pos - 14 - rowTop);
+      if (style === "report")
+        rule(pos - 14, w - margin, d3.interpolateRgb(paper, accent)(0.35), 0.7);
     }
   } else if (["grid", "presence"].includes(v.chart)) {
     const labelW = Math.min(175, w * 0.28),
       cw = Math.max(65, (w - labelW - 45) / Math.max(1, labels.length)),
       max = Math.max(1, ...records.map((r) => r.value));
+    const heat = d3.scaleLinear([0, 0.5, 1], scheme.ramp);
     root.attr("data-width", Math.max(w, labelW + 45 + cw * labels.length));
     labels.forEach((name, i) =>
       line(
@@ -287,11 +429,8 @@ export function figure(a, v, { width = 700 } = {}) {
             .attr("y", pos)
             .attr("width", cw - 3)
             .attr("height", 33)
-            .attr("rx", 3)
-            .attr(
-              "fill",
-              d3.interpolate(mono ? "#f4f4f4" : "#f1f4f8", ink(0))(value / max),
-            )
+            .attr("rx", theme.radius)
+            .attr("fill", heat(value / max))
             .attr("stroke", r.label === highlighted ? accent : "none")
             .attr("stroke-width", 2);
           cell
@@ -299,7 +438,7 @@ export function figure(a, v, { width = 700 } = {}) {
             .attr("x", margin + labelW + (i + 0.5) * cw)
             .attr("y", pos + 22)
             .attr("text-anchor", "middle")
-            .attr("fill", value / max > 0.55 ? "white" : "#202020")
+            .attr("fill", readableText(heat(value / max)))
             .text(num(value));
           cell.append("title").text(g + " · " + r.label + " · " + value);
         });
@@ -329,13 +468,19 @@ export function figure(a, v, { width = 700 } = {}) {
     for (const r of records) {
       const start = x(lo === hi ? lo - 0.5 : r.lo),
         end = x(lo === hi ? hi + 0.5 : r.hi);
+      const binInk = markInk(0, r.label);
       root
         .append("rect")
         .attr("x", start)
         .attr("y", y(r.value))
         .attr("width", Math.max(1, end - start - 1))
         .attr("height", bottom - y(r.value))
-        .attr("fill", markInk(0, r.label))
+        .attr(
+          "fill",
+          style === "report" ? d3.interpolateRgb(paper, binInk)(0.18) : binInk,
+        )
+        .attr("stroke", style === "report" && r.value ? binInk : "none")
+        .attr("stroke-width", 1)
         .append("title")
         .text(r.label + " · " + r.n + " of " + r.den);
     }
@@ -361,8 +506,8 @@ export function figure(a, v, { width = 700 } = {}) {
           .attr("x", x)
           .attr("y", pos)
           .attr("width", n)
-          .attr("height", 22 * theme.scale)
-          .attr("stroke", "white")
+          .attr("height", theme.bar + 6)
+          .attr("stroke", paper)
           .attr("stroke-width", 0.7)
           .attr("fill", markInk(labels.indexOf(r.label), r.label))
           .append("title")
@@ -372,12 +517,7 @@ export function figure(a, v, { width = 700 } = {}) {
       pos += 44;
     }
     labels.forEach((l, i) => {
-      root
-        .append("circle")
-        .attr("cx", margin + 4)
-        .attr("cy", pos - 4)
-        .attr("r", 4)
-        .attr("fill", markInk(i, l));
+      pointMark(root, style, margin + 4, pos - 4, 4, markInk(i, l), paper);
       for (const t of wrap(l, Math.floor((w - 65) / (7.5 * theme.scale)))) {
         line(t, margin + 17, pos, 13, l === highlighted);
         pos += 20 * theme.scale;
@@ -444,7 +584,11 @@ export function figure(a, v, { width = 700 } = {}) {
             )
             .attr("fill", "none")
             .attr("stroke", markInk(i, g))
-            .attr("stroke-width", 2);
+            .attr("stroke-width", style === "presentation" ? 3.5 : 2)
+            .attr(
+              "stroke-dasharray",
+              style === "report" && i % 2 ? "5 3" : null,
+            );
         for (const p of points) {
           if (isModel)
             root
@@ -455,13 +599,15 @@ export function figure(a, v, { width = 700 } = {}) {
               .attr("y2", y(p.high))
               .attr("stroke", markInk(i, g))
               .attr("stroke-width", 2);
-          root
-            .append("circle")
-            .attr("cx", x(p.a))
-            .attr("cy", y(p.b))
-            .attr("r", 4 * theme.scale)
-            .attr("fill", markInk(i, g))
-            .attr("opacity", 0.85)
+          pointMark(
+            root,
+            style,
+            x(p.a),
+            y(p.b),
+            4 * theme.scale,
+            markInk(i, g),
+            paper,
+          )
             .append("title")
             .text(
               [g, p.label || p.a, num(p.b)].filter((v) => v !== "").join(" · "),
@@ -472,12 +618,15 @@ export function figure(a, v, { width = 700 } = {}) {
       block(a.x || "", Math.floor((w - 52) / 8), 13);
       for (const [i, g] of series.entries())
         if (g) {
-          root
-            .append("circle")
-            .attr("cx", margin + 4)
-            .attr("cy", pos - 4)
-            .attr("r", 4 * theme.scale)
-            .attr("fill", markInk(i, g));
+          pointMark(
+            root,
+            style,
+            margin + 4,
+            pos - 4,
+            4 * theme.scale,
+            markInk(i, g),
+            paper,
+          );
           line(g, margin + 17, pos, 13, g === highlighted);
           pos += 18;
         }
@@ -546,7 +695,7 @@ export function figure(a, v, { width = 700 } = {}) {
     .insert("rect", ":first-child")
     .attr("width", "100%")
     .attr("height", "100%")
-    .attr("fill", "white");
+    .attr("fill", paper);
   return root.node();
 }
 export function combinedSVG(figures, layout = "horizontal") {

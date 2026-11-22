@@ -51,8 +51,21 @@ import {
 } from "./research-focus.js";
 import { asksForGroupSuggestion } from "./group-suggestions.js";
 import { fitModel } from "./model.js";
-import { figureStyles, styleFor, highlightChoices } from "./figure-styles.js";
-import { esc, figure, combinedSVG, exportSVG, blobSave } from "./chart.js";
+import {
+  figureStyles,
+  styleFor,
+  highlightChoices,
+  paletteOptions,
+  paletteFor,
+} from "./figure-styles.js";
+import {
+  esc,
+  figure,
+  styleSample,
+  combinedSVG,
+  exportSVG,
+  blobSave,
+} from "./chart.js";
 import {
   icon,
   mark,
@@ -353,18 +366,18 @@ function chooseFigureStyle(i) {
   const cards = Object.entries(figureStyles)
     .map(
       ([id, style]) =>
-        `<label class="style-choice"><input type="radio" name="figure-style" value="${id}" ${current === id ? "checked" : ""}><span><strong>${esc(style.label)}</strong><small>${esc(style.description)}</small></span></label>`,
+        `<label class="style-choice"><input type="radio" name="figure-style" value="${id}" ${current === id ? "checked" : ""}><span><span class="style-sample" data-sample="${id}"></span><strong>${esc(style.label)}</strong><small>${esc(style.description)}</small></span></label>`,
     )
     .join("");
   const read = () => ({
     style: get("modalform").elements["figure-style"].value,
-    palette: get("style-grey").checked ? "grey" : "colour",
+    palette: val("style-palette"),
     highlight: val("style-highlight"),
   });
   modal(
     "Figure style",
     `<fieldset class="style-choices"><legend>Choose a style for this view</legend>${cards}</fieldset>
-    <label class="tick"><input type="checkbox" id="style-grey" ${view.palette === "grey" ? "checked" : ""}>Greyscale</label>
+    ${formselect("style-palette", "Colour palette", paletteOptions, view.palette || "colour")}<div class="palette-key" id="palette-key" aria-live="polite"></div>
     <div id="highlight-control">${formselect("style-highlight", "Highlight one category or group", [["", "No highlight"], ...choices], view.highlight)}</div>
     <div class="style-preview" id="style-preview" aria-label="Figure preview"></div>`,
     () => {
@@ -376,6 +389,16 @@ function chooseFigureStyle(i) {
   );
   function preview() {
     const draft = read();
+    const scheme = paletteFor(draft.style, draft.palette);
+    get("palette-key").innerHTML =
+      scheme.series
+        .map((c) => `<i aria-hidden="true" style="background:${c}"></i>`)
+        .join("") +
+      "<small>" +
+      esc(scheme.label) +
+      "</small>";
+    for (const host of get("modalform").querySelectorAll("[data-sample]"))
+      host.replaceChildren(styleSample(host.dataset.sample, draft.palette));
     get("highlight-control").hidden =
       draft.style !== "policy" || !choices.length;
     get("style-preview").replaceChildren(
