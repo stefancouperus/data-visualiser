@@ -3,7 +3,7 @@ import { button as b, opts, select, input, table, icon, pict } from "./ui.js";
 import { kinds, allCodes } from "./analysis.js";
 import { dataCount } from "./project.js";
 export function landing(local) {
-  return `<div class="hero"><h1>Data visualiser</h1><p>visualising and interpreting your survey or interview data</p></div><div class="choices">${b("upload", pict("survey") + "<strong>I have a Qualtrics export</strong><small>Read survey questions, scales and responses.</small>", "choice", 'data-route="survey"')}${b("upload", pict("text") + "<strong>I have coded interviews</strong><small>Import Word, Excel or Taguette highlights.</small>", "choice", 'data-route="coded"')}</div><h2 class="section">Other ways to start</h2><div class="list">${[
+  return `<div class="hero"><h1>Data visualiser</h1><p>visualising and interpreting your survey or interview data</p></div><section class="project-open" id="project-drop" aria-label="Open a saved project"><div>${b("open", icon("project") + " Open a saved project")} ${local ? b("deviceOpen", "Resume on this device", "plain") : ""}</div><small>Choose your downloaded project (.json), or drop it here.</small></section><div class="choices">${b("upload", pict("survey") + "<strong>I have a Qualtrics export</strong><small>Read survey questions, scales and responses.</small>", "choice", 'data-route="survey"')}${b("upload", pict("text") + "<strong>I have coded interviews</strong><small>Import Word, Excel or Taguette highlights.</small>", "choice", 'data-route="coded"')}</div><h2 class="section">Other ways to start</h2><div class="list">${[
     ["table", "table", "Table or spreadsheet", "CSV, TSV or Excel"],
     [
       "coded",
@@ -31,9 +31,7 @@ export function landing(local) {
         'data-route="' + r + '"',
       ),
     )
-    .join(
-      "",
-    )}</div><div class="bar">${b("open", icon("project") + " Open a downloaded project")}${local ? b("deviceOpen", "Resume on this device") : ""}</div>`;
+    .join("")}</div>`;
 }
 export function datasetSelect(p) {
   if (p.datasets.length === 1) return "";
@@ -226,7 +224,7 @@ export function panel(d, v, i) {
  <div class="bar">${b("askview", "Explain this view", "", 'data-i="' + i + '"')}${text ? b("passages", "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></section>`;
 }
 export function saveScreen(p) {
-  return `<div class="card"><h2>Save an editable project</h2><p>Include data to reopen your work on another laptop. A settings-only file stores view settings. Use the full project to keep edited passages, codes, linked attributes or derived datasets.</p><div class="bar">${b("download", "Download project with data", "primary")}${b("device", "Save on this device")}${b("settings", "Download settings only")}</div></div><div class="card"><h2>Saved comparisons</h2><div class="bar">${b("savecompare", "Save current comparison")}</div>${p.saved.length ? p.saved.map((s, i) => `<div class="topline check-item"><div><strong>${esc(s.name)}</strong><p>${esc(s.note)}</p></div><div>${b("loadcomp", "Open", "", 'data-i="' + i + '"')} ${b("dupcomp", "Duplicate", "", 'data-i="' + i + '"')}</div></div>`).join("") : "<p>Your saved comparisons will appear here.</p>"}</div><div class="card"><h2>Export a figure</h2><div class="formgrid">${form(
+  return `<div class="card"><h2>Save your project</h2><p>Keep your data, codes, figures, comparisons and bot activity together in one file. To continue on any laptop, choose <strong>Open a saved project</strong> on the start screen.</p><label class="tick"><input id="includeBotChat" type="checkbox" ${p.includeBotChat ? "checked" : ""}>Include full Data bot conversations</label><small>Includes your questions, replies and any text quoted in them.</small><div class="bar">${b("download", "Download project with data", "primary")}</div><details><summary>Other save options</summary><div class="bar">${b("device", "Save on this device")}${b("settings", "Download settings only")}</div><small>A settings-only file requires matching datasets to be imported first.</small></details></div><div class="card"><h2>Saved comparisons</h2><div class="bar">${b("savecompare", "Save current comparison")}</div>${p.saved.length ? p.saved.map((s, i) => `<div class="topline check-item"><div><strong>${esc(s.name)}</strong><p>${esc(s.note)}</p></div><div>${b("loadcomp", "Open", "", 'data-i="' + i + '"')} ${b("dupcomp", "Duplicate", "", 'data-i="' + i + '"')}</div></div>`).join("") : "<p>Your saved comparisons will appear here.</p>"}</div><div class="card"><h2>Export a figure</h2><div class="formgrid">${form(
     "panels",
     "Panels",
     [

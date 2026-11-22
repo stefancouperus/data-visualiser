@@ -38,6 +38,7 @@ test("survey review, comparison, project save and figure export", async ({
   await page
     .getByRole("button", { name: "Save and export", exact: true })
     .click();
+  await page.getByText("Other save options", { exact: true }).click();
   await page.getByRole("button", { name: "Save on this device" }).click();
   const dl = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download SVG" }).click();
@@ -568,4 +569,94 @@ test("an explicitly requested heatmap takes precedence over a different model ch
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.locator('[data-key="chart"]')).toHaveValue("grid");
   await expect(page.locator("#graphic0 [data-code]")).toHaveCount(4);
+});
+
+test("portable download reopens from the start screen with optional bot memory", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  let requests = 0;
+  await page.route("https://tutor.example.test/ask", (r) => {
+    const { context } = r.request().postDataJSON();
+    requests++;
+    if (requests > 1)
+      expect(context.pastProjectWork.earlierExchanges.join(" ")).toContain(
+        "Use year as the grouping question",
+      );
+    return r.fulfill({
+      json: {
+        answer: JSON.stringify(
+          requests === 1
+            ? {
+                action: "answer",
+                explanation: "Use year as the grouping question.",
+              }
+            : {
+                action: "answer",
+                explanation: "Earlier we discussed grouping by year.",
+              },
+        ),
+      },
+    });
+  });
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "Workshop survey.csv",
+    "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Turnout,Year\n2026,2026,Yes,First\n2026,2026,No,Second",
+  );
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Confirm and explore").click();
+  await btn("Data bot").click();
+  await page
+    .locator("#question")
+    .fill("Which grouping question should we use?");
+  await btn("Send").click();
+  await expect(page.locator(".chatlog")).toContainText("Use year");
+  await page.locator("[data-act=closebot]").click();
+  await btn("Compare two views").click();
+  await btn("Save and export").click();
+  await expect(btn("Download project with data")).toBeVisible();
+  await expect(btn("Download settings only")).toBeHidden();
+  async function save() {
+    const wait = page.waitForEvent("download");
+    await btn("Download project with data").click();
+    const file = await wait;
+    expect(file.suggestedFilename()).toBe("Workshop survey - project.json");
+    const stream = await file.createReadStream();
+    const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    return Buffer.concat(chunks);
+  }
+  const first = JSON.parse((await save()).toString());
+  expect(first.datasets[0].rows.length).toBe(2);
+  expect(first.tutorHistory[first.active].messages).toBeUndefined();
+  expect(first.tutorHistory[first.active].activity.length).toBe(1);
+  await page.getByLabel("Include full Data bot conversations").check();
+  const bytes = await save();
+  await page.reload();
+  const picker = page.waitForEvent("filechooser");
+  await btn("Open a saved project").click();
+  await (
+    await picker
+  ).setFiles({
+    name: "saved.json",
+    mimeType: "application/json",
+    buffer: bytes,
+  });
+  await expect(page.locator("#graphic1 svg")).toBeVisible();
+  await btn("Data bot").click();
+  await expect(page.locator(".chatlog")).toContainText("Use year");
+  await page.locator("#question").fill("Why did we choose year earlier?");
+  await btn("Send").click();
+  await expect(page.locator(".chatlog")).toContainText("Earlier we discussed");
+  await page.reload();
+  await page.locator("#project-drop").evaluate((zone, json) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([json], "saved.json", { type: "application/json" }));
+    zone.dispatchEvent(
+      new DragEvent("drop", { bubbles: true, dataTransfer: dt }),
+    );
+  }, bytes.toString());
+  await expect(page.locator("#graphic1 svg")).toBeVisible();
 });

@@ -699,3 +699,15 @@ dialog h2 {
     border-top: 0;
   }
 }
+
+.project-open {
+  display: grid;
+  gap: 0.4rem;
+  padding: 1rem;
+  border: 1px dashed #afbed4;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+.project-open small {
+  color: #42516a;
+}

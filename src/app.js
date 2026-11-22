@@ -1,4 +1,5 @@
 import "./style.css";
+import { tutorRecord, projectPackage, previousWork } from "./tutor-history.js";
 import { analyticalEvidence, pairedStatistics } from "./tutor-evidence.js";
 import {
   chartFields,
@@ -60,7 +61,7 @@ const getData = () => project.datasets.find((d) => d.id === project.active);
 const resetTutor = () => {
   proposal = null;
 
-  history = [];
+  history = tutorRecord(project).messages;
   chosen.clear();
   scope = [];
   suggestions = [];
@@ -80,7 +81,13 @@ const modeNames = [
 ];
 const botURL = (import.meta.env.VITE_BOT_URL || "").replace(/\/$/, "");
 function botBox() {
-  return `<section id="data-bot" aria-label="Data bot workspace" class="bot ${isDocked() ? "docked" : "floating"}"><header class="bothead" data-window-handle="move"><h2 title="Drag the title bar to move the floating window">Data bot</h2><div class="bottools">${innerWidth >= 900 ? b("dockbot", isDocked() ? "Float window" : "Dock right") : ""}${b("closebot", "Close", "plain")}</div></header><div class="botbody"><details class="botprefs"><summary>Help settings</summary><label>Help mode<select id="mode">${opts(modeNames, project.mode)}</select></label>${b("scope", "What the bot can see")}</details>${!history.length && !requesting ? "<p>Ask about a pattern or ask me to make a chart.</p>" : ""}${!botURL ? "<p>Live help will be available when the workshop service is connected. You can explore, compare and export your data now.</p>" : !sessionStorage.getItem("dv-session") ? '<label>Workshop course code<input id="course" type="password" autocomplete="off"></label>' + b("unlock", "Unlock the bot") : ""}<div class="chatlog">${history.map((t) => `<div class="msg"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`).join("")}</div>${requesting ? '<p role="status">Waiting for the university model…</p>' : ""}
+  return `<section id="data-bot" aria-label="Data bot workspace" class="bot ${isDocked() ? "docked" : "floating"}"><header class="bothead" data-window-handle="move"><h2 title="Drag the title bar to move the floating window">Data bot</h2><div class="bottools">${innerWidth >= 900 ? b("dockbot", isDocked() ? "Float window" : "Dock right") : ""}${b("closebot", "Close", "plain")}</div></header><div class="botbody"><details class="botprefs"><summary>Help settings</summary><label>Help mode<select id="mode">${opts(modeNames, project.mode)}</select></label>${b("scope", "What the bot can see")}</details>${!history.length && !requesting ? "<p>Ask about a pattern or ask me to make a chart.</p>" : ""}${!botURL ? "<p>Live help will be available when the workshop service is connected. You can explore, compare and export your data now.</p>" : !sessionStorage.getItem("dv-session") ? '<label>Workshop course code<input id="course" type="password" autocomplete="off"></label>' + b("unlock", "Unlock the bot") : ""}${
+    tutorRecord(project).activity.length
+      ? `<details><summary>Project activity</summary><ul>${tutorRecord(project)
+          .activity.map((note) => "<li>" + esc(note) + "</li>")
+          .join("")}</ul></details>`
+      : ""
+  }<div class="chatlog">${history.map((t) => `<div class="msg"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`).join("")}</div>${requesting ? '<p role="status">Waiting for the university model…</p>' : ""}
  ${proposal ? b("botdraw", "Make this chart", "primary") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
  <label>Ask about your project<textarea id="question" maxlength="4000" placeholder="Ask a question or describe a chart…">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></div><div class="botsize" data-window-handle="resize" title="Drag to resize"></div></section>`;
 }
@@ -282,10 +289,46 @@ function goto(i) {
 }
 function setProject(p) {
   project = verifyProject(p);
+  undoViews = [];
   if (!getData() && project.datasets.length) activate(project.datasets[0].id);
   if (getData() && project.views.length !== 2) activate(project.active);
   resetTutor();
-  goto(getData() ? (project.confirmed.includes(project.active) ? 2 : 1) : 0);
+  goto(
+    getData()
+      ? project.confirmed.includes(project.active)
+        ? project.figurePanels === "both"
+          ? 3
+          : 2
+        : 1
+      : 0,
+  );
+}
+async function openProjectFile(file) {
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+  } catch {
+    throw Error(
+      "Choose a downloaded Data visualiser project (.json). For a survey or transcript, use an upload option.",
+    );
+  }
+  const saved = verifyProject(data);
+  const restored = saved.settingsOnly
+    ? reattach(saved, project.datasets)
+    : saved;
+  if (
+    !saved.settingsOnly &&
+    project.datasets.length &&
+    !(await askForm(
+      "Switch projects?",
+      "<p>Opening this file will replace the current workspace. Save any changes you want to keep first.</p>",
+      () => true,
+      "Open saved project",
+    ))
+  )
+    return;
+  setProject(restored);
+  notice("Opened " + restored.name + ".");
 }
 function chooseFiles(accept, multiple, handler) {
   const p = get("picker");
@@ -320,6 +363,7 @@ function botContext(question = "") {
   const d = getData();
   if (!d) return { step: "Upload" };
   const basic = {
+    pastProjectWork: previousWork(tutorRecord(project), question),
     stage: steps[step],
     dataset: d.name,
     datasetKind:
@@ -484,6 +528,15 @@ function applyProposal() {
   const chart = summary(candidate.panel, candidate.view);
   snapshotViews();
   project.views[candidate.panel] = candidate.view;
+  tutorRecord(project).activity.push(
+    "Created " +
+      kinds[candidate.view.chart].toLowerCase() +
+      " · " +
+      chart.title +
+      (candidate.view.filter ? " (filtered view)" : "") +
+      ". " +
+      chart.note,
+  );
   history.push({
     role: "assistant",
     content:
@@ -528,6 +581,8 @@ async function ask(question, skill) {
   if (JSON.stringify(context).length > 115000)
     throw Error("Choose fewer sources or passages for the bot.");
   const previous = history.slice(-4),
+    activeProject = project,
+    activeChat = history,
     activeId = project.active,
     startStep = step,
     startViews = JSON.stringify(project.views);
@@ -555,7 +610,12 @@ async function ask(question, skill) {
       if (res.status === 401) sessionStorage.removeItem("dv-session");
       throw Error(data.error || "Tutor unavailable.");
     }
-    if (project.active !== activeId) return;
+    if (
+      project !== activeProject ||
+      history !== activeChat ||
+      project.active !== activeId
+    )
+      return;
     if (
       skill === "recommend" &&
       (step !== startStep || JSON.stringify(project.views) !== startViews)
@@ -583,11 +643,21 @@ async function ask(question, skill) {
           p.quote &&
           sources.get(p.id)?.includes(p.quote),
       );
+      tutorRecord(project).activity.push(
+        "Requested coding suggestions for " +
+          context.passages.length +
+          " selected passages.",
+      );
       history.push({
         role: "assistant",
         content:
           suggestions.length +
-          " evidence-linked suggestions are ready for review.",
+          " suggestions for review." +
+          suggestions
+            .map(
+              (s) => "\n" + s.code + " — “" + s.quote + "” " + (s.reason || ""),
+            )
+            .join(""),
       });
     } else if (skill === "recommend") {
       let pick;
@@ -673,14 +743,29 @@ async function ask(question, skill) {
               ),
             });
         }
-      } else
+      } else {
+        if (pick.action === "answer")
+          tutorRecord(project).activity.push(
+            "Discussed " +
+              (context.views
+                ?.map((v) => v.title)
+                .filter(Boolean)
+                .join(" and ") || steps[step]) +
+              " with the Data bot.",
+          );
         history.push({
           role: "assistant",
           content: String(
             pick.explanation || "Which question would you like to explore?",
           ),
         });
-    } else history.push({ role: "assistant", content: data.answer });
+      }
+    } else {
+      tutorRecord(project).activity.push(
+        "Asked the Data bot about " + steps[step].toLowerCase() + ".",
+      );
+      history.push({ role: "assistant", content: data.answer });
+    }
   } finally {
     requesting = false;
     render();
@@ -1386,6 +1471,13 @@ async function action(act, el) {
             throw Error("A matching passage and label are required.");
           if (!p.codes.includes(code)) p.codes.push(code);
           p.reviewed = true;
+          tutorRecord(project).activity.push(
+            "Accepted the code “" +
+              code +
+              "” for a passage from " +
+              p.source +
+              ".",
+          );
           suggestions.splice(i, 1);
           render();
         },
@@ -1424,7 +1516,10 @@ async function action(act, el) {
       break;
     }
     case "device":
-      localStorage.setItem("dv-project", JSON.stringify(project));
+      localStorage.setItem(
+        "dv-project",
+        JSON.stringify(projectPackage(project)),
+      );
       notice(
         "Saved. Choose Resume on this device in the same browser to reopen this project.",
       );
@@ -1435,17 +1530,17 @@ async function action(act, el) {
     case "download":
     case "settings":
       download(
-        act === "settings" ? settingsProject(project) : project,
+        act === "settings" ? settingsProject(project) : projectPackage(project),
         act === "settings"
           ? "visualiser-settings.json"
-          : "visualiser-project.json",
+          : (project.name
+              .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
+              .trim()
+              .slice(0, 100) || "Data visualiser") + " - project.json",
       );
       return;
     case "open":
-      chooseFiles(".json", false, async (files) => {
-        const v = verifyProject(JSON.parse(await files[0].text()));
-        setProject(v.settingsOnly ? reattach(v, project.datasets) : v);
-      });
+      chooseFiles(".json", false, ([file]) => openProjectFile(file));
       return;
     case "previewexport":
     case "svg":
@@ -1477,6 +1572,20 @@ async function action(act, el) {
   }
   render();
 }
+document.addEventListener("dragover", (event) => {
+  if (event.target.closest("#project-drop")) event.preventDefault();
+});
+document.addEventListener("drop", async (event) => {
+  if (!event.target.closest("#project-drop")) return;
+  event.preventDefault();
+  if (event.dataTransfer.files.length !== 1)
+    return notice("Drop one saved project at a time.");
+  try {
+    await openProjectFile(event.dataTransfer.files[0]);
+  } catch (error) {
+    notice(error.message);
+  }
+});
 document.addEventListener("click", async (e) => {
   const el = e.target.closest("[data-act]");
   try {
@@ -1512,6 +1621,10 @@ matchMedia("(min-width: 900px)").addEventListener("change", () => {
 });
 document.addEventListener("change", (e) => {
   const t = e.target;
+  if (t.id === "includeBotChat") {
+    project.includeBotChat = t.checked;
+    return;
+  }
   if (t.id === "dataset") {
     activate(t.value);
     goto(project.confirmed.includes(t.value) ? step : 1);
@@ -1554,4 +1667,5 @@ document.addEventListener("change", (e) => {
   } else return;
   render();
 });
+resetTutor();
 render();

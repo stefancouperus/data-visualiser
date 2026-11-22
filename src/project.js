@@ -1,6 +1,9 @@
+import { readTutorHistory } from "./tutor-history.js";
 import { filteredRows } from "./import.js";
 import { applyAnswerLabels } from "./survey-labels.js";
 export const fresh = () => ({
+  tutorHistory: Object.create(null),
+  includeBotChat: false,
   format: "data-visualiser",
   version: 1,
   name: "Untitled project",
@@ -48,10 +51,19 @@ export function verifyProject(p) {
       )
         throw Error("Missing passage data.");
     }
-  return { ...fresh(), ...p };
+  return {
+    ...fresh(),
+    ...p,
+    includeBotChat: p.includeBotChat === true,
+    tutorHistory: readTutorHistory(
+      p.tutorHistory,
+      p.datasets.map((d) => d.id),
+    ),
+  };
 }
 export function settingsProject(p) {
-  const copy = structuredClone(p);
+  const { tutorHistory, includeBotChat, ...settings } = p;
+  const copy = structuredClone(settings);
   copy.settingsOnly = true;
   copy.datasets = copy.datasets.map((d) =>
     d.kind === "table"
