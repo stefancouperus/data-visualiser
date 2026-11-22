@@ -561,3 +561,55 @@ test("a predictor with only one observed category cannot silently disappear from
     /Shift.*only one value/,
   );
 });
+
+test("open-question theme shares use answering respondents and keep reviewed coding when reopened", async () => {
+  const { writtenAnswerSet, setQuestionRoles } =
+    await import("../src/open-answers.js");
+  const survey = makeTable(
+    [
+      ["Group", "Why?"],
+      ["A", "Cost"],
+      ["A", ""],
+      ["B", "Travel and cost"],
+      ["B", "Time"],
+    ],
+    "Travel",
+  );
+  const field = survey.fields[1];
+  setQuestionRoles(field, ["explanatory", "open"]);
+  assert.equal(field.type, "text");
+  const project = { datasets: [survey] };
+  const data = writtenAnswerSet(project, survey, field.id, "", true);
+  assert.deepEqual(data.sources, ["Record 1", "Record 3", "Record 4"]);
+  data.passages[0].codes = ["Price"];
+  data.passages[1].codes = ["Price", "Travel"];
+  data.passages.push({
+    ...data.passages[0],
+    id: "extra",
+    parent: data.passages[0].id,
+  });
+  const summary = analyse(data, {
+    task: "themes",
+    chart: "bars",
+    measure: "percent",
+  });
+  assert.deepEqual(
+    summary.records.map((r) => [r.label, r.n, r.den]),
+    [
+      ["Price", 2, 3],
+      ["Travel", 1, 3],
+    ],
+  );
+  assert.equal(writtenAnswerSet(project, survey, field.id, "", true), data);
+  assert.equal(
+    analyse(data, {
+      task: "themes",
+      measure: "percent",
+      filter: "Group",
+      value: "A",
+    }).records[0].value,
+    100,
+  );
+  setQuestionRoles(field, ["explanatory"]);
+  assert.equal(field.type, "category");
+});

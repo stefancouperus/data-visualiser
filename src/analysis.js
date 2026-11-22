@@ -19,11 +19,11 @@ export const allCodes = (d) => [...new Set(d.passages.flatMap((p) => p.codes))];
 export function newView(d) {
   if (d.kind === "text")
     return {
-      x: allCodes(d)[0] || "",
+      x: d.openAnswers ? "" : allCodes(d)[0] || "",
       y: "",
       chart: allCodes(d).length ? "bars" : "excerpts",
-      task: "one",
-      measure: "passages",
+      task: d.openAnswers && allCodes(d).length ? "themes" : "one",
+      measure: d.openAnswers ? "sources" : "passages",
       title: "",
       style: "workshop",
       palette: "colour",
@@ -58,6 +58,14 @@ export function analyse(d, v) {
     y = f(v.y),
     z = f(v.z);
   if (!x) throw Error("Choose a variable.");
+  if (
+    (v.task !== "one" && y?.roles?.includes("open")) ||
+    z?.roles?.includes("open") ||
+    f(v.filter)?.roles?.includes("open")
+  )
+    throw Error(
+      "Use a closed question to split or filter respondents. Open Written survey answers to compare themes.",
+    );
   const rows = filteredRows(d).filter(
     (r) => !v.filter || r[v.filter] === v.value,
   );
@@ -227,6 +235,39 @@ function qualitative(d, v) {
     excerpt: [],
     note: "",
   };
+  if (d.openAnswers && v.task === "themes") {
+    base.title = v.title || "Themes in written answers";
+    base.unit =
+      v.measure === "percent"
+        ? "% of respondents who wrote an answer"
+        : "Respondents who mentioned the theme";
+    const counts = new Map();
+    for (const entry of bySource.values())
+      for (const code of entry.codes.keys())
+        counts.set(code, (counts.get(code) || 0) + 1);
+    base.records = [...counts]
+      .sort((a, b) => b[1] - a[1])
+      .map(([label, n]) => ({
+        label,
+        group: "",
+        n,
+        den: sources.length,
+        value: v.measure === "percent" ? (100 * n) / sources.length : n,
+      }));
+    const reviewed = new Set(
+      selected.filter((p) => p.reviewed && !p.parent).map((p) => p.source),
+    ).size;
+    base.note =
+      reviewed +
+      " of " +
+      sources.length +
+      " written answers reviewed in this view. Each respondent counts once per applied theme and can mention several themes. Across the survey selection, " +
+      d.openAnswers.answered +
+      " of " +
+      d.openAnswers.eligible +
+      " respondents supplied text.";
+    return base;
+  }
   if (v.chart === "excerpts") {
     base.excerpt = selected.filter(
       (p) =>

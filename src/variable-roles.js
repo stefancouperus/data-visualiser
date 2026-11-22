@@ -1,3 +1,4 @@
+import { setQuestionRoles } from "./open-answers.js";
 import { esc } from "./chart.js";
 import { get, modal } from "./ui.js";
 
@@ -13,9 +14,13 @@ const roles = [
     "Explanatory",
     "A question that measures a possible explanation you want to investigate.",
   ],
+  [
+    "open",
+    "Open question",
+    "Respondents answer in their own words. You can also tick any of the three roles above.",
+  ],
 ];
-const fieldsFor = (d) =>
-  d.fields.filter((f) => f.type !== "metadata" && f.levels.length);
+const fieldsFor = (d) => d.fields.filter((f) => f.type !== "metadata");
 export function confirmedRoles(d) {
   return d.fields
     ?.filter((f) => Array.isArray(f.roles) && f.type !== "metadata")
@@ -56,11 +61,14 @@ export function editRoles(d, project, suggest, done) {
       project.researchFocus = get("role-focus").value.trim();
       d.explanation = get("role-idea").value.trim();
       for (const f of fields)
-        f.roles = [
-          ...get("dialog").querySelectorAll(
-            `[data-role-field="${f.id}"] input:checked`,
-          ),
-        ].map((t) => t.value);
+        setQuestionRoles(
+          f,
+          [
+            ...get("dialog").querySelectorAll(
+              `[data-role-field="${f.id}"] input:checked`,
+            ),
+          ].map((t) => t.value),
+        );
       done();
     },
     "Confirm question roles",
@@ -104,16 +112,17 @@ export function editRoles(d, project, suggest, done) {
         );
       let added = 0;
       for (const box of boxes) {
-        if (existing.has(box.dataset.roleField) || box.dataset.edited) continue;
+        if (box.dataset.edited) continue;
+        const confirmed = existing.get(box.dataset.roleField) || [];
         for (const input of box.querySelectorAll("input"))
-          input.checked = false;
+          input.checked = confirmed.includes(input.value);
         box.querySelector("small").textContent = "";
         const pick = result.suggestions.find(
           (s) => s?.id === box.dataset.roleField && Array.isArray(s.roles),
         );
         if (!pick) continue;
-        const inputs = [...box.querySelectorAll("input")].filter((el) =>
-          pick.roles.includes(el.value),
+        const inputs = [...box.querySelectorAll("input")].filter(
+          (el) => !el.checked && pick.roles.includes(el.value),
         );
         if (!inputs.length) continue;
         inputs.forEach((el) => {

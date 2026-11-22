@@ -1604,3 +1604,72 @@ test("review question roles, apply selections and reopen a saved visual", async 
     "Contact · Explanatory",
   );
 });
+
+test("open survey questions keep their research role and reopen reviewed written answers", async ({
+  page,
+}) => {
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "transport.csv",
+    "Study year,What makes travel difficult?,Arrival time\nFirst,Cost,Early\nSecond,Time and cost,Late\nFirst,,Late",
+  );
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Choose question roles" }).click();
+  const question = page.getByRole("group", {
+    name: "What makes travel difficult?",
+    exact: true,
+  });
+  await question.getByLabel("Explanatory").check();
+  await question.getByLabel("Open question").check();
+  await page.getByRole("button", { name: "Confirm question roles" }).click();
+  await page.getByRole("button", { name: "Confirm and explore" }).click();
+  const sourceSurvey = await page
+    .getByLabel("Choose a question or column")
+    .locator("option")
+    .allTextContents();
+  expect(sourceSurvey).toContain(
+    "What makes travel difficult? · Explanatory / Open question",
+  );
+  await page
+    .getByLabel("Choose a question or column")
+    .selectOption({
+      label: "What makes travel difficult? · Explanatory / Open question",
+    });
+  await expect(page.locator("#graphic0")).toContainText("2 written answers");
+  await page
+    .getByRole("button", { name: "Read and code answers", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "2 of 3 included respondents answered",
+  );
+  await page.locator("[name=pickp]").first().check();
+  await page.getByLabel("Code to apply").fill("Travel cost");
+  await page
+    .getByRole("button", { name: "Mark reviewed / apply code" })
+    .click();
+  await page
+    .getByRole("radio", { name: "Compare themes across answers" })
+    .check();
+  await expect(page.locator("#graphic0")).toContainText("Travel cost");
+  await expect(page.locator("#graphic0")).toContainText(
+    "1 of 2 written answers reviewed",
+  );
+  await page
+    .getByLabel("Current dataset")
+    .selectOption({
+      label: await page
+        .getByLabel("Current dataset")
+        .locator("option")
+        .first()
+        .textContent(),
+    });
+  await page
+    .getByRole("button", { name: "Read and code answers", exact: true })
+    .click();
+  await expect(page.locator("#passlist")).toContainText("Travel cost");
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(
+    page.getByLabel("Current dataset").locator("option"),
+  ).toHaveCount(2);
+});

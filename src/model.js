@@ -11,6 +11,12 @@ export function fitModel(
     yField = field(outcome);
   if (!yField || !predictors.length || predictors.includes(outcome))
     throw Error("Select an outcome and at least one different predictor.");
+  if (
+    [outcome, ...predictors].some((key) => field(key)?.roles?.includes("open"))
+  )
+    throw Error(
+      "Code written answers into themes before comparing them. Choose a closed question for this model.",
+    );
   const used = rows.filter((r) =>
     [outcome, ...predictors].every(
       (k) =>

@@ -126,7 +126,13 @@ export function settingsProject(p) {
             levels: f.type === "ordered" ? levels : [],
           })),
         }
-      : { id: d.id, name: d.name, kind: d.kind, unit: d.unit },
+      : {
+          id: d.id,
+          name: d.name,
+          kind: d.kind,
+          unit: d.unit,
+          ...(d.openAnswers ? { openAnswers: d.openAnswers } : {}),
+        },
   );
   return structuredClone(copy);
 }
@@ -148,6 +154,7 @@ export function reattach(settings, actual) {
     seen.add(d.id);
     d.id = saved.id;
     d.unit = saved.unit;
+    if (saved.openAnswers) d.openAnswers = structuredClone(saved.openAnswers);
     if (d.kind === "table") {
       if (
         saved.fields.length !== d.fields.length ||

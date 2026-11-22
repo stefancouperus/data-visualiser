@@ -17,12 +17,22 @@ export function patternChoices(d) {
     )
     .map((f) => [f.id, f.label]);
 }
-export function patternModes(text) {
+export function patternModes(text, written = false) {
   return text
     ? [
-        ["sources", "How often does each theme appear in each interview?"],
+        [
+          "sources",
+          written
+            ? "How often does each theme appear in each written answer?"
+            : "How often does each theme appear in each interview?",
+        ],
         ["passages", "Which themes appear together in the same passage?"],
-        ["interviews", "Which themes appear together in the same interview?"],
+        [
+          "interviews",
+          written
+            ? "Which themes does the same respondent mention?"
+            : "Which themes appear together in the same interview?",
+        ],
       ]
     : [
         ["together", "Which answers did the same people give together?"],
@@ -73,11 +83,11 @@ function summarise(d, v, rankLimit = 12, choices = new Map(patternChoices(d))) {
   const items = [...new Set(v.items || [])]
     .filter((id) => choices.has(id))
     .slice(0, selectionLimit);
-  const mode = v.patternMode || patternModes(text)[0][0];
+  const mode = v.patternMode || patternModes(text, !!d.openAnswers)[0][0];
   const a = {
     title:
       v.title ||
-      patternModes(text).find(([id]) => id === mode)?.[1] ||
+      patternModes(text, !!d.openAnswers).find(([id]) => id === mode)?.[1] ||
       "Selected patterns",
     unit: "",
     records: [],
@@ -137,10 +147,17 @@ function summarise(d, v, rankLimit = 12, choices = new Map(patternChoices(d))) {
       if (mode === "passages") tally(matches);
     }
     a.n = mode === "passages" ? passages.length : sources.length;
-    a.unit = mode === "interviews" ? "Interviews" : "Passages";
+    a.unit =
+      mode === "interviews"
+        ? d.openAnswers
+          ? "Respondents"
+          : "Interviews"
+        : "Passages";
     a.note =
       sources.length +
-      " listed interviews · " +
+      (d.openAnswers
+        ? " respondents who wrote an answer · "
+        : " listed interviews · ") +
       reviewed +
       " of " +
       passages.length +
@@ -167,7 +184,9 @@ function summarise(d, v, rankLimit = 12, choices = new Map(patternChoices(d))) {
       );
       a.note +=
         mode === "interviews"
-          ? " Themes may occur in different passages of one interview."
+          ? d.openAnswers
+            ? " Each respondent is counted once."
+            : " Themes may occur in different passages of one interview."
           : " Each passage counts once.";
     }
     return a;
@@ -237,7 +256,7 @@ function summarise(d, v, rankLimit = 12, choices = new Map(patternChoices(d))) {
 function groupedSummary(d, v) {
   const text = d.kind === "text",
     key = v.groupBy,
-    mode = v.patternMode || patternModes(text)[0][0];
+    mode = v.patternMode || patternModes(text, !!d.openAnswers)[0][0];
   const label = new Map(groupChoices(d, v.items)).get(key);
   if (!label)
     throw Error(
@@ -282,7 +301,9 @@ function groupedSummary(d, v) {
   const question = themes
     ? byPassage
       ? "Which themes occur in each group’s passages?"
-      : "Which themes occur in each group’s interviews?"
+      : d.openAnswers
+        ? "Which themes do respondents in each group mention?"
+        : "Which themes occur in each group’s interviews?"
     : pooled.title;
   const a = {
     ...pooled,
@@ -337,19 +358,27 @@ function groupedSummary(d, v) {
   a.unit = themes
     ? byPassage
       ? "% of passages within each group"
-      : "% of interviews within each group"
+      : d.openAnswers
+        ? "% of respondents who wrote an answer within each group"
+        : "% of interviews within each group"
     : mode === "separate"
       ? "% answering each question within each group"
       : mode === "passages"
         ? "% of passages within each group"
         : mode === "interviews"
-          ? "% of interviews within each group"
+          ? d.openAnswers
+            ? "% of respondents who wrote an answer within each group"
+            : "% of interviews within each group"
           : "% answering all selected questions within each group";
   a.note =
     (themes
       ? a.unit +
         ". Each theme is counted once per " +
-        (byPassage ? "passage." : "interview.") +
+        (byPassage
+          ? "passage."
+          : d.openAnswers
+            ? "respondent."
+            : "interview.") +
         " "
       : "") +
     pooled.note +
@@ -357,8 +386,12 @@ function groupedSummary(d, v) {
     omitted +
     (text
       ? omitted === 1
-        ? " interview"
-        : " interviews"
+        ? d.openAnswers
+          ? " respondent"
+          : " interview"
+        : d.openAnswers
+          ? " respondents"
+          : " interviews"
       : omitted === 1
         ? " record"
         : " records") +

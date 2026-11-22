@@ -28,6 +28,7 @@ function wording(value) {
 }
 
 export function applyAnswerLabels(table, field, entries) {
+  if (field.roles?.includes("open")) return false;
   const lookup = new Map(entries);
   const values = new Set(
     table.rows.map((row) => row[field.id]).filter(Boolean),

@@ -1,3 +1,4 @@
+import { writtenAnswerSet, isOpenQuestion } from "./open-answers.js";
 import { confirmedRoles, editRoles } from "./variable-roles.js";
 import { termHelp, bindTermHelp, termMeaning } from "./term-help.js";
 import "./style.css";
@@ -25,7 +26,7 @@ import {
 import { labelledSurvey } from "./survey-labels.js";
 import { isDocked, toggleDock, layoutBot } from "./bot-panel.js";
 import { combineTables } from "./combine.js";
-import { uid, filteredRows, corpus, texts } from "./import.js";
+import { uid, filteredRows } from "./import.js";
 import { importFiles } from "./import-ui.js";
 import {
   fresh,
@@ -105,6 +106,7 @@ function focusBot(target) {
 }
 const focusIndex = () => (step === 3 && botFocus === "right" ? 1 : 0);
 function viewName(d, v) {
+  if (v.task === "themes") return "Themes in written answers";
   const name = (id) => d.fields?.find((f) => f.id === id)?.label || id;
   if (v.task === "patterns")
     return (
@@ -301,13 +303,26 @@ function render() {
             : "Choose question roles",
         )
       : "";
+  const openFields = d?.fields?.filter(isOpenQuestion) || [];
+  const openRoute = openFields.length
+    ? `<section class="card"><h2>Written survey answers</h2><p>Read the answers in respondents’ own words, label recurring themes, then compare themes across respondents. This uses the survey records included in Check.</p>${formselect(
+        "open-question",
+        "Open question",
+        openFields.map((f) => [f.id, f.label]),
+        project.views[0]?.x,
+      )}<div class="bar">${b("openanswers", "Read and code answers")}</div></section>`
+    : "";
+  const coverage = d?.openAnswers;
+  const coverageNote = coverage
+    ? `<p class="review"><strong>${esc(coverage.question)}</strong><br>${coverage.answered} of ${coverage.eligible} included respondents wrote an answer. ${coverage.eligible - coverage.answered} had no recorded answer. Theme comparisons use respondents who wrote an answer.</p>`
+    : "";
   let content = step === 0 ? landing(!!localStorage.getItem("dv-project")) : "";
   if (step !== 0 && d) {
-    content = `<div class="hero"><h1>${headers[step]}</h1></div>${datasetSelect(project)}`;
+    content = `<div class="hero"><h1>${headers[step]}</h1></div>${datasetSelect(project)}${coverageNote}`;
     if (step === 1)
-      content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (d.kind === "text" ? "coded" : "table") + '"')}</div>${check(d)}${roleButton ? `<section class="card"><h2>Which questions help answer your research question?</h2><p>Identify the outcome, groups and possible explanations. You can ask the bot for suggestions.</p>${roleButton}</section>` : ""}<div class="bar">${b("confirm", "Confirm and explore", "primary")}</div>`;
+      content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (d.kind === "text" ? "coded" : "table") + '"')}</div>${check(d)}${roleButton ? `<section class="card"><h2>Which questions help answer your research question?</h2><p>Identify the outcome, groups and possible explanations. Mark questions with written answers too.</p>${roleButton}</section>` : ""}${openRoute}<div class="bar">${b("confirm", "Confirm and explore", "primary")}</div>`;
     else if (step === 2 || step === 3)
-      content += `<div class="bar">${step === 2 ? b("compare", "Compare two views", "primary") : b("savecompare", "Save comparison", "primary")}${step === 2 ? b("choose", icon("bot") + " Suggest a chart") : b("askboth", icon("bot") + " Compare findings")}${roleButton}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
+      content += `${step === 2 ? openRoute : ""}<div class="bar">${step === 2 ? b("compare", "Compare two views", "primary") : b("savecompare", "Save comparison", "primary")}${step === 2 ? b("choose", icon("bot") + " Suggest a chart") : b("askboth", icon("bot") + " Compare findings")}${roleButton}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
         .slice(0, step === 3 ? 2 : 1)
         .map((v, i) =>
           panel(
@@ -475,13 +490,32 @@ function tidy(v, key) {
   const d = getData(),
     fs =
       d.fields?.filter((f) => f.type !== "metadata" && f.levels.length) || [];
+  if (
+    key === "task" &&
+    d.kind === "table" &&
+    ["group", "two"].includes(v.task) &&
+    isOpenQuestion(fs.find((f) => f.id === v.x))
+  ) {
+    v.x = fs.find((f) => !isOpenQuestion(f))?.id;
+  }
+  if (key === "task" && v.task === "themes") {
+    Object.assign(v, {
+      x: "",
+      y: "",
+      chart: "bars",
+      measure: "sources",
+      title: "",
+      annotation: "",
+    });
+    return;
+  }
   if (key === "task" && v.task === "patterns") {
     const choices = patternChoices(d).map(([id]) => id);
     v.items = Array.isArray(v.items)
       ? v.items.filter((id) => choices.includes(id))
       : [...new Set([v.x, v.y].filter((id) => choices.includes(id)))];
     if (!v.items.length && choices.length) v.items = [choices[0]];
-    v.patternMode ||= patternModes(d.kind === "text")[0][0];
+    v.patternMode ||= patternModes(d.kind === "text", !!d.openAnswers)[0][0];
     v.chart = available(d, v)[0];
     return;
   }
@@ -514,7 +548,7 @@ function tidy(v, key) {
                     f.id !== v.x &&
                     f.levels.length > 1 &&
                     ["category", "ordered"].includes(f.type),
-                ) || fs.find((f) => f.id !== v.x)
+                ) || fs.find((f) => f.id !== v.x && !isOpenQuestion(f))
               )?.id;
     }
   }
@@ -541,7 +575,7 @@ function tidy(v, key) {
                 f.id !== v.x &&
                 f.levels.length > 1 &&
                 ["category", "ordered"].includes(f.type),
-            ) || fs.find((f) => f.id !== v.x)
+            ) || fs.find((f) => f.id !== v.x && !isOpenQuestion(f))
           )?.id;
 }
 function goto(i) {
@@ -665,8 +699,11 @@ function botContext(question = "") {
     pastProjectWork: previousWork(tutorRecord(project), question),
     stage: steps[step],
     dataset: d.name,
-    datasetKind:
-      d.kind === "text" ? "coded interviews or documents" : "survey or table",
+    datasetKind: d.openAnswers
+      ? "coded written survey answers"
+      : d.kind === "text"
+        ? "coded interviews or documents"
+        : "survey or table",
     unit: d.unit,
   };
   if (step <= 1)
@@ -742,7 +779,7 @@ function botContext(question = "") {
     patternOptions:
       (d.kind === "text" ? allCodes(d).length : d.fields.length) > 0
         ? {
-            modes: patternModes(d.kind === "text"),
+            modes: patternModes(d.kind === "text", !!d.openAnswers),
             groupingFields: groupChoices(d),
             selectable: patternChoices(d).map(([id]) => id),
             maximum: selectionLimit,
@@ -787,7 +824,7 @@ function proposedChart(pick) {
     return candidate(view);
   }
   if (pick.task === "patterns") {
-    const modes = patternModes(text),
+    const modes = patternModes(text, !!d.openAnswers),
       choices = new Map(patternChoices(d));
     const supplied =
       pick.items ?? (current.task === "patterns" ? current.items : undefined);
@@ -1220,7 +1257,7 @@ async function ask(question, skill, intent = "") {
         items: selectedItems,
         patternMode: inPatterns
           ? current.patternMode
-          : patternModes(dataset.kind === "text")[0][0],
+          : patternModes(dataset.kind === "text", !!dataset.openAnswers)[0][0],
       }
     : skill === "recommend" &&
       !intent &&
@@ -1689,6 +1726,10 @@ async function reviewAction(act, d, el) {
           f.levels.some((l) => !list.includes(l))
         )
           throw Error("Keep observed categories in the ordered list.");
+        if (isOpenQuestion(f) && val("ftype") !== "text") {
+          f.roles = f.roles.filter((r) => r !== "open");
+          delete f.typeBeforeOpen;
+        }
         Object.assign(f, {
           label: val("flabel"),
           type: val("ftype"),
@@ -1776,33 +1817,7 @@ async function reviewAction(act, d, el) {
       () => {
         const key = val("textcol"),
           id = val("idcol");
-        const entries = d.rows
-          .map((r, i) => ({ r, source: id ? r[id] : "Record " + (i + 1) }))
-          .filter(({ r }) =>
-            (d.rules || []).every((rule) => r[rule.field] !== rule.value),
-          );
-        const ids = entries.map((entry) => entry.source);
-        if (ids.some((x) => !x) || new Set(ids).size !== ids.length)
-          throw Error(
-            "Choose a unique, complete identifier or use row numbers.",
-          );
-        const passages = [],
-          meta = {};
-        entries.forEach(({ r }, i) => {
-          if (r[key]) passages.push(...texts(ids[i], [r[key]]));
-          meta[ids[i]] = Object.fromEntries(
-            fields
-              .filter((f) => f.id !== key && f.type !== "metadata")
-              .map((f) => [f.label, r[f.id]]),
-          );
-        });
-        const c = corpus(
-          d.name + " · " + fields.find((f) => f.id === key).label,
-          passages,
-          ids,
-        );
-        c.metadata = meta;
-        project.datasets.push(c);
+        const c = writtenAnswerSet(project, d, key, id, false);
         activate(c.id);
         goto(1);
       },
@@ -1964,7 +1979,9 @@ function patternEvidence(i, index) {
       interviews.size +
       " of " +
       sources.length +
-      " interviews contained this theme.</p>";
+      (d.openAnswers
+        ? " respondents mentioned this theme.</p>"
+        : " interviews contained this theme.</p>");
   } else if (v.patternMode === "interviews") {
     const bySource = new Map(sources.map((s) => [s, new Set()]));
     for (const p of passages)
@@ -1977,14 +1994,19 @@ function patternEvidence(i, index) {
         (!cell.keyParts.length ||
           p.codes.some((c) => cell.keyParts.includes(c))),
     );
-    note = "<p>Matching interviews: " + esc(matches.join(", ")) + ".</p>";
+    note =
+      (d.openAnswers
+        ? "<p>Matching respondents: "
+        : "<p>Matching interviews: ") +
+      esc(matches.join(", ")) +
+      ".</p>";
   } else included = passages.filter((p) => same(new Set(p.codes)));
   modal(
     "Passages behind this pattern",
     note +
       `<p>Showing ${Math.min(200, included.length)} of ${included.length} matching passages.</p>` +
       table(
-        ["Interview", "Passage", "Codes"],
+        [d.openAnswers ? "Respondent" : "Interview", "Passage", "Codes"],
         included
           .slice(0, 200)
           .map((p) => [p.source, p.text, p.codes.join(" · ")]),
@@ -2073,8 +2095,11 @@ function evidence(i, match) {
     );
   }
   modal(
-    "Read and code passages",
-    `<label>Find a passage<input id="searchPass"></label><div id="passlist">${list()}</div><div class="bar"><button type="button" id="shortpass">Use highlighted words as a passage</button><button type="button" id="discusspass" data-i="${i}">Discuss selected passages</button></div><label>Code to apply<input id="applycode" list="knowncodes"></label><datalist id="knowncodes">${opts(allCodes(d), "")}</datalist>${codingControls(d)}`,
+    d.openAnswers ? "Read and code written answers" : "Read and code passages",
+    (d.openAnswers
+      ? `<p>${d.openAnswers.answered} of ${d.openAnswers.eligible} included respondents answered. Select an answer, give the idea a short label, or ask the bot to suggest labels for your selection.</p>`
+      : "") +
+      `<label>Find a passage<input id="searchPass"></label><div id="passlist">${list()}</div><div class="bar"><button type="button" id="shortpass">Use highlighted words as a passage</button><button type="button" id="discusspass" data-i="${i}">Discuss selected passages</button></div><label>Code to apply<input id="applycode" list="knowncodes"></label><datalist id="knowncodes">${opts(allCodes(d), "")}</datalist>${codingControls(d)}`,
     () => {
       if (!selected.size) throw Error("Choose one or more passages.");
       const code = val("applycode").trim();
@@ -2211,6 +2236,18 @@ async function action(act, el) {
     i = Number(el.dataset.i || 0);
   if (reviewActs.includes(act)) return reviewAction(act, d, el);
   switch (act) {
+    case "openanswers": {
+      const key = val("open-question");
+      if (!isOpenQuestion(d.fields.find((f) => f.id === key)))
+        throw Error("Choose a confirmed open question.");
+      const answers = writtenAnswerSet(project, d, key, "", true);
+      activate(answers.id);
+      if (!project.confirmed.includes(answers.id))
+        project.confirmed.push(answers.id);
+      goto(2);
+      evidence(0);
+      return;
+    }
     case "variables":
       editRoles(
         d,

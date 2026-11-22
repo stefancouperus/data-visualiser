@@ -54,7 +54,11 @@ export function researchCatalogue(d, view, focus, question, keepItems) {
           Array.isArray(f.roles) && f.roles.length && f.type !== "metadata",
       )
       .map(({ id, roles }) => ({ id, roles })),
-    datasetKind: text ? "interviews" : "survey or table",
+    datasetKind: d.openAnswers
+      ? "written survey answers"
+      : text
+        ? "interviews"
+        : "survey or table",
     questions: text ? undefined : chartFields(d.fields, focus + " " + question),
     themes: text
       ? choices.map(([label]) => ({
@@ -79,7 +83,7 @@ export function researchCatalogue(d, view, focus, question, keepItems) {
 // a supported chart before offering it to the student.
 export function researchChart(pick, c) {
   const group = pick.groupBy || "";
-  const text = c.datasetKind === "interviews";
+  const text = ["interviews", "written survey answers"].includes(c.datasetKind);
   // A survey grouping column has its own role even when also listed as an item.
   const items =
     !text && group && Array.isArray(pick.items)

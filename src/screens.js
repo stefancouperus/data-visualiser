@@ -66,6 +66,7 @@ export function check(d) {
   )}${"<details><summary>Seeing question codes or numbers instead of answer text?</summary><p>Use a Qualtrics export with choice text, or add the questionnaire (.qsf) that belongs to this export.</p>" + b("surveylabels", "Add questionnaire labels") + "</details>"}<details><summary>Review fields and import settings</summary>${d.fields.map((f) => `<details class="check-item"><summary>${esc(f.label)} <small> · ${esc(f.type)}</small></summary><p>Original column: ${esc(f.raw)}. Example values: ${esc(f.levels.slice(0, 5).join(" · "))}</p>${b("field", "Edit field", "", 'data-field="' + f.id + '"')}</details>`).join("")}<div class="bar">${b("combinetables", "Combine with another table")}${b("exclude", "Exclude records by value")}${b("multi", "Group multiple-answer columns")}${b("tocorpus", "Use a column as written responses")}</div>${d.rules.map((r, i) => `<p>Exclude ${esc(d.fields.find((f) => f.id === r.field)?.label)} = ${esc(r.value)} ${b("delrule", "Remove", "plain", 'data-i="' + i + '"')}</p>`).join("")}</details></section>`;
 }
 export function available(d, v) {
+  if (d.openAnswers && v.task === "themes") return ["bars", "dots", "table"];
   if (v.task === "patterns")
     return d.kind === "text" && v.patternMode === "sources" && !v.groupBy
       ? ["grid", "bars", "table"]
@@ -116,7 +117,7 @@ function patternPicker(d, v, i, staged) {
           "themeUnit",
           "Count a theme once per",
           [
-            ["interviews", "Interview"],
+            ["interviews", d.openAnswers ? "Respondent" : "Interview"],
             ["passages", "Passage"],
           ],
           v.themeUnit || "interviews",
@@ -128,6 +129,7 @@ function patternPicker(d, v, i, staged) {
     <div class="item-list">${choices.map(([id, label]) => `<label class="tick"><input type="checkbox" data-item="${esc(id)}" ${items.includes(id) ? "checked" : items.length >= selectionLimit || (!text && id === v.groupBy) ? "disabled" : ""}>${esc(label)}</label>`).join("")}</div>
     </fieldset><fieldset class="pattern-mode"><legend>What would you like the figure to show?</legend>${patternModes(
       text,
+      !!d.openAnswers,
     )
       .map(
         ([mode, label]) =>
@@ -135,7 +137,7 @@ function patternPicker(d, v, i, staged) {
       )
       .join(
         "",
-      )}</fieldset>${grouping}<small>${text ? "Interviews that share the same recorded detail form a group." : "Each answer in the column you choose forms a group."} Choose “Everyone together” to skip this split.</small>${termHelp("group", d, v)}${text ? b("addgroups", "Add interview groups", "plain", 'data-i="' + i + '"') : ""}${units}</div>`;
+      )}</fieldset>${grouping}<small>${d.openAnswers ? "Respondents who share the selected survey answer form a group." : text ? "Interviews that share the same recorded detail form a group." : "Each answer in the column you choose forms a group."} Choose “Everyone together” to skip this split.</small>${termHelp("group", d, v)}${text ? b("addgroups", d.openAnswers ? "Edit respondent groups" : "Add interview groups", "plain", 'data-i="' + i + '"') : ""}${units}</div>`;
 }
 const chartLabels = {
   bars: "Bars",
@@ -162,7 +164,11 @@ function selectionControls(d, v, i, staged) {
             f.type !== "metadata" &&
             (f.levels.length || [v.x, v.y, v.outcome].includes(f.id)),
         ),
-    choices = roleChoices(fields, "outcome"),
+    closedFields = fields.filter((f) => !f.roles?.includes("open")),
+    choices = roleChoices(
+      v.task === "two" || v.task === "group" ? closedFields : fields,
+      "outcome",
+    ),
     codes = text ? allCodes(d) : [];
   const modelFields = fields.filter(
     (f) =>
@@ -171,7 +177,17 @@ function selectionControls(d, v, i, staged) {
   );
   const tasks = text
     ? [
-        ["one", codes.length ? "Find a theme" : "Read interview passages"],
+        [
+          "one",
+          codes.length
+            ? "Find a theme"
+            : d.openAnswers
+              ? "Read written answers"
+              : "Read interview passages",
+        ],
+        ...(d.openAnswers && codes.length
+          ? [["themes", "Compare themes across answers"]]
+          : []),
         ...(codes.length
           ? [
               [
@@ -182,7 +198,14 @@ function selectionControls(d, v, i, staged) {
               ],
             ]
           : []),
-        ...(codes.length ? [["group", "Compare interviews"]] : []),
+        ...(codes.length
+          ? [
+              [
+                "group",
+                d.openAnswers ? "Compare respondents" : "Compare interviews",
+              ],
+            ]
+          : []),
         ...(codes.length > 1 ? [["two", "Find overlapping themes"]] : []),
       ]
     : [
@@ -190,13 +213,13 @@ function selectionControls(d, v, i, staged) {
         ...(patternChoices(d).length > 1
           ? [["patterns", "Look across several questions"]]
           : []),
-        ...(choices.length > 1
+        ...(closedFields.length > 1
           ? [
               ["group", "Compare groups"],
               ["two", "Connect two questions"],
             ]
           : []),
-        ...(modelFields.length && choices.length > 1
+        ...(modelFields.length && closedFields.length > 1
           ? [["model", "Explore several factors"]]
           : []),
       ];
@@ -211,7 +234,7 @@ function selectionControls(d, v, i, staged) {
             v.outcome,
           )
         : text
-          ? v.task === "group"
+          ? ["group", "themes"].includes(v.task)
             ? ""
             : select(
                 "x",
@@ -241,7 +264,9 @@ function selectionControls(d, v, i, staged) {
           text
             ? codes.filter((c) => c !== v.x)
             : roleChoices(
-                fields.filter((f) => f.id !== v.x),
+                fields.filter(
+                  (f) => f.id !== v.x && !f.roles?.includes("open"),
+                ),
                 v.task === "group" ? "grouping" : "explanatory",
               ),
           v.y,
@@ -290,7 +315,12 @@ export function panel(
     choices = text
       ? []
       : d.fields
-          .filter((f) => f.type !== "metadata" && f.levels.length)
+          .filter(
+            (f) =>
+              f.type !== "metadata" &&
+              !f.roles?.includes("open") &&
+              f.levels.length,
+          )
           .map((f) => [f.id, f.label]);
   const options = available(d, v);
   if (!options.includes(v.chart)) v.chart = options[0];
@@ -328,20 +358,30 @@ export function panel(
          ],
          v.measure,
        )
-     : text &&
-         v.task !== "patterns" &&
-         v.task !== "group" &&
-         v.chart !== "excerpts"
+     : d.openAnswers && v.task === "themes"
        ? select(
            "measure",
-           "Count",
+           "Show",
            [
-             ["passages", "Coded passages"],
-             ["sources", "Sources containing the code"],
+             ["sources", "Number of respondents"],
+             ["percent", "Percent of respondents who wrote an answer"],
            ],
            v.measure,
          )
-       : ""
+       : text &&
+           v.task !== "patterns" &&
+           v.task !== "group" &&
+           v.chart !== "excerpts"
+         ? select(
+             "measure",
+             "Count",
+             [
+               ["passages", "Coded passages"],
+               ["sources", "Sources containing the code"],
+             ],
+             v.measure,
+           )
+         : ""
  }
  ${v.chart === "scatter" || v.chart === "line" ? select("z", "Colour by", [["", "One series"], ...choices.filter(([k]) => k !== v.x && k !== v.y)], v.z) : ""}
  </div><details data-chart-options="${i}-appearance"><summary>Filters and appearance</summary>${termHelp("filter", d, v)}<div class="formgrid">${select("filter", "Keep a subset", [["", "All records"], ...(text ? [["source", "Source"], ...meta] : choices)], v.filter)}${
@@ -360,7 +400,7 @@ export function panel(
    v.palette,
  )}${v.chart === "excerpts" ? input("query", "Find text", v.query) : ""}</div>${b("resetview", "Reset this view", "plain", 'data-i="' + i + '"')}</details>
  </details>
- <div class="bar">${b("askview", icon("bot") + " Explain this view", "", 'data-i="' + i + '"')}${text ? b("passages", "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></section>`;
+ <div class="bar">${b("askview", icon("bot") + " Explain this view", "", 'data-i="' + i + '"')}${text ? b("passages", d.openAnswers ? "Read and code written answers" : "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></section>`;
 }
 export function saveScreen(p) {
   return `<div class="card"><h2>Save your project</h2><p>Keep your data, codes, figures, comparisons and bot activity together in one file. To continue on any laptop, choose <strong>Open a saved project</strong> on the start screen.</p><label class="tick"><input id="includeBotChat" type="checkbox" ${p.includeBotChat ? "checked" : ""}>Include full Data bot conversations</label><small>Includes your questions, replies and any text quoted in them.</small><div class="bar">${b("download", "Download project with data", "primary")}</div><details><summary>Other save options</summary><div class="bar">${b("device", "Save on this device")}${b("settings", "Download settings only")}</div><small>A settings-only file requires matching datasets to be imported first.</small></details></div><div class="card"><h2>Saved visuals</h2>${p.savedVisuals.length ? p.savedVisuals.map((s, i) => `<div class="topline check-item"><div><strong>${esc(s.name)}</strong><small>${esc(p.datasets.find((d) => d.id === s.dataset)?.name || "")}</small></div>${b("loadvisual", "Open visual", "", 'data-i="' + i + '"')}</div>`).join("") : "<p>Choose Save visual beside a figure to keep it here.</p>"}</div><div class="card"><h2>Saved comparisons</h2><div class="bar">${b("savecompare", "Save current comparison")}</div>${p.saved.length ? p.saved.map((s, i) => `<div class="topline check-item"><div><strong>${esc(s.name)}</strong><p>${esc(s.note)}</p></div><div>${b("loadcomp", "Open", "", 'data-i="' + i + '"')} ${b("dupcomp", "Duplicate", "", 'data-i="' + i + '"')}</div></div>`).join("") : "<p>Your saved comparisons will appear here.</p>"}</div><div class="card"><h2>Export a figure</h2><div class="formgrid">${form(

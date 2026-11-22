@@ -12,15 +12,19 @@ export function termMeaning(term, d, view = {}) {
     return "A filter chooses which records go into this view. Comparing groups keeps several sets of records in the chart so you can see their results side by side. Filtering to one value shows just the records with that value. Your original data stay in the project.";
   if (term === "percent")
     return "A percentage tells you how many out of every 100. For example, 3 out of 10 is 30%. When you compare groups, each percentage uses the total that counts for that group and question. Check what the chart counts and how many observations the percentage is based on.";
+  if (term === "theme" && d?.openAnswers)
+    return "A code is a short label for an idea in a written answer. One respondent can mention several themes. Select a whole answer or highlight a passage to code it.";
   if (term === "theme")
     return "A passage is a piece of text you selected from an interview or document. A code is a short label you give that passage to mark an idea or theme. One interview can contain several passages with the same code.";
   const text = d?.kind === "text";
   const survey = !d || d.unit === "response";
-  const meaning = text
-    ? "A group is a smaller set of interviews that share something you recorded about them. Choose a detail recorded for each interview, then compare how often a theme appears across the groups. One interview can mention a theme several times."
-    : survey
-      ? "Start with everyone who answered your survey. Choose one question to split respondents into smaller groups. People who gave the same answer form one group. You can then compare how those groups answered a different question."
-      : "Start with the rows in your table. Choose one column to split them into smaller groups. Rows with the same value form one group. You can then compare another column across those groups.";
+  const meaning = d?.openAnswers
+    ? "Respondents who gave the same answer to another survey question form a group. Compare how often each group mentioned a theme in their written answers."
+    : text
+      ? "A group is a smaller set of interviews that share something you recorded about them. Choose a detail recorded for each interview, then compare how often a theme appears across the groups. One interview can mention a theme several times."
+      : survey
+        ? "Start with everyone who answered your survey. Choose one question to split respondents into smaller groups. People who gave the same answer form one group. You can then compare how those groups answered a different question."
+        : "Start with the rows in your table. Choose one column to split them into smaller groups. Rows with the same value form one group. You can then compare another column across those groups.";
   const key =
     view.task === "patterns"
       ? view.groupBy
