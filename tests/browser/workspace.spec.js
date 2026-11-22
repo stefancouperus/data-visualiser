@@ -1214,7 +1214,10 @@ for (const text of [false, true]) {
               action: "suggest",
               items: [text ? "Late bus" : "c1"],
               groupBy: invalid ? "Fabricated" : text ? "Shift" : "c2",
-              explanation: "Compare travel reliability across shifts.",
+              patternMode: "separate",
+              explanation: text
+                ? "Compare travel reliability across shifts."
+                : "Compare bus punctuality (c1) across shifts (c2).",
             }),
           },
         });
@@ -1251,6 +1254,7 @@ for (const text of [false, true]) {
       await btn("Suggest what to explore").click();
       await expect(btn("Make this chart")).toBeVisible();
       expect(context.projectFocus).toBe(focus);
+      await expect(page.locator(".chatlog")).not.toContainText("(c1)");
       expect(JSON.stringify(context)).not.toContain("Private passage");
       await expect(page.locator(".chatlog")).toContainText(
         (text ? "Late bus" : "Bus punctuality") + " by Shift",

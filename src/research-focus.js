@@ -56,6 +56,9 @@ export function researchCatalogue(d, view, focus, question, keepItems) {
         }))
       : undefined,
     selectableForPatterns: choices.map(([id]) => id),
+    allowedModes: text
+      ? ["sources", "passages", "interviews"]
+      : ["separate", "together"],
     groupingFields,
     selectionToKeep: selected,
     groupRequested: keepItems,
@@ -108,7 +111,10 @@ export function researchChart(pick, c) {
       chart: items.length === 1 ? "hist" : "scatter",
     };
   if (!items.every((id) => c.selectableForPatterns.includes(id))) return null;
-  const mode = pick.patternMode || (text ? "sources" : "separate");
+  const mode =
+    text && pick.patternMode === "separate"
+      ? "sources"
+      : pick.patternMode || (text ? "sources" : "separate");
   if (
     !(
       text ? ["sources", "interviews", "passages"] : ["separate", "together"]
@@ -123,4 +129,16 @@ export function researchChart(pick, c) {
     themeUnit: "interviews",
     chart: text && !group && mode === "sources" ? "grid" : "bars",
   };
+}
+
+export function researchExplanation(sentence, catalogue) {
+  const names = new Map((catalogue.questions || []).map((f) => [f.id, f.name]));
+  return sentence.replace(
+    / ?\((c\d+)\)|\b(c\d+)\b/gi,
+    (match, parenthetical, standalone) => {
+      const label = names.get((parenthetical || standalone).toLowerCase());
+      if (!label) return match;
+      return parenthetical ? "" : label;
+    },
+  );
 }

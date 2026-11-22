@@ -46,6 +46,7 @@ import {
   readFocus,
   researchCatalogue,
   researchChart,
+  researchExplanation,
 } from "./research-focus.js";
 import { asksForGroupSuggestion } from "./group-suggestions.js";
 import { fitModel } from "./model.js";
@@ -1345,14 +1346,23 @@ async function ask(question, skill, intent = "") {
           typeof pick.explanation === "string" &&
           pick.explanation.trim()
         ) {
-          message = pick.explanation;
+          message = researchExplanation(pick.explanation, context);
         } else {
           const spec = researchChart(pick, context);
           const candidate = spec && proposedChart(spec);
           if (candidate) {
             proposal = candidate;
             message =
-              viewName(dataset, candidate.view) + "\n" + pick.explanation;
+              viewName(dataset, candidate.view) +
+              "\n" +
+              researchExplanation(pick.explanation, context);
+            if (
+              dataset.kind === "text" &&
+              spec.groupBy &&
+              spec.patternMode === "sources"
+            )
+              message +=
+                "\nThe chart shows the share of interviews in each group carrying each theme. Repeated mentions in one interview count once.";
           } else {
             message =
               "I couldn’t match that suggestion to an available comparison. Which part of your research question would you like to explore first?";
