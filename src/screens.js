@@ -3,7 +3,12 @@ import { esc } from "./chart.js";
 import { button as b, opts, select, input, table, icon, pict } from "./ui.js";
 import { kinds, allCodes } from "./analysis.js";
 import { dataCount } from "./project.js";
-import { patternChoices, patternModes, selectionLimit } from "./patterns.js";
+import {
+  groupChoices,
+  patternChoices,
+  patternModes,
+  selectionLimit,
+} from "./patterns.js";
 export function landing(local) {
   return `<div class="hero"><h1>Data visualiser</h1><p>visualising and interpreting your survey or interview data</p></div><section class="project-open" id="project-drop" aria-label="Open a saved project"><div>${b("open", icon("project") + " Open a saved project")} ${local ? b("deviceOpen", "Resume on this device", "plain") : ""}</div><small>Choose your downloaded project (.json), or drop it here.</small></section><div class="choices">${b("upload", pict("survey") + "<strong>I have a Qualtrics export</strong><small>Read survey questions, scales and responses.</small>", "choice", 'data-route="survey"')}${b("upload", pict("text") + "<strong>I have coded interviews</strong><small>Import Word, Excel or Taguette highlights.</small>", "choice", 'data-route="coded"')}</div><h2 class="section">Other ways to start</h2><div class="list">${[
     ["table", "table", "Table or spreadsheet", "CSV, TSV or Excel"],
@@ -60,7 +65,7 @@ export function check(d) {
 }
 export function available(d, v) {
   if (v.task === "patterns")
-    return d.kind === "text" && v.patternMode === "sources"
+    return d.kind === "text" && v.patternMode === "sources" && !v.groupBy
       ? ["grid", "bars", "table"]
       : ["bars", "dots", "table"];
   if (v.task === "model") return ["model"];
@@ -87,18 +92,39 @@ function patternPicker(d, v, i) {
     items = v.items || [],
     choices = patternChoices(d);
   const noun = text ? "themes" : "questions";
+  const groups = groupChoices(d, items);
+  const grouping = select(
+    "groupBy",
+    "Compare by group",
+    [["", "Everyone together"], ...groups],
+    v.groupBy || "",
+  );
+  const units =
+    text && v.groupBy && v.patternMode === "sources"
+      ? select(
+          "themeUnit",
+          "Count a theme once per",
+          [
+            ["interviews", "Interview"],
+            ["passages", "Passage"],
+          ],
+          v.themeUnit || "interviews",
+        )
+      : "";
   return `<div class="pattern-setup"><fieldset class="pick-items"><legend>Tick the ${noun} you want to see together</legend>
     <small>${items.length} of ${selectionLimit} selected. ${items.length === 1 ? "Tick another to see a pattern across them." : "The figure updates as you tick."}</small>
     ${choices.length > 8 ? `<input type="search" aria-label="Find ${noun}" data-find-items="${i}" placeholder="Find ${noun}…">` : ""}
-    <div class="item-list">${choices.map(([id, label]) => `<label class="tick"><input type="checkbox" data-item="${esc(id)}" ${items.includes(id) ? "checked" : items.length >= selectionLimit ? "disabled" : ""}>${esc(label)}</label>`).join("")}</div>
+    <div class="item-list">${choices.map(([id, label]) => `<label class="tick"><input type="checkbox" data-item="${esc(id)}" ${items.includes(id) ? "checked" : items.length >= selectionLimit || (!text && id === v.groupBy) ? "disabled" : ""}>${esc(label)}</label>`).join("")}</div>
     </fieldset><fieldset class="pattern-mode"><legend>What would you like the figure to show?</legend>${patternModes(
       text,
     )
       .map(
         ([mode, label]) =>
-          `<label class="tick"><input type="radio" name="pattern-mode-${i}" data-key="patternMode" value="${mode}" ${mode === v.patternMode ? "checked" : ""}>${esc(label)}</label>`,
+          `<label class="tick"><input type="radio" name="pattern-mode-${i}" data-key="patternMode" value="${mode}" ${mode === v.patternMode ? "checked" : ""}>${esc(text && v.groupBy && mode === "sources" ? "How common is each theme in each group?" : label)}</label>`,
       )
-      .join("")}</fieldset></div>`;
+      .join(
+        "",
+      )}</fieldset>${grouping}${text ? b("addgroups", "Add interview groups", "plain", 'data-i="' + i + '"') : ""}${units}</div>`;
 }
 const chartLabels = {
   bars: "Bars",
@@ -135,8 +161,15 @@ export function panel(d, v, i, comparing = false) {
   const tasks = text
     ? [
         ["one", codes.length ? "Find a theme" : "Read interview passages"],
-        ...(codes.length > 1
-          ? [["patterns", "Look across several themes"]]
+        ...(codes.length
+          ? [
+              [
+                "patterns",
+                codes.length > 1
+                  ? "Look across several themes"
+                  : "Compare a theme by group",
+              ],
+            ]
           : []),
         ...(codes.length ? [["group", "Compare interviews"]] : []),
         ...(codes.length > 1 ? [["two", "Find overlapping themes"]] : []),

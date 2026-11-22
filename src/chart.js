@@ -176,7 +176,11 @@ export function figure(a, v, { width = 700 } = {}) {
       const names = namedQuestions
         ? r.parts.map((p, j) => j + 1 + ". " + p)
         : r.parts;
-      const label = ranked ? names.join("   ·   ") : r.label;
+      const label = a.groupLabel
+        ? r.groupValue
+        : ranked
+          ? names.join("   ·   ")
+          : r.label;
       const amount = r.undefinedShare
         ? "No answers"
         : a.unit.startsWith("%")
@@ -215,7 +219,10 @@ export function figure(a, v, { width = 700 } = {}) {
         .attr("data-pattern-row", index)
         .attr("role", "button")
         .attr("tabindex", 0)
-        .attr("aria-label", "Read evidence: " + label)
+        .attr(
+          "aria-label",
+          "Read evidence: " + (a.groupLabel ? r.group + " · " : "") + label,
+        )
         .attr("cursor", "pointer")
         .append("title")
         .text("Read the evidence for " + label);

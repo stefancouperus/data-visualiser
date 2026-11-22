@@ -234,3 +234,92 @@ export function patternRequest(question, text, choices, current) {
     result.items = current.items;
   return result;
 }
+
+// Resolve an explicit grouping separately from the questions or codes to count.
+export function groupingRequest(question, groups, current, text) {
+  const q = question.trim().replace(/[?!.]+$/, "");
+  if (
+    /\b(?:why|caus\w*|only|excluding|except|adjust|control for|instead of)\b/i.test(
+      q,
+    )
+  )
+    return null;
+  const generic =
+    current?.task === "patterns" &&
+    /^(?:(?:do|are|can you compare) )?(?:these|the selected) (?:themes|patterns|answers) (?:come up more|appear more often|differ|vary|more common|by group)(?: in one group(?: of interviewees| of respondents)?(?: than (?:another|the other))?| between groups| across groups)?$/i.test(
+      q,
+    );
+  if (generic) {
+    const group =
+      groups.find(([id]) => id === current.groupBy) ||
+      (groups.length === 1 && groups[0]);
+    return {
+      reuse: true,
+      before: q,
+      groupBy: group?.[0],
+      clarification: group
+        ? ""
+        : groups.length
+          ? "Which grouping should I use? " +
+            groups.map(([, s]) => s).join(", ") +
+            "."
+          : text
+            ? "Choose Add interview groups and enter a group for each interview first."
+            : "Add a separate grouping column to compare the selected questions.",
+    };
+  }
+  const match = q.match(
+    /\s+(?:by|according to|across(?: different)?)\s+(?:their |the )?(.+?)$/i,
+  );
+  if (
+    !match ||
+    !(
+      current?.task === "patterns" ||
+      /\b(?:patterns?|themes?|same (?:three |two )?questions|these questions|same people|combinations)\b/i.test(
+        q,
+      )
+    )
+  )
+    return null;
+  const name = match[1].trim(),
+    lower = name.toLowerCase(),
+    words = tokens(name);
+  const exact = groups.filter(
+    ([id, label]) => id === name || label.toLowerCase() === lower,
+  );
+  const matches = exact.length
+    ? exact
+    : groups.filter(
+        ([, label]) =>
+          words.length && words.every((w) => tokens(label).includes(w)),
+      );
+  const before = q.slice(0, match.index).trim();
+  const reuse =
+    /^(?:do|does|are) (?:the )?(?:answers to )?(?:the same|these|the selected) (?:two |three |four |five |six )?(?:questions|answers|themes|patterns) (?:differ|vary|different|more common|come up more|appear more often)$/i.test(
+      before,
+    ) ||
+    /^(?:(?:can|could|would) (?:you|we) |please )?(?:(?:show|split|break down|compare|group|separate)(?: me)?(?: (?:this|it|these|that|them|the same|the selected|my selected)(?:\s+(?:two|three|four|five|six|selected|answer|coded|survey|interview|questions?|answers?|patterns?|themes?|results?|figure|chart|responses?))*)?(?: (?:split|broken down|grouped))?|(?:do|does|are) (?:these|the same|these selected) (?:answers|themes|patterns|questions) (?:differ|different|vary))$/i.test(
+      before,
+    );
+  return {
+    name,
+    before,
+    groupBy: matches.length === 1 ? matches[0][0] : null,
+    reuse,
+    clarification:
+      matches.length === 1
+        ? ""
+        : groups.length
+          ? "Which grouping did you mean by “" +
+            name +
+            "”? Choose from " +
+            (matches.length ? matches : groups)
+              .slice(0, 12)
+              .map(([, s]) => "“" + s + "”")
+              .join(", ") +
+            "."
+          : text
+            ? "Open Look across several themes and choose Add interview groups. Give each interview a group, then ask me again."
+            : "There is no suitable grouping column for these selected questions. Use a separate column such as study year.",
+  };
+}

@@ -344,3 +344,104 @@ test("theme combinations distinguish shared passages from shared interviews and 
   assert.equal(a.records[0].den, 1);
   assert.equal(analyse(d, { ...v, patternMode: "sources" }).records.length, 6);
 });
+
+test("grouped survey patterns share a comparison set and show group-specific eligible denominators", () => {
+  const d = makeTable(
+    [
+      ["Vote", "Trust", "Year"],
+      ["Yes", "High", "First"],
+      ["Yes", "High", "First"],
+      ["No", "Low", "Second"],
+      ["Yes", "", "Second"],
+      ["Yes", "High", ""],
+      ["", "Low", "Third"],
+    ],
+    "Survey",
+  );
+  const v = {
+    task: "patterns",
+    items: ["c0", "c1"],
+    patternMode: "together",
+    groupBy: "c2",
+  };
+  const a = analyse(d, v),
+    match = (a, g, l) =>
+      a.records.find((r) => r.groupValue === g && r.label === l);
+  assert.equal(match(a, "First", "Yes · High").den, 2);
+  assert.equal(match(a, "Second", "Yes · High").n, 0);
+  assert.equal(match(a, "Third", "No · Low").undefinedShare, true);
+  assert.equal(a.largestDisplayedDifference.percentagePoints, 100);
+  assert.match(a.note, /1 record omitted/);
+  const separate = analyse(d, { ...v, patternMode: "separate" });
+  assert.equal(match(separate, "Second", "Yes").den, 2);
+  assert.equal(match(separate, "Second", "Low").den, 1);
+  const filtered = analyse(d, { ...v, filter: "c0", value: "No" });
+  assert.equal(filtered.groupSizes.length, 1);
+});
+test("interview group comparisons distinguish coverage, coded passage frequency and exact combinations", () => {
+  const d = {
+    kind: "text",
+    sources: ["A", "B", "C", "D"],
+    metadata: {
+      A: { Year: "First" },
+      B: { Year: "First" },
+      C: { Year: "Final" },
+    },
+    passages: [
+      { source: "A", codes: ["Time"], reviewed: true },
+      { source: "A", codes: ["Time", "Trust"], reviewed: true },
+      { source: "B", codes: [], reviewed: false },
+      { source: "C", codes: ["Trust"], reviewed: true },
+      { source: "D", codes: ["Time"], reviewed: true },
+    ],
+  };
+  const v = {
+    task: "patterns",
+    items: ["Time", "Trust"],
+    patternMode: "sources",
+    groupBy: "Year",
+  };
+  const time = (a) =>
+    a.records.find((r) => r.label === "Time" && r.groupValue === "First");
+  assert.equal(time(analyse(d, v)).value, 50);
+  const r = time(analyse(d, { ...v, themeUnit: "passages" }));
+  assert.equal(r.n, 2);
+  assert.equal(r.den, 3);
+  const a = analyse(d, { ...v, patternMode: "interviews" });
+  assert.equal(
+    a.records.find((r) => r.keyParts.length === 2 && r.groupValue === "First")
+      .den,
+    2,
+  );
+  assert.deepEqual(a.groupSizes[0], {
+    group: "First",
+    selected: 2,
+    passages: 3,
+    reviewed: 2,
+  });
+});
+
+test("a group without any selected codes still counts towards the none combination", () => {
+  const d = {
+    kind: "text",
+    sources: ["A", "B"],
+    metadata: { A: { Year: "1" }, B: { Year: "2" } },
+    passages: [
+      { source: "A", codes: ["Time"] },
+      { source: "B", codes: [] },
+    ],
+  };
+  for (const mode of ["passages", "interviews"]) {
+    const a = analyse(d, {
+      task: "patterns",
+      items: ["Time"],
+      groupBy: "Year",
+      patternMode: mode,
+    });
+    const row = a.records.find(
+      (r) => !r.keyParts.length && r.groupValue === "2",
+    );
+    assert.equal(row.n, 1);
+    assert.equal(row.den, 1);
+  }
+});

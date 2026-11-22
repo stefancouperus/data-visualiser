@@ -1055,3 +1055,67 @@ test("students switch from interview coverage to exact co-coding and open the ma
   await expect(page.locator("dialog")).toContainText("combined both");
   await expect(page.locator("dialog")).not.toContainText("planned ahead");
 });
+
+test("split the current three survey questions by study year using the bot and inspect the subset", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "survey.csv",
+    "Vote,Trust,Duty,Study year\nYes,High,Often,First\nYes,High,Often,First\nNo,Low,Rarely,Final\nYes,,Often,Final",
+  );
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Continue").click();
+  await btn("Confirm and explore").click();
+  await page
+    .getByRole("radio", { name: "Look across several questions" })
+    .check();
+  await page.getByLabel("Trust", { exact: true }).check();
+  await page.getByLabel("Duty", { exact: true }).check();
+  await btn("Describe a figure").click();
+  await page
+    .locator("#question")
+    .fill("Could you split these patterns by study year?");
+  await btn("Send").click();
+  await expect(page.getByLabel("Compare by group")).toHaveValue("c3");
+  await expect(page.locator(".chatlog")).toContainText("100 percentage points");
+  await page.locator("[data-act=closebot]").click();
+  await page
+    .getByRole("button", { name: "Read evidence: Yes · High · Often · First" })
+    .click();
+  await expect(page.locator("dialog")).toContainText("2 of 2 matching records");
+});
+test("enter interview groups, compare theme coverage and retrieve only that group's passages", async ({
+  page,
+}) => {
+  await upload(
+    page,
+    /I have coded interviews/,
+    "codes.tsv",
+    "Interview\tPassage\tCodes\nA\tworked late\tTime\nA\tcombined both\tTime;Planning\nB\tplanned ahead\tPlanning\nC\talso late\tTime",
+  );
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Continue").click();
+  await btn("Continue").click();
+  await btn("Confirm and explore").click();
+  await page.getByRole("radio", { name: "Look across several themes" }).check();
+  await btn("Add interview groups").click();
+  await page.getByLabel("Name of the grouping").fill("Study year");
+  for (const [id, group] of [
+    ["A", "First"],
+    ["B", "First"],
+    ["C", "Final"],
+  ])
+    await page.getByLabel(id, { exact: true }).fill(group);
+  await btn("Show groups").click();
+  await expect(page.locator("#graphic0")).toContainText("50% (1 of 2)");
+  await page.getByLabel("Count a theme once per").selectOption("passages");
+  await expect(page.locator("#graphic0")).toContainText("66.67% (2 of 3)");
+  await page
+    .getByRole("button", { name: "Read evidence: Time · First" })
+    .click();
+  await expect(page.locator("dialog")).toContainText("combined both");
+  await expect(page.locator("dialog")).not.toContainText("also late");
+});

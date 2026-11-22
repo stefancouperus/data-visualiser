@@ -118,3 +118,44 @@ test("a request stating the observation unit draws the complete list or leaves u
     { patternMode: "passages", items: ["Trust", "Duty"] },
   );
 });
+
+test("plain-language grouping follow-ups retain items and clarify ambiguous or missing groups", async () => {
+  const { groupingRequest } = await import("../src/question-matching.js");
+  const groups = [
+      ["c3", "Study year"],
+      ["c4", "Year of birth"],
+    ],
+    current = { task: "patterns", items: ["c0", "c1", "c2"] };
+  assert.equal(
+    groupingRequest(
+      "Do answers to the same three questions differ by study year?",
+      groups,
+      current,
+      false,
+    ).reuse,
+    true,
+  );
+  assert.match(
+    groupingRequest("Split these patterns by year", groups, current, false)
+      .clarification,
+    /Which grouping/,
+  );
+  assert.match(
+    groupingRequest(
+      "Do these themes come up more in one group of interviewees?",
+      [],
+      current,
+      true,
+    ).clarification,
+    /Add interview groups/,
+  );
+  assert.equal(
+    groupingRequest(
+      "Do these themes come up more in one group of interviewees?",
+      [["Year", "Year"]],
+      current,
+      true,
+    ).groupBy,
+    "Year",
+  );
+});

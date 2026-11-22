@@ -11,6 +11,7 @@ import {
   chartFields,
   directComparison,
   patternRequest,
+  groupingRequest,
   namedChartRequest,
   resolveAxis,
 } from "./question-matching.js";
@@ -32,6 +33,8 @@ import {
   patternModes,
   selectionLimit,
   patternAnswers,
+  groupChoices,
+  groupValue,
 } from "./patterns.js";
 import { fitModel } from "./model.js";
 import { figureStyles, styleFor, highlightChoices } from "./figure-styles.js";
@@ -76,7 +79,8 @@ function viewName(d, v) {
   const name = (id) => d.fields?.find((f) => f.id === id)?.label || id;
   if (v.task === "patterns")
     return (
-      (v.items || []).map(name).join(" · ") || "Choose questions or themes"
+      ((v.items || []).map(name).join(" · ") || "Choose questions or themes") +
+      (v.groupBy ? " by " + name(v.groupBy) : "")
     );
   if (v.task === "model") return name(v.outcome) || "Model";
   if (d.kind === "text" && v.task === "group")
@@ -600,9 +604,10 @@ function botContext(question = "") {
         }
       : {}),
     patternOptions:
-      (d.kind === "text" ? allCodes(d).length : d.fields.length) > 1
+      (d.kind === "text" ? allCodes(d).length : d.fields.length) > 0
         ? {
             modes: patternModes(d.kind === "text"),
+            groupingFields: groupChoices(d),
             selectable: patternChoices(d).map(([id]) => id),
             maximum: selectionLimit,
           }
@@ -665,8 +670,25 @@ function proposedChart(pick) {
       (current.task === "patterns" && current.patternMode) ||
       modes[0][0];
     if (!modes.some(([key]) => key === patternMode)) return null;
+    const groups = groupChoices(d, items);
+    const groupKey =
+      pick.groupBy ?? (current.task === "patterns" ? current.groupBy : "");
+    let groupBy = "";
+    if (groupKey) {
+      const exact = groups.filter(
+        ([id, label]) =>
+          id === groupKey ||
+          label.toLowerCase() === String(groupKey).toLowerCase(),
+      );
+      if (exact.length !== 1) return null;
+      groupBy = exact[0][0];
+    }
+    const themeUnit = pick.themeUnit ?? current.themeUnit ?? "interviews";
+    if (!["interviews", "passages"].includes(themeUnit)) return null;
     const view = {
       ...current,
+      groupBy,
+      themeUnit,
       task: "patterns",
       items,
       patternMode,
@@ -777,6 +799,29 @@ function applyProposal(explanation) {
       ". " +
       chart.note,
   );
+  const contrast = chart.largestDisplayedDifference;
+  const groupInsight =
+    contrast?.percentagePoints > 0
+      ? " For “" +
+        contrast.pattern +
+        "”, " +
+        contrast.high.n +
+        " of " +
+        contrast.high.den +
+        " in " +
+        contrast.high.group +
+        " compared with " +
+        contrast.low.n +
+        " of " +
+        contrast.low.den +
+        " in " +
+        contrast.low.group +
+        " (" +
+        Number(contrast.percentagePoints.toFixed(1)) +
+        " percentage points apart in this sample)."
+      : contrast
+        ? " The displayed shares are the same across groups with usable data."
+        : "";
   history.push({
     role: "assistant",
     content:
@@ -786,6 +831,7 @@ function applyProposal(explanation) {
       chart.title +
       ". " +
       chart.note +
+      groupInsight +
       (typeof explanation === "string" ? " " + explanation : ""),
   });
   render();
@@ -869,21 +915,59 @@ async function ask(question, skill, intent = "") {
   const dataset = getData();
   const current =
     project.views[step === 3 && botFocus === "both" ? 1 : focusIndex()];
-  const pattern =
+  const inPatterns = current?.task === "patterns";
+  const grouping =
     skill === "recommend" &&
     !intent &&
     [2, 3].includes(step) &&
     dataset &&
-    patternRequest(
+    groupingRequest(
       question,
-      dataset.kind === "text",
-      patternChoices(dataset),
+      groupChoices(dataset, inPatterns ? current.items : []),
       current,
+      dataset.kind === "text",
     );
+  if (grouping?.clarification) {
+    lastQuestion = "";
+    proposal = null;
+    history.push(
+      { role: "user", content: question },
+      { role: "assistant", content: grouping.clarification },
+    );
+    render();
+    return;
+  }
+  const selectedItems = inPatterns
+    ? current.items
+    : current?.task === "one" && current.x
+      ? [current.x]
+      : [];
+  const reuse =
+    grouping?.reuse && selectedItems?.length && !namedChartRequest(question);
+  let pattern = reuse
+    ? {
+        items: selectedItems,
+        patternMode: inPatterns
+          ? current.patternMode
+          : patternModes(dataset.kind === "text")[0][0],
+      }
+    : skill === "recommend" &&
+      !intent &&
+      [2, 3].includes(step) &&
+      dataset &&
+      patternRequest(
+        grouping?.before || question,
+        dataset.kind === "text",
+        patternChoices(dataset),
+        current,
+      );
+  if (grouping) pattern = { ...(pattern || {}), groupBy: grouping.groupBy };
   if (pattern?.items && pattern.items.length <= selectionLimit) {
     const chart =
       namedChartRequest(question) ||
-      (dataset.kind === "text" && pattern.patternMode === "sources"
+      (dataset.kind === "text" &&
+      pattern.patternMode === "sources" &&
+      !(pattern.groupBy || current?.groupBy)
         ? "grid"
         : "bars");
     const spec = { action: "draw", task: "patterns", chart, ...pattern };
@@ -943,6 +1027,8 @@ async function ask(question, skill, intent = "") {
         l.outcome === r.outcome &&
         (l.task !== "patterns" ||
           (l.patternMode === r.patternMode &&
+            l.groupBy === r.groupBy &&
+            (l.themeUnit || "interviews") === (r.themeUnit || "interviews") &&
             JSON.stringify(l.items) === JSON.stringify(r.items))),
       sameFilter: l.filter === r.filter && l.value === r.value,
       sameUnit: context.views[0]?.unit === context.views[1]?.unit,
@@ -1076,6 +1162,11 @@ async function ask(question, skill, intent = "") {
         pick.action === "suggest" ||
         (!pick.action && pick.chart)
       ) {
+        if (grouping && (pick.action === "draw" || pick.action === "suggest")) {
+          pick = { ...pick, task: "patterns", groupBy: grouping.groupBy };
+          if (pick.chart === "grid" && !namedChartRequest(question))
+            pick.chart = "bars";
+        }
         const requestedChart = namedChartRequest(question);
         if (requestedChart) {
           pick = { ...pick, chart: requestedChart };
@@ -1511,6 +1602,8 @@ function patternEvidence(i, index) {
     const fields = v.items.map((id) => d.fields.find((f) => f.id === id));
     const rows = filteredRows(d).filter((r) => {
       if (v.filter && r[v.filter] !== v.value) return false;
+      if (v.groupBy && groupValue(d, v.groupBy, r) !== cell.groupValue)
+        return false;
       if (v.patternMode === "separate")
         return patternAnswers(
           r,
@@ -1534,12 +1627,14 @@ function patternEvidence(i, index) {
     );
     return;
   }
-  if (v.patternMode === "sources")
+  if (v.patternMode === "sources" && !v.groupBy)
     return evidence(i, { source: cell.group, code: cell.label });
   const sources = d.sources.filter(
     (s) =>
-      !v.filter ||
-      (v.filter === "source" ? s : d.metadata?.[s]?.[v.filter]) === v.value,
+      (!v.filter ||
+        (v.filter === "source" ? s : d.metadata?.[s]?.[v.filter]) ===
+          v.value) &&
+      (!v.groupBy || groupValue(d, v.groupBy, s) === cell.groupValue),
   );
   const set = new Set(sources),
     passages = d.passages.filter((p) => set.has(p.source));
@@ -1547,7 +1642,18 @@ function patternEvidence(i, index) {
     v.items.every((c) => codes.has(c) === cell.keyParts.includes(c));
   let included = passages,
     note = "";
-  if (v.patternMode === "interviews") {
+  if (v.patternMode === "sources") {
+    included = passages.filter((p) => p.codes.includes(cell.label));
+    const interviews = new Set(included.map((p) => p.source));
+    note =
+      "<p>" +
+      esc(cell.groupValue) +
+      " · " +
+      interviews.size +
+      " of " +
+      sources.length +
+      " interviews contained this theme.</p>";
+  } else if (v.patternMode === "interviews") {
     const bySource = new Map(sources.map((s) => [s, new Set()]));
     for (const p of passages)
       for (const c of p.codes) bySource.get(p.source).add(c);
@@ -1815,6 +1921,50 @@ async function action(act, el) {
       if (!undoViews.length) throw Error("There are no view changes to undo.");
       project.views = undoViews.pop();
       break;
+    case "addgroups": {
+      const view = project.views[i];
+      modal(
+        "Add interview groups",
+        '<label>Name of the grouping<input id="group-name" placeholder="e.g. Study year" required maxlength="100"></label><p>Enter one group for each interview. Leave a box blank if the group is unknown.</p>' +
+          d.sources
+            .map(
+              (source, j) =>
+                "<label>" +
+                esc(source) +
+                '<input id="group-source-' +
+                j +
+                '" maxlength="150"></label>',
+            )
+            .join(""),
+        () => {
+          const name = val("group-name").trim();
+          if (
+            !name ||
+            ["__proto__", "constructor", "prototype"].includes(name) ||
+            groupChoices(d).some(
+              ([key]) => key.toLowerCase() === name.toLowerCase(),
+            )
+          )
+            throw Error(
+              "Use a new grouping name. Existing groupings are in Compare by group.",
+            );
+          const groups = d.sources
+            .map((source, j) => [source, val("group-source-" + j).trim()])
+            .filter(([, value]) => value);
+          if (!groups.length)
+            throw Error("Enter a group for at least one interview.");
+          d.metadata = Object.assign(Object.create(null), d.metadata || {});
+          for (const [source, value] of groups)
+            d.metadata[source] = { ...d.metadata[source], [name]: value };
+          snapshotViews();
+          view.groupBy = name;
+          if (step === 3) focusBot(i ? "right" : "left");
+          render();
+        },
+        "Show groups",
+      );
+      return;
+    }
     case "describechart":
       if (step === 3) focusBot(i ? "right" : "left");
       openBot();

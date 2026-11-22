@@ -43,9 +43,33 @@ export function patternAnswers(row, f) {
   ].sort();
 }
 
+export function groupChoices(d, items = []) {
+  if (d.kind === "text")
+    return [
+      ...new Set(Object.values(d.metadata || {}).flatMap(Object.keys)),
+    ].map((key) => [key, key]);
+  return d.fields
+    .filter(
+      (f) =>
+        !items.includes(f.id) &&
+        ["category", "ordered", "number"].includes(f.type) &&
+        f.levels.length &&
+        f.levels.length <= 30,
+    )
+    .map((f) => [f.id, f.label]);
+}
+export function groupValue(d, key, record) {
+  const values = d.kind === "text" ? d.metadata?.[record] : record;
+  return values && Object.hasOwn(values, key)
+    ? String(values[key] ?? "").trim()
+    : "";
+}
 export function patternSummary(d, v) {
-  const text = d.kind === "text",
-    choices = new Map(patternChoices(d));
+  if (v.groupBy) return groupedSummary(d, v);
+  return summarise(d, v);
+}
+function summarise(d, v, rankLimit = 12, choices = new Map(patternChoices(d))) {
+  const text = d.kind === "text";
   const items = [...new Set(v.items || [])]
     .filter((id) => choices.has(id))
     .slice(0, selectionLimit);
@@ -79,7 +103,7 @@ export function patternSummary(d, v) {
   function ranked(den, rowParts) {
     const sorted = [...counts.values()].sort((a, b) => b.n - a.n);
     a.distinctPatterns = sorted.length;
-    a.records = sorted.slice(0, 12).map(({ parts, n }) => ({
+    a.records = sorted.slice(0, rankLimit).map(({ parts, n }) => ({
       keyParts: parts,
       parts: rowParts(parts),
       label: rowParts(parts).join(" · "),
@@ -88,7 +112,7 @@ export function patternSummary(d, v) {
       den,
       value: n,
     }));
-    if (sorted.length > 12)
+    if (sorted.length > rankLimit)
       a.note +=
         " Showing the 12 most frequent of " +
         sorted.length +
@@ -206,6 +230,176 @@ export function patternSummary(d, v) {
       (rows.length - den) +
       " omitted for a missing answer. Each complete record counts once.";
     ranked(den, (parts) => parts.map((p) => p.join(" + ")));
+  }
+  return a;
+}
+
+function groupedSummary(d, v) {
+  const text = d.kind === "text",
+    key = v.groupBy,
+    mode = v.patternMode || patternModes(text)[0][0];
+  const label = new Map(groupChoices(d, v.items)).get(key);
+  if (!label)
+    throw Error(
+      "Choose an available group separate from the questions in the figure.",
+    );
+  const entries = text
+    ? d.sources.filter(
+        (s) =>
+          !v.filter ||
+          (v.filter === "source" ? s : d.metadata?.[s]?.[v.filter]) === v.value,
+      )
+    : filteredRows(d).filter((r) => !v.filter || r[v.filter] === v.value);
+  const buckets = new Map(),
+    included = [];
+  for (const entry of entries) {
+    const group = groupValue(d, key, entry);
+    if (!group) continue;
+    if (!buckets.has(group)) buckets.set(group, []);
+    buckets.get(group).push(entry);
+    included.push(entry);
+  }
+  const omitted = entries.length - included.length;
+  const passageBuckets = new Map();
+  const sourceSet = text ? new Set(included) : null;
+  const allPassages = text
+    ? d.passages.filter((p) => sourceSet.has(p.source))
+    : [];
+  for (const p of allPassages) {
+    const group = groupValue(d, key, p.source);
+    if (!passageBuckets.has(group)) passageBuckets.set(group, []);
+    passageBuckets.get(group).push(p);
+  }
+  const subset = (entries, passages) =>
+    text
+      ? { ...d, sources: entries, passages }
+      : { ...d, rows: entries, rules: [] };
+  const view = { ...v, groupBy: "", filter: "" };
+  const choices = new Map(patternChoices(d));
+  const pooled = summarise(subset(included, allPassages), view, 12, choices);
+  const themes = text && mode === "sources",
+    byPassage = themes && v.themeUnit === "passages";
+  const question = themes
+    ? byPassage
+      ? "Which themes occur in each group’s passages?"
+      : "Which themes occur in each group’s interviews?"
+    : pooled.title;
+  const a = {
+    ...pooled,
+    title: question.replace(/\?$/, "") + " — by " + label,
+    groupLabel: label,
+    records: [],
+    groupSizes: [],
+  };
+  if (!v.items?.length) return a;
+  const rows = themes ? v.items.map((c) => ({ label: c })) : pooled.records;
+  if (rows.length * buckets.size > 20000)
+    throw Error(
+      "This figure is too large. Choose fewer items or a grouping with fewer categories.",
+    );
+  const rowKey = (r) =>
+    JSON.stringify(r.keyParts ?? [r.fieldId || "", r.label]);
+  const sets = [];
+  for (const [group, entries] of buckets) {
+    const ps = passageBuckets.get(group) || [];
+    const data = subset(entries, ps),
+      part = summarise(data, view, Infinity, choices);
+    const den = themes
+      ? byPassage
+        ? ps.length
+        : entries.length
+      : (part.complete ?? part.n);
+    const cells = new Map(),
+      fieldDen = new Map();
+    if (themes) {
+      for (const r of part.records)
+        cells.set(
+          r.label,
+          (cells.get(r.label) || 0) + (byPassage ? r.n : Number(r.n > 0)),
+        );
+    } else {
+      for (const r of part.records) {
+        cells.set(rowKey(r), r.n);
+        if (r.fieldId) fieldDen.set(r.fieldId, r.den);
+      }
+    }
+    a.groupSizes.push({
+      group,
+      selected: entries.length,
+      ...(text
+        ? { passages: ps.length, reviewed: ps.filter((p) => p.reviewed).length }
+        : mode === "together"
+          ? { complete: den }
+          : {}),
+    });
+    sets.push({ group, cells, den, fieldDen });
+  }
+  a.unit = themes
+    ? byPassage
+      ? "% of passages within each group"
+      : "% of interviews within each group"
+    : mode === "separate"
+      ? "% answering each question within each group"
+      : mode === "passages"
+        ? "% of passages within each group"
+        : mode === "interviews"
+          ? "% of interviews within each group"
+          : "% answering all selected questions within each group";
+  a.note =
+    (themes
+      ? a.unit +
+        ". Each theme is counted once per " +
+        (byPassage ? "passage." : "interview.") +
+        " "
+      : "") +
+    pooled.note +
+    " " +
+    omitted +
+    (text
+      ? omitted === 1
+        ? " interview"
+        : " interviews"
+      : omitted === 1
+        ? " record"
+        : " records") +
+    " omitted for missing " +
+    label +
+    ".";
+  for (const row of rows) {
+    const series = row.fieldId ? row.group + " · " + row.label : row.label;
+    const comparable = [];
+    for (const { group, cells, den, fieldDen } of sets) {
+      const n = cells.get(themes ? row.label : rowKey(row)) || 0;
+      const base = row.fieldId ? fieldDen.get(row.fieldId) || 0 : den;
+      const value = base ? (100 * n) / base : 0;
+      const cell = {
+        ...row,
+        group: series,
+        groupValue: group,
+        n,
+        den: base,
+        value,
+        undefinedShare: !base,
+      };
+      a.records.push(cell);
+      if (base) comparable.push({ group, n, den: base, percent: value });
+    }
+    if (comparable.length >= 2) {
+      comparable.sort((x, y) => x.percent - y.percent);
+      const low = comparable[0],
+        high = comparable.at(-1),
+        gap = high.percent - low.percent;
+      if (
+        !a.largestDisplayedDifference ||
+        gap > a.largestDisplayedDifference.percentagePoints
+      )
+        a.largestDisplayedDifference = {
+          pattern: series,
+          low,
+          high,
+          percentagePoints: gap,
+        };
+    }
   }
   return a;
 }
