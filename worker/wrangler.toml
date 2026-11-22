@@ -1,0 +1,18 @@
+name = "data-visualiser-bot"
+main = "index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+[vars]
+APP_ORIGIN = "https://stefancouperus.github.io"
+[[rules]]
+type = "Text"
+globs = ["**/*.md"]
+fallthrough = true
+[[ratelimits]]
+name = "ACCESS_LIMIT"
+namespace_id = "101"
+simple = { limit = 100, period = 60 }
+[[ratelimits]]
+name = "CHAT_LIMIT"
+namespace_id = "102"
+simple = { limit = 18, period = 60 }

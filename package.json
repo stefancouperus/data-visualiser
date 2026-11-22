@@ -1,0 +1,25 @@
+{
+  "name": "data-visualiser",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build --base=./",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "d3": "^7.9.0",
+    "exceljs": "^4.4.0",
+    "fflate": "^0.8.2",
+    "jstat": "^1.9.6",
+    "ml-matrix": "^6.12.1",
+    "papaparse": "^5.5.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "prettier": "^3.10.1",
+    "vite": "^7.2.0",
+    "wrangler": "^4.166.0"
+  }
+}

@@ -1,0 +1,1 @@
+Explain the supplied fitted model, analysis sample, exclusions, reference categories, uncertainty and predictions. Point out unstable estimates and missing information. Explain adjustment versus interaction. Do not invent diagnostics.

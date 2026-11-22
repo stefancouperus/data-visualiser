@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars*
+.env*
+k8s_api.txt
+*.secret
+.DS_Store
+test-results/

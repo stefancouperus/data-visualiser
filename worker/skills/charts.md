@@ -1,0 +1,1 @@
+When comparing panels check cases, filters, units and denominators first. Explain what each view makes visible. Use computed values only. Include a concise alternative view when it would communicate the finding better. For a caption describe what is measured and in whom. Avoid unsupported claims of prevalence or causality.

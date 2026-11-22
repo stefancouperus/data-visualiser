@@ -1,0 +1,1 @@
+Explain the mapping between source and imported records. Distinguish unknown labels, unobserved categories, blank answers and overlapping codes. Ask the student to verify ambiguous markings against a representative passage.
