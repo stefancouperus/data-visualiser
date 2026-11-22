@@ -71,8 +71,13 @@ export function researchCatalogue(d, view, focus, question, keepItems) {
 // The model proposes measures. The browser checks their identities and chooses
 // a supported chart before offering it to the student.
 export function researchChart(pick, c) {
-  const items = pick.items,
-    group = pick.groupBy || "";
+  const group = pick.groupBy || "";
+  const text = c.datasetKind === "interviews";
+  // A survey grouping column has its own role even when also listed as an item.
+  const items =
+    !text && group && Array.isArray(pick.items)
+      ? pick.items.filter((id) => id !== group)
+      : pick.items;
   if (
     !Array.isArray(items) ||
     !items.length ||
@@ -90,13 +95,7 @@ export function researchChart(pick, c) {
       !c.selectionToKeep.every((id) => items.includes(id)))
   )
     return null;
-  const text = c.datasetKind === "interviews";
-  if (
-    group &&
-    ((!text && items.includes(group)) ||
-      !c.groupingFields.some(([id]) => id === group))
-  )
-    return null;
+  if (group && !c.groupingFields.some(([id]) => id === group)) return null;
   const fields = items.map((id) => c.questions?.find((f) => f.id === id));
   if (
     !text &&

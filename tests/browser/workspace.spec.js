@@ -1212,7 +1212,7 @@ for (const text of [false, true]) {
           json: {
             answer: JSON.stringify({
               action: "suggest",
-              items: [text ? "Late bus" : "c1"],
+              items: text ? ["Late bus"] : ["c1", "c2"],
               groupBy: invalid ? "Fabricated" : text ? "Shift" : "c2",
               patternMode: "separate",
               explanation: text
