@@ -261,6 +261,11 @@ export function codedSheet(table, map) {
   const out = new Map(),
     sources = new Set();
   for (const r of table.rows) {
+    if (map.source && !r[map.source] && !r[map.text]) continue;
+    if (map.source && !r[map.source] && r[map.text])
+      throw Error(
+        "A passage is missing its interview or source identifier. Fill in the source column, or choose Use filename if the file contains one interview.",
+      );
     const source = r[map.source] || table.name,
       t = r[map.text];
     sources.add(source);

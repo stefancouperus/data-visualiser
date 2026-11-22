@@ -1,13 +1,10 @@
 // Counts are computed locally from the records selected in the workspace.
+import { allCodes } from "./coding.js";
 import { filteredRows } from "./import.js";
 
 export const selectionLimit = 6;
 export function patternChoices(d) {
-  if (d.kind === "text")
-    return [...new Set(d.passages.flatMap((p) => p.codes))].map((code) => [
-      code,
-      code,
-    ]);
+  if (d.kind === "text") return allCodes(d).map((code) => [code, code]);
   return d.fields
     .filter(
       (f) =>
@@ -307,7 +304,7 @@ function groupedSummary(d, v) {
     : pooled.title;
   const a = {
     ...pooled,
-    title: question.replace(/\?$/, "") + " — by " + label,
+    title: v.title || question.replace(/\?$/, "") + " — by " + label,
     groupLabel: label,
     records: [],
     groupSizes: [],

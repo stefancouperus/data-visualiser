@@ -18,6 +18,34 @@ export const fresh = () => ({
   confirmed: [],
   mode: "hints",
 });
+// The project keeps the active pair at the top level for older project files.
+export function switchDataset(p, id, makeView) {
+  const previous = p.active;
+  p.workingViews ||= {};
+  if (
+    previous !== id &&
+    p.datasets.some((d) => d.id === previous) &&
+    p.views.length === 2
+  ) {
+    p.workingViews[previous] = {
+      views: p.views,
+      linked: p.linked,
+      comparisonStarted: p.comparisonStarted,
+    };
+  }
+  p.active = id;
+  const stored = p.workingViews[id];
+  if (stored) {
+    p.views = stored.views;
+    p.linked = stored.linked;
+    p.comparisonStarted = stored.comparisonStarted;
+    delete p.workingViews[id];
+  } else {
+    const view = makeView(p.datasets.find((d) => d.id === id));
+    p.views = [view, structuredClone(view)];
+    p.comparisonStarted = false;
+  }
+}
 export function verifyProject(p) {
   if (
     p?.format !== "data-visualiser" ||
@@ -53,6 +81,15 @@ export function verifyProject(p) {
   if (
     new Set(ids).size !== ids.length ||
     !validViews(p.views) ||
+    (p.workingViews != null &&
+      (typeof p.workingViews !== "object" ||
+        Array.isArray(p.workingViews) ||
+        Object.entries(p.workingViews).some(
+          ([id, item]) =>
+            !ids.includes(id) ||
+            !validViews(item?.views) ||
+            item.views.length !== 2,
+        ))) ||
     (p.confirmed !== undefined && !Array.isArray(p.confirmed)) ||
     (p.savedVisuals !== undefined &&
       (!Array.isArray(p.savedVisuals) ||
@@ -76,6 +113,23 @@ export function verifyProject(p) {
     );
   if (!p.settingsOnly)
     for (const d of p.datasets) {
+      if (
+        d.interviews &&
+        (!Array.isArray(d.sources) ||
+          !Array.isArray(d.interviews.done) ||
+          (d.interviews.established &&
+            (!Array.isArray(d.coding?.book) || !d.coding.book.length)) ||
+          (d.interviews.draft &&
+            (!d.sources.includes(d.interviews.draft.source) ||
+              !Array.isArray(d.interviews.draft.matches) ||
+              !Number.isInteger(d.interviews.draft.next) ||
+              d.interviews.draft.next < 0 ||
+              d.interviews.draft.next > d.interviews.draft.total)))
+      ) {
+        throw Error(
+          "The interview review progress in this file is incomplete. Open another project download.",
+        );
+      }
       if (!d.id || !["text", "table"].includes(d.kind))
         throw Error("Invalid project dataset.");
       if (

@@ -7,6 +7,13 @@ export const codingLimits = {
 const key = (text) =>
   text.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 
+export function allCodes(d) {
+  const approved = d.interviews?.established
+    ? (d.coding?.book || []).map((e) => e.label)
+    : [];
+  return [...new Set([...approved, ...d.passages.flatMap((p) => p.codes)])];
+}
+
 export function codingGuide(d) {
   const mode = d.coding?.mode || "inductive";
   const labels = [...new Set(d.passages.flatMap((p) => p.codes))];

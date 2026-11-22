@@ -126,12 +126,15 @@ export function appendInterviews(d, sets) {
   interviews(d).finished = false;
 }
 // Work units keep each request small even for transcripts exported as a single paragraph.
-export function interviewBatches(d, source, sampleIds) {
+export function interviewBatches(d, source, sampleIds, originalOnly = false) {
   const batches = [];
   let batch = [],
     size = 0;
   for (const p of d.passages.filter(
-    (p) => p.source === source && (!sampleIds || sampleIds.includes(p.id)),
+    (p) =>
+      p.source === source &&
+      (!originalOnly || !p.parent) &&
+      (!sampleIds || sampleIds.includes(p.id)),
   )) {
     let start = 0;
     while (start < p.text.length) {
@@ -165,6 +168,25 @@ export function reviewedMatches(raw, batch, guide) {
     ...s,
     id: batch.find((p) => p.id === s.id).passageId,
   }));
+}
+// A manually saved quotation still belongs to the original transcript passage.
+export function coveredByQuotation(match, parent, excerpts) {
+  if (!parent || !excerpts?.length) return false;
+  let start = parent.text.indexOf(match.quote);
+  if (start < 0) return false;
+  while (start >= 0) {
+    if (
+      !excerpts.some(
+        (p) =>
+          p.codes.some((code) => normal(code) === normal(match.code)) &&
+          start >= p.start &&
+          start + match.quote.length <= p.start + p.text.length,
+      )
+    )
+      return false;
+    start = parent.text.indexOf(match.quote, start + 1);
+  }
+  return true;
 }
 export function draftGuide(d, sample) {
   if (!sample) return codingGuide(d);

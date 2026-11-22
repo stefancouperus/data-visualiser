@@ -159,3 +159,50 @@ test("plain-language grouping follow-ups retain items and clarify ambiguous or m
     "Year",
   );
 });
+
+test("requested cross-tab uses the named grouping and distinguishes counts from within-group percentages", async () => {
+  const { namedSurveyComparison } = await import("../src/question-matching.js");
+  const fields = [
+    {
+      id: "a",
+      type: "category",
+      raw: "Q1",
+      label: "Trip purpose",
+      levels: ["Leisure", "Work"],
+    },
+    {
+      id: "b",
+      type: "ordered",
+      raw: "Q2",
+      label: "Travel zone",
+      levels: ["Inner", "Outer"],
+    },
+  ];
+  const phrase = "Draw a heatmap of Trip purpose by Travel zone";
+  assert.deepEqual(
+    namedSurveyComparison(
+      fields,
+      phrase + ", showing percentages within each zone.",
+    ),
+    {
+      action: "draw",
+      task: "group",
+      chart: "grid",
+      x: "a",
+      y: "b",
+      measure: "percent",
+    },
+  );
+  assert.equal(namedSurveyComparison(fields, phrase).measure, "count");
+  assert.equal(
+    namedSurveyComparison(
+      fields,
+      phrase + ", showing percentages within each purpose",
+    ),
+    null,
+  );
+  assert.equal(
+    namedSurveyComparison(fields, phrase + " only among cyclists"),
+    null,
+  );
+});

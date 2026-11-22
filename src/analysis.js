@@ -1,4 +1,5 @@
 import { patternSummary } from "./patterns.js";
+import { allCodes } from "./coding.js";
 import { bin } from "d3";
 import { filteredRows } from "./import.js";
 export const kinds = {
@@ -15,7 +16,7 @@ export const kinds = {
   excerpts: "Read excerpts",
   model: "Fitted model",
 };
-export const allCodes = (d) => [...new Set(d.passages.flatMap((p) => p.codes))];
+export { allCodes };
 export function newView(d) {
   if (d.kind === "text")
     return {
@@ -58,6 +59,10 @@ export function analyse(d, v) {
     y = f(v.y),
     z = f(v.z);
   if (!x) throw Error("Choose a variable.");
+  if (x.roles?.includes("open") && (v.task !== "one" || v.chart !== "excerpts"))
+    throw Error(
+      "This question now contains written answers. Read the answers or code them into themes.",
+    );
   if (
     (v.task !== "one" && y?.roles?.includes("open")) ||
     z?.roles?.includes("open") ||
@@ -219,10 +224,7 @@ function qualitative(d, v) {
     for (const code of new Set(p.codes))
       row.codes.set(code, (row.codes.get(code) || 0) + 1);
   }
-  const codes =
-    v.task === "group" && d.interviews?.established
-      ? [...new Set([...d.coding.book.map((e) => e.label), ...allCodes(d)])]
-      : allCodes(d);
+  const codes = allCodes(d);
   const base = {
     title:
       v.title ||
@@ -340,6 +342,9 @@ function qualitative(d, v) {
     selected.filter((p) => p.reviewed).length +
     " of " +
     selected.length +
-    " imported passages reviewed. Zero means no matching coded passage.";
+    " passages reviewed. Zero means no matching coded passage." +
+    (selected.some((p) => p.parent)
+      ? " Saved quotations count as separate passages."
+      : "");
   return base;
 }

@@ -26,6 +26,7 @@ import {
 import {
   chartFields,
   directComparison,
+  namedSurveyComparison,
   patternRequest,
   groupingRequest,
   namedChartRequest,
@@ -39,6 +40,7 @@ import { importFiles } from "./import-ui.js";
 import {
   fresh,
   verifyProject,
+  switchDataset,
   reattach,
   settingsProject,
   renameTheme,
@@ -243,10 +245,7 @@ function activate(id) {
   pendingSelections.clear();
   selectionConfirmed = false;
   undoViews = [];
-  project.active = id;
-  project.comparisonStarted = false;
-  const v = newView(getData());
-  project.views = [v, structuredClone(v)];
+  switchDataset(project, id, newView);
   resetTutor();
 }
 const modeNames = [
@@ -300,7 +299,29 @@ function analysisReady(d) {
         d.sources.every((source) => interviews(d).done.includes(source))))
   );
 }
+function hasDeviceCopy() {
+  try {
+    return localStorage.getItem("dv-project") !== null;
+  } catch {
+    return false;
+  }
+}
 function render() {
+  // A student may reopen a visual or change an existing question into an open one.
+  const dataset = getData();
+  if (dataset?.kind === "table") {
+    for (const v of project.views) {
+      if (
+        v.task === "one" &&
+        v.chart !== "excerpts" &&
+        isOpenQuestion(dataset.fields.find((f) => f.id === v.x))
+      ) {
+        v.chart = "excerpts";
+        v.title = "";
+        v.annotation = "";
+      }
+    }
+  }
   const transcriptScroll = document.querySelector(".iv-text")?.scrollTop || 0;
   const previousSource = document.querySelector(".iv-paper h2")?.textContent;
   const expanded = [
@@ -347,7 +368,7 @@ function render() {
   const coverageNote = coverage
     ? `<p class="review"><strong>${esc(coverage.question)}</strong><br>${coverage.answered} of ${coverage.eligible} included respondents wrote an answer. ${coverage.eligible - coverage.answered} had no recorded answer. Theme comparisons use respondents who wrote an answer.</p>`
     : "";
-  let content = step === 0 ? landing(!!localStorage.getItem("dv-project")) : "";
+  let content = step === 0 ? landing(hasDeviceCopy()) : "";
   if (step !== 0 && d) {
     content = `<div class="hero"><h1>${headers[step]}</h1></div>${datasetSelect(project)}${coverageNote}`;
     if (step === 1 && interview) {
@@ -437,6 +458,15 @@ function render() {
 }
 function summary(i, v = project.views[i]) {
   const d = getData();
+  if (
+    d.kind === "table" &&
+    [v.filter, v.groupBy].some(
+      (key) => key && isOpenQuestion(d.fields.find((f) => f.id === key)),
+    )
+  )
+    throw Error(
+      "The question used to group or filter this figure now contains written answers. Clear that selection or choose a closed question.",
+    );
   if (v.task !== "model") return analyse(d, v);
   const rows = filteredRows(d).filter(
       (r) => !v.filter || r[v.filter] === v.value,
@@ -743,7 +773,7 @@ function botContext(question = "") {
     confirmedQuestionRoles: confirmedRoles(d),
     proposedExplanation: d.explanation || undefined,
     pastProjectWork: previousWork(tutorRecord(project), question),
-    stage: steps[step],
+    stage: step === 1 && isInterview(d) ? "Code interviews" : steps[step],
     dataset: d.name,
     datasetKind: d.openAnswers
       ? "coded written survey answers"
@@ -757,6 +787,14 @@ function botContext(question = "") {
       ...basic,
       fields: d.fields?.map((f) => ({ name: f.label, type: f.type })),
       sourceCount: d.sources?.length,
+      ...(isInterview(d)
+        ? {
+            openInterview: interviews(d).source,
+            checkedInterviews: interviews(d).done.length,
+            approvedLabels: d.coding?.book?.map((e) => e.label),
+            hasCodingDraft: !!interviews(d).draft,
+          }
+        : {}),
     };
   const indices =
     step === 2
@@ -811,6 +849,22 @@ function botContext(question = "") {
     pendingChart: proposal?.view,
     views,
     fields: d.fields ? chartFields(d.fields, question) : undefined,
+    surveyChartOptions:
+      d.kind === "table"
+        ? {
+            categoricalComparison: [
+              "grid",
+              "bars",
+              "dots",
+              "stack",
+              "small",
+              "table",
+            ],
+            numericPair: ["scatter", "line"],
+            singleNumber: ["hist"],
+            note: "availableCharts in each view lists only that view’s current options. You may change the task and questions to draw another supported chart.",
+          }
+        : undefined,
     ...(d.kind === "text"
       ? {
           presenceGrid: {
@@ -1317,6 +1371,27 @@ async function ask(question, skill, intent = "") {
     }
     return;
   }
+  const direct =
+    [2, 3].includes(step) &&
+    !intent &&
+    skill === "recommend" &&
+    dataset?.kind === "table" &&
+    (namedSurveyComparison(dataset.fields, question) ||
+      directComparison(dataset.fields, question));
+  if (direct) {
+    const candidate = direct.action === "draw" && proposedChart(direct);
+    if (direct.action === "answer" || candidate) {
+      lastQuestion = "";
+      proposal = candidate || null;
+      history.push({ role: "user", content: question });
+      if (candidate) applyProposal();
+      else {
+        history.push({ role: "assistant", content: direct.explanation });
+        render();
+      }
+      return;
+    }
+  }
   const inPatterns = current?.task === "patterns";
   const grouping =
     skill === "recommend" &&
@@ -1379,26 +1454,6 @@ async function ask(question, skill, intent = "") {
       lastQuestion = "";
       proposal = candidate;
       applyProposal();
-      return;
-    }
-  }
-  const direct =
-    !pattern &&
-    !intent &&
-    skill === "recommend" &&
-    dataset?.kind === "table" &&
-    directComparison(dataset.fields, question);
-  if (direct) {
-    const candidate = direct.action === "draw" && proposedChart(direct);
-    if (direct.action === "answer" || candidate) {
-      lastQuestion = "";
-      proposal = candidate || null;
-      history.push({ role: "user", content: question });
-      if (candidate) applyProposal();
-      else {
-        history.push({ role: "assistant", content: direct.explanation });
-        render();
-      }
       return;
     }
   }
@@ -3210,15 +3265,31 @@ async function action(act, el) {
       break;
     }
     case "device":
-      localStorage.setItem(
-        "dv-project",
-        JSON.stringify(projectPackage(project)),
-      );
+      try {
+        localStorage.setItem(
+          "dv-project",
+          JSON.stringify(projectPackage(project)),
+        );
+      } catch {
+        throw Error(
+          "This browser could not store the project. Choose Download project with data to keep your work.",
+        );
+      }
       notice(
         "Saved. Choose Resume on this device in the same browser to reopen this project.",
       );
       return;
     case "deviceOpen":
+      if (
+        project.datasets.length &&
+        !(await askForm(
+          "Switch projects?",
+          "<p>Resuming the device copy replaces the open workspace. Download your current project first if you want to keep these edits.</p>",
+          () => true,
+          "Resume saved copy",
+        ))
+      )
+        return;
       setProject(JSON.parse(localStorage.getItem("dv-project")));
       return;
     case "download":

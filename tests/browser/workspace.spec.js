@@ -1950,13 +1950,11 @@ test("deductive interview codebook upload, review, whole-transcript matching and
     "The train fare is high.\nI walk in the sunshine.",
   );
   await page.getByRole("button", { name: /Use an uploaded codebook/ }).click();
-  await page
-    .locator("#book-file")
-    .setInputFiles({
-      name: "guide.txt",
-      mimeType: "text/plain",
-      buffer: Buffer.from("Cost: Fare expense"),
-    });
+  await page.locator("#book-file").setInputFiles({
+    name: "guide.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("Cost: Fare expense"),
+  });
   await btn("Extract labels").click();
   await page.locator("[data-label]").fill("Fare cost");
   await btn("Use these labels").click();
@@ -1971,4 +1969,51 @@ test("deductive interview codebook upload, review, whole-transcript matching and
   await page.locator("[name=iv-label]").check();
   await btn("Save passage coding").click();
   await expect(page.locator(".iv-passage").last()).toContainText("Fare cost");
+});
+
+test("reclassifying the visible survey question as open keeps its answers out of ordinary bot requests", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  let received;
+  await page.route("https://tutor.example.test/ask", (route) => {
+    received = route.request().postDataJSON();
+    return route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          action: "answer",
+          explanation: "Read individual written answers in this view.",
+        }),
+      },
+    });
+  });
+  await upload(
+    page,
+    /Qualtrics export/,
+    "review.csv",
+    "Reason,Location\nSynthetic statement north,East\nSynthetic statement south,West",
+  );
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Continue").click();
+  await btn("Confirm and explore").click();
+  await btn("Check").click();
+  await btn("Choose question roles").click();
+  await page
+    .locator(".role-list summary")
+    .filter({ hasText: "Reason" })
+    .click();
+  await page
+    .getByRole("group", { name: "Reason", exact: true })
+    .getByLabel("Open question")
+    .check();
+  await btn("Confirm question roles").click();
+  await btn("Confirm and explore").click();
+  await expect(page.locator("#graphic0")).toContainText(
+    "Synthetic statement north",
+  );
+  await btn("Data bot").click();
+  await page.locator("#question").fill("Explain this view");
+  await btn("Send").click();
+  await expect.poll(() => !!received).toBe(true);
+  expect(JSON.stringify(received)).not.toContain("Synthetic statement");
 });

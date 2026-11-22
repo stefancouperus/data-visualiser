@@ -81,9 +81,15 @@ async function sheet(doc, route) {
         if (!m.columns.length)
           throw Error("Select a code column or tick its yes/no columns.");
       }
-      if (m.codes === m.text)
-        throw Error("Choose separate passage and code columns.");
-      return m;
+      if (
+        m.codes === m.text ||
+        m.source === m.text ||
+        m.columns?.some((f) => f.id === m.text)
+      )
+        throw Error(
+          "Use separate columns for the passage text, interview identifier and codes.",
+        );
+      return codedSheet(choice, m);
     },
   );
   if (route === "coded") {
@@ -102,7 +108,7 @@ async function sheet(doc, route) {
   bindIndicatorColumns(choice, "codecol");
   const map = await pendingMap;
   if (!map) return null;
-  const { passages, sources } = codedSheet(choice, map);
+  const { passages, sources } = map;
   const result = corpus(choice.name, passages, sources);
   result.excerptSources = [...sources];
   return result;
@@ -290,7 +296,15 @@ export async function importFiles(files, route) {
       const t = await sheet(d, route);
       if (!t) return null;
       datasets.push(t);
-    } else docs.push(d);
+    } else {
+      if (!d.paragraphs.some((text) => text.trim()))
+        throw Error(
+          "“" +
+            d.name +
+            "” contains no readable transcript text. Choose a document containing the interview.",
+        );
+      docs.push(d);
+    }
   }
   if (docs.length) {
     const d = await documents(docs, route);

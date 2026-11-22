@@ -64,6 +64,58 @@ function candidates(fields, phrase) {
   });
 }
 
+// "X by Y" specifies the axes. Match both before choosing a within-group denominator.
+export function namedSurveyComparison(fields, question) {
+  const chart = namedChartRequest(question);
+  if (!["bars", "dots", "grid", "small", "table", "stack"].includes(chart))
+    return null;
+  const pair = question
+    .trim()
+    .replace(/[.?!]+$/u, "")
+    .match(
+      /\b(?:of|showing)\s+(.+?)\s+by\s+([^,]+?)(?:,?\s+(?:showing|using|as)\s+(counts?|numbers?|percentages?|percents?)(?:\s+within\s+each\s+(.+))?)?$/i,
+    );
+  if (
+    !pair ||
+    /\b(?:only|excluding|include|except|weighted|adjust|control for|instead|filter)\b/i.test(
+      question,
+    )
+  )
+    return null;
+  const options = fields.filter(
+    (f) =>
+      ["ordered", "category", "multiple", "number"].includes(f.type) &&
+      f.levels.length &&
+      !f.roles?.includes("open"),
+  );
+  const x = options.find((f) => f.id === resolveAxis(options, pair[1]));
+  const y = options.find((f) => f.id === resolveAxis(options, pair[2]));
+  if (
+    !x ||
+    !y ||
+    x === y ||
+    y.type === "multiple" ||
+    (chart === "stack" && x.type === "multiple")
+  )
+    return null;
+  if (
+    pair[4] &&
+    pair[4].toLowerCase() !== "group" &&
+    !tokens(pair[4]).every((t) => tokens(y.label).includes(t))
+  )
+    return null;
+  if (chart === "stack" && /count|number/i.test(pair[3] || "")) return null;
+  return {
+    action: "draw",
+    task: "group",
+    chart,
+    x: x.id,
+    y: y.id,
+    measure:
+      chart === "stack" || /percent/i.test(pair[3] || "") ? "percent" : "count",
+  };
+}
+
 // Handle explicit, unqualified requests for a relationship chart. Specific
 // chart types, filters, interpretation and more involved questions use the tutor.
 export function directComparison(fields, question) {

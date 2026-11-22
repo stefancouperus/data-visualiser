@@ -37,6 +37,9 @@ export function analyticalEvidence(d, v, question) {
         count.sources.add(p.source);
       }
     }
+    for (const entry of d.interviews?.established ? d.coding?.book || [] : [])
+      if (!counts.has(entry.label))
+        counts.set(entry.label, { n: 0, sources: new Set() });
     const requested = [...counts.keys()].filter(
       (code) => code === v.x || code === v.y || mentions(question, code),
     );
