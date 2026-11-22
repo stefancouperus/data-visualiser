@@ -29,6 +29,12 @@ export function fitModel(
   const specs = predictors.map((k) => {
     const f = field(k),
       values = [...new Set(used.map((r) => r[k]))];
+    if (values.length < 2)
+      throw Error(
+        "“" +
+          f.label +
+          "” has only one value in the complete records. Remove it or change the filter before fitting the model.",
+      );
     return {
       k,
       f,

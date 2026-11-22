@@ -38,18 +38,52 @@ export function verifyProject(p) {
     )
       throw Error("Invalid dataset identifiers.");
   }
+  const ids = p.datasets.map((d) => d.id);
+  const validViews = (views) =>
+    Array.isArray(views) &&
+    views.every(
+      (v) =>
+        v &&
+        typeof v === "object" &&
+        !Array.isArray(v) &&
+        (v.items == null || Array.isArray(v.items)) &&
+        (v.predictors == null || Array.isArray(v.predictors)),
+    );
+  if (
+    new Set(ids).size !== ids.length ||
+    !validViews(p.views) ||
+    (p.confirmed !== undefined && !Array.isArray(p.confirmed)) ||
+    p.saved.some(
+      (s) =>
+        !s ||
+        !ids.includes(s.dataset) ||
+        !validViews(s.views) ||
+        s.views.length !== 2,
+    )
+  )
+    throw Error(
+      "The project file contains incomplete views or duplicate datasets. Open another saved copy.",
+    );
   if (!p.settingsOnly)
     for (const d of p.datasets) {
       if (!d.id || !["text", "table"].includes(d.kind))
         throw Error("Invalid project dataset.");
       if (
         d.kind === "table" &&
-        (!Array.isArray(d.rows) || !Array.isArray(d.fields))
+        (!Array.isArray(d.rows) ||
+          !Array.isArray(d.fields) ||
+          !d.fields.length ||
+          d.fields.some((f) => !Array.isArray(f.levels)) ||
+          d.rows.some((r) => !r || typeof r !== "object"))
       )
         throw Error("Missing table data.");
       if (
         d.kind === "text" &&
-        (!Array.isArray(d.passages) || !Array.isArray(d.sources))
+        (!Array.isArray(d.passages) ||
+          !Array.isArray(d.sources) ||
+          d.passages.some(
+            (p) => typeof p.text !== "string" || !Array.isArray(p.codes),
+          ))
       )
         throw Error("Missing passage data.");
     }
@@ -65,10 +99,10 @@ export function verifyProject(p) {
   };
 }
 export function settingsProject(p) {
-  const { tutorHistory, includeBotChat, ...settings } = p;
-  const copy = structuredClone(settings);
+  const { tutorHistory, includeBotChat, datasets, ...settings } = p;
+  const copy = { ...settings };
   copy.settingsOnly = true;
-  copy.datasets = copy.datasets.map((d) =>
+  copy.datasets = datasets.map((d) =>
     d.kind === "table"
       ? {
           id: d.id,
@@ -83,7 +117,7 @@ export function settingsProject(p) {
         }
       : { id: d.id, name: d.name, kind: d.kind, unit: d.unit },
   );
-  return copy;
+  return structuredClone(copy);
 }
 export function reattach(settings, actual) {
   if (settings.datasets.length !== actual.length)
@@ -146,6 +180,40 @@ export function linkage(d, t, key, mapping) {
       );
   }
   return attrs;
+}
+export function renameTheme(project, d, old, name, undoViews) {
+  if (!old || !name) throw Error("Choose an existing code and enter a label.");
+  for (const entries of [d.coding?.book, d.coding?.meanings]) {
+    if (!entries) continue;
+    const from = entries.find((e) => e.label === old);
+    const into = entries.find((e) => e.label === name);
+    if (from && from !== into) {
+      if (into) {
+        if (!into.definition) into.definition = from.definition;
+        entries.splice(entries.indexOf(from), 1);
+      } else from.label = name;
+    }
+  }
+  const rename = (c) => (c === old ? name : c);
+  for (const p of d.passages) p.codes = [...new Set(p.codes.map(rename))];
+  const views = [
+    ...project.views,
+    ...undoViews.flat(),
+    ...project.saved.filter((s) => s.dataset === d.id).flatMap((s) => s.views),
+  ];
+  for (const v of views) {
+    if (v.x === old) v.x = name;
+    if (v.y === old) v.y = name;
+    if (v.items) v.items = [...new Set(v.items.map(rename))];
+    if (v.task === "two" && v.x === v.y) {
+      v.task = "one";
+      v.y = "";
+      v.chart = "bars";
+      v.title = "";
+      v.annotation = "";
+    }
+    if (v.highlight === old && old !== name) delete v.highlight;
+  }
 }
 export function dataCount(d) {
   return d.kind === "text"

@@ -44,7 +44,7 @@ export function makeTable(grid, name) {
   if (!data.length)
     throw Error("This export has headers but no response records.");
   const fields = Array.from(
-    { length: Math.max(rows[0].length, titles.length) },
+    { length: rows.reduce((width, row) => Math.max(width, row.length), 0) },
     (_, i) => {
       const raw = str(rows[0][i]),
         label = str(titles[i]).trim() || raw || "Column " + (i + 1);
@@ -122,7 +122,8 @@ export function wordDocument(bytes, name) {
   const all = [],
     ranges = new Map(),
     active = new Set(),
-    paragraphs = [];
+    paragraphs = [],
+    paragraphStarts = [];
   let position = 0;
   const add = (text, start, end, marker) => {
     if (!text.trim()) return;
@@ -134,6 +135,7 @@ export function wordDocument(bytes, name) {
     all.push({ ...segment(name, text, [marker]), start, end });
   };
   for (const p of els(body, "p")) {
+    const paragraphStart = position;
     let colour = "",
       run = "",
       runStart = position;
@@ -172,13 +174,18 @@ export function wordDocument(bytes, name) {
       range.text += "\n";
       range.end = position;
     }
-    const t = txt(p).trim();
-    if (t) paragraphs.push(t);
+    const raw = txt(p);
+    if (raw.trim()) {
+      paragraphs.push(raw.trim());
+      paragraphStarts.push(
+        paragraphStart + raw.length - raw.trimStart().length,
+      );
+    }
   }
   for (const [k, r] of ranges)
     if (comments.has(k))
       add(r.text, r.start, r.end, "comment: " + comments.get(k));
-  return { name, paragraphs, marked: all };
+  return { name, paragraphs, paragraphStarts, marked: all };
 }
 export function texts(name, paragraphs) {
   return paragraphs.filter((s) => s.trim()).map((t) => segment(name, t.trim()));

@@ -1439,3 +1439,70 @@ test("interview heatmaps use the chosen colour ramp and pattern dots use the sty
   await expect(chart.locator('path[fill="#823447"]').first()).toBeVisible();
   await expect(chart.locator("[data-pattern-row]").first()).toBeVisible();
 });
+
+test("a partial Word highlight preserves surrounding text and repeated unmarked words in order", async ({
+  page,
+}) => {
+  const w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  const doc = zipSync({
+    "word/document.xml": strToU8(
+      `<w:document xmlns:w="${w}"><w:body><w:p><w:r><w:t>Before </w:t></w:r><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>delayed</w:t></w:r><w:r><w:t> after.</w:t></w:r></w:p><w:p><w:r><w:t>delayed</w:t></w:r></w:p></w:body></w:document>`,
+    ),
+  });
+  await upload(page, /I have coded interviews/, "timing.docx", doc);
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await btn("Continue").click();
+  await page.getByLabel("colour: yellow").fill("Timing");
+  await btn("Continue").click();
+  const cells = page.locator("main table tbody tr");
+  await expect(cells).toHaveCount(4);
+  expect(await cells.locator("td:nth-child(2)").allTextContents()).toEqual([
+    "Before",
+    "delayed",
+    "after.",
+    "delayed",
+  ]);
+  expect(await cells.locator("td:nth-child(3)").allTextContents()).toEqual([
+    "",
+    "Timing",
+    "",
+    "",
+  ]);
+  await btn("Confirm and explore").click();
+  await page
+    .getByRole("radio", { name: "Compare interviews", exact: true })
+    .check();
+  const cell = page.locator("#graphic0 [data-code=Timing]").first();
+  await cell.focus();
+  await cell.press("Enter");
+  await expect(page.locator("dialog")).toContainText("1 matching passages");
+});
+
+test("an Excel worksheet with a title, blank cells and zero opens via its chosen header", async ({
+  page,
+}) => {
+  const { default: Excel } = await import("exceljs/dist/exceljs.min.js");
+  const book = new Excel.Workbook();
+  book.addWorksheet("Notes").addRow(["Notes"]);
+  const sheet = book.addWorksheet("Survey");
+  sheet.addRows([
+    ["Class exercise"],
+    ["Rating", "Site"],
+    [0, "Depot"],
+    [null, "Office"],
+    [3, "Depot"],
+  ]);
+  await upload(
+    page,
+    /I have a Qualtrics export/,
+    "synthetic.xlsx",
+    await book.xlsx.writeBuffer(),
+  );
+  await page.getByRole("combobox", { name: "Worksheet" }).selectOption("1");
+  await page.getByLabel("Header row number").fill("2");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Confirm and explore" }).click();
+  await expect(page.locator("#graphic0")).toContainText(
+    "2 valid numerical answers of 3 selected records",
+  );
+});

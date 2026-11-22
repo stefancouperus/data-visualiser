@@ -490,3 +490,74 @@ test("each new project's response categories come from its own rows or matched q
     "Removed",
   ]);
 });
+
+test("columns beyond the last named heading retain their values", () => {
+  const d = makeTable(
+    [
+      ["Response", "Rating"],
+      ["a", "Good", "East"],
+      ["b", "Poor", "West"],
+    ],
+    "survey",
+  );
+  assert.equal(d.fields[2].label, "Column 3");
+  assert.deepEqual(
+    d.rows.map((r) => r.c2),
+    ["East", "West"],
+  );
+});
+
+test("merging interview codes keeps the codebook, live, saved and undo views aligned", async () => {
+  const { renameTheme } = await import("../src/project.js");
+  const d = corpus(
+    "Work",
+    [{ id: "p", text: "Late shift", source: "A", codes: ["Time", "Schedule"] }],
+    ["A"],
+  );
+  d.coding = {
+    book: [
+      { label: "Schedule", definition: "Hours" },
+      { label: "Time", definition: "Clock" },
+    ],
+    meanings: [{ label: "Time", definition: "Clock" }],
+  };
+  const p = fresh(),
+    pattern = { task: "patterns", items: ["Time", "Schedule"] },
+    earlier = [structuredClone(pattern)];
+  p.views = [pattern];
+  p.saved = [
+    {
+      dataset: d.id,
+      views: [
+        { task: "two", x: "Time", y: "Schedule", chart: "bars" },
+        structuredClone(pattern),
+      ],
+    },
+  ];
+  renameTheme(p, d, "Time", "Schedule", [earlier]);
+  assert.deepEqual(d.passages[0].codes, ["Schedule"]);
+  assert.deepEqual(d.coding.book, [{ label: "Schedule", definition: "Hours" }]);
+  assert.equal(d.coding.meanings[0].label, "Schedule");
+  assert.deepEqual(
+    [p.views[0], earlier[0], p.saved[0].views[1]].map((v) => v.items),
+    [["Schedule"], ["Schedule"], ["Schedule"]],
+  );
+  assert.equal(p.saved[0].views[0].task, "one");
+});
+
+test("a predictor with only one observed category cannot silently disappear from a model", () => {
+  const t = makeTable(
+    [
+      ["Time", "Shift", "Rating"],
+      [1, "Day", 6],
+      [2, "Day", 7],
+      [3, "Day", 8],
+      [4, "Day", 7],
+    ],
+    "model",
+  );
+  assert.throws(
+    () => fitModel(t, t.rows, { outcome: "c2", predictors: ["c0", "c1"] }),
+    /Shift.*only one value/,
+  );
+});

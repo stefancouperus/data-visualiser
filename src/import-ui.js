@@ -209,11 +209,21 @@ async function documents(docs, route) {
         codes: [...new Set(p.markers.flatMap((m) => mapped.marks[m] || []))],
       }))
       .filter((p) => p.codes.length);
-    for (const p of selected) {
-      p.reviewed = true;
-      passages.push(p);
-    }
-    for (const text of doc.paragraphs) {
+    const ordered = [...selected].sort(
+      (a, b) => a.start - b.start || a.end - b.end,
+    );
+    for (const p of ordered) p.reviewed = true;
+    const parts = [...ordered];
+    let nextRange = 0;
+    for (const [index, text] of doc.paragraphs.entries()) {
+      const start = doc.paragraphStarts?.[index] ?? index,
+        end = start + text.length;
+      while (nextRange < ordered.length && ordered[nextRange].end <= start)
+        nextRange++;
+      const addText = (value, at, codes = []) => {
+        const [p] = texts(doc.name, [value]);
+        if (p) parts.push({ ...p, start: at, codes, reviewed: !!codes.length });
+      };
       const inline = [];
       let edited = text;
       if (mapped.open && mapped.close) {
@@ -227,16 +237,31 @@ async function documents(docs, route) {
           } else edited += mapped.open + s;
         }
       }
-      if (
-        inline.length ||
-        !selected.some((p) => text.includes(p.text) || p.text.includes(text))
-      ) {
-        const p = texts(doc.name, [edited.trim() || text])[0];
-        p.codes = inline.filter(Boolean);
-        p.reviewed = !!p.codes.length;
-        passages.push(p);
+      if (inline.length) {
+        const codes = [...new Set(inline.filter(Boolean))];
+        const same = ordered.find((p) => p.start === start && p.end === end);
+        if (same) {
+          same.codes = [...new Set([...same.codes, ...codes])];
+          same.text = edited.trim() || text;
+        } else addText(edited.trim() || text, start, codes);
+        continue;
       }
+      // Keep every unmarked part once, even when identical words elsewhere were coded.
+      let cursor = start;
+      for (
+        let i = nextRange;
+        i < ordered.length && ordered[i].start < end;
+        i++
+      ) {
+        const marked = ordered[i];
+        if (marked.start > cursor)
+          addText(text.slice(cursor - start, marked.start - start), cursor);
+        cursor = Math.max(cursor, marked.end);
+      }
+      if (cursor < end) addText(text.slice(cursor - start), cursor);
     }
+    for (const part of parts.sort((a, b) => a.start - b.start))
+      passages.push(part);
   }
   const result = corpus(
     docs.length === 1 ? docs[0].name : "Coded interviews",

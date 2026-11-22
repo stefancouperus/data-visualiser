@@ -31,6 +31,7 @@ import {
   verifyProject,
   reattach,
   settingsProject,
+  renameTheme,
   linkage,
 } from "./project.js";
 import { newView, analyse, allCodes, kinds } from "./analysis.js";
@@ -338,7 +339,7 @@ function summary(i, v = project.views[i]) {
 function draw(i) {
   const a = summary(i),
     v = project.views[i];
-  get("graphic" + i).replaceChildren(figure(a, v));
+  get("graphic" + i).replaceChildren(figure(a, v, { interactive: true }));
   if (a.coefficients)
     get("modeldetails" + i).innerHTML =
       "<details><summary>Coefficients and model details</summary>" +
@@ -1688,28 +1689,9 @@ async function reviewAction(act, d, el) {
         const old = val("oldcode"),
           name = val("newcode").trim();
         if (!name) throw Error("Enter a label.");
-        if (d.coding?.meanings && old !== name) {
-          const entry = d.coding.meanings.find((e) => e.label === old);
-          if (entry && !d.coding.meanings.some((e) => e.label === name))
-            entry.label = name;
-          d.coding.meanings = d.coding.meanings.filter((e) => e.label !== old);
-        }
+        renameTheme(project, d, old, name, undoViews);
         suggestions = [];
-        d.passages.forEach(
-          (p) =>
-            (p.codes = [
-              ...new Set(p.codes.map((c) => (c === old ? name : c))),
-            ]),
-        );
-        [
-          ...project.views,
-          ...project.saved
-            .filter((s) => s.dataset === d.id)
-            .flatMap((s) => s.views),
-        ].forEach((v) => {
-          if (v.x === old) v.x = name;
-          if (v.y === old) v.y = name;
-        });
+        proposal = captionDraft = queuedShortcut = null;
         render();
       },
     );
@@ -1948,7 +1930,7 @@ function evidence(i, match) {
     v = project.views[i],
     isText = d.kind === "text";
   if (v.task === "patterns" && !isText && !match) {
-    const fields = (v.items || [])
+    const fields = [...(v.items || []), ...(v.groupBy ? [v.groupBy] : [])]
       .map((id) => d.fields.find((f) => f.id === id))
       .filter(Boolean);
     const rows = filteredRows(d).filter(
@@ -2800,13 +2782,12 @@ document.addEventListener("keydown", (e) => {
   }
   if (
     (e.key === "Enter" || e.key === " ") &&
-    e.target.hasAttribute("data-pattern-row")
+    e.target.closest("[data-panel]") &&
+    (e.target.hasAttribute("data-pattern-row") ||
+      e.target.hasAttribute("data-code"))
   ) {
     e.preventDefault();
-    patternEvidence(
-      Number(e.target.closest("[data-panel]").dataset.panel),
-      Number(e.target.dataset.patternRow),
-    );
+    e.target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     return;
   }
   if (

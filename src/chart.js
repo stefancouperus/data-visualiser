@@ -109,7 +109,10 @@ export function styleSample(style, palette) {
   pointMark(svg, style, 85, 18, 5, scheme.series[0], paper);
   return svg.node();
 }
-export function figure(a, v, { width = 700 } = {}) {
+export function figure(a, v, { width = 700, interactive = false } = {}) {
+  const inspectable =
+    interactive &&
+    (v.task === "patterns" || ["grid", "presence"].includes(v.chart));
   const style = styleFor(v.style),
     theme = figureStyles[style],
     mono = v.palette === "grey";
@@ -125,7 +128,7 @@ export function figure(a, v, { width = 700 } = {}) {
   const root = d3
     .create("svg")
     .attr("xmlns", "http://www.w3.org/2000/svg")
-    .attr("role", "img")
+    .attr("role", inspectable ? "group" : "img")
     .attr("aria-label", a.title)
     .attr("font-family", theme.font)
     .attr("data-style", style)
@@ -344,13 +347,13 @@ export function figure(a, v, { width = 700 } = {}) {
         .attr("height", pos - rowStart)
         .attr("fill", "transparent")
         .attr("data-pattern-row", index)
-        .attr("role", "button")
-        .attr("tabindex", 0)
+        .attr("role", inspectable ? "button" : null)
+        .attr("tabindex", inspectable ? 0 : null)
         .attr(
           "aria-label",
           "Read evidence: " + (a.groupLabel ? r.group + " · " : "") + label,
         )
-        .attr("cursor", "pointer")
+        .attr("cursor", inspectable ? "pointer" : null)
         .append("title")
         .text("Read the evidence for " + label);
     }
@@ -422,7 +425,13 @@ export function figure(a, v, { width = 700 } = {}) {
             .append("g")
             .attr("data-code", r.label)
             .attr("data-source", g)
-            .attr("cursor", "pointer");
+            .attr("role", inspectable ? "button" : null)
+            .attr("tabindex", inspectable ? 0 : null)
+            .attr(
+              "aria-label",
+              "Read evidence: " + g + " · " + r.label + " · " + value,
+            )
+            .attr("cursor", inspectable ? "pointer" : null);
           cell
             .append("rect")
             .attr("x", margin + labelW + i * cw)

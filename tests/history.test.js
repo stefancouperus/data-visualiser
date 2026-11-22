@@ -52,3 +52,13 @@ test("project focus survives a project download without chat and older projects 
   delete p.researchFocus;
   assert.equal(verifyProject(p).researchFocus, "");
 });
+
+test("incomplete views and duplicate datasets are rejected before switching projects", () => {
+  const p = fresh();
+  p.views = [null, {}];
+  assert.throws(() => verifyProject(p), /incomplete views/);
+  p.views = [];
+  const d = { id: "aa", kind: "text", sources: [], passages: [] };
+  p.datasets = [d, d];
+  assert.throws(() => verifyProject(p), /duplicate datasets/);
+});
