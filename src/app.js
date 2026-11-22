@@ -1,3 +1,4 @@
+import { structuredAnswer } from "./bot-response.js";
 import { isInterview, interviews, appendInterviews } from "./interviews.js";
 import { interviewScreen, interviewAction } from "./interview-workspace.js";
 import { writtenAnswerSet, isOpenQuestion } from "./open-answers.js";
@@ -1157,15 +1158,6 @@ async function requestTutor(payload) {
   }
   return data.answer;
 }
-function structuredAnswer(answer) {
-  return JSON.parse(
-    answer
-      .trim()
-      .replace(/^```(?:json)?/i, "")
-      .replace(/```$/, "")
-      .trim(),
-  );
-}
 async function extractCodebook(document, code) {
   if (!sessionStorage.getItem("dv-session")) {
     if (!code.trim())
@@ -1626,15 +1618,19 @@ async function ask(question, skill, intent = "") {
     } else if (skill === "recommend") {
       let pick;
       try {
-        pick = JSON.parse(
-          answer
-            .trim()
-            .replace(/^\x60\x60\x60(?:json)?/i, "")
-            .replace(/\x60\x60\x60$/, "")
-            .trim(),
-        );
+        const requestedAction =
+          !!intent ||
+          /\b(?:draw|create|make|plot|fit|build|show|compare|visualise|visualize|suggest|recommend)\b/i.test(
+            question,
+          );
+        pick = structuredAnswer(answer, requestedAction);
       } catch {
-        pick = { explanation: answer };
+        pick = {
+          action: "answer",
+          explanation: /[`]{3}(?:json)?\s*[{]|^\s*[{]/i.test(answer)
+            ? "I couldn’t read a single usable instruction from that reply. Please try the request again."
+            : answer,
+        };
       }
       if (!pick || typeof pick !== "object")
         pick = {

@@ -437,13 +437,16 @@ test("tutor proposals fit a regression through the normal chart controls", async
   await page.route("https://tutor.example.test/ask", (route) =>
     route.fulfill({
       json: {
-        answer: JSON.stringify({
-          action: "draw",
-          task: "model",
-          chart: "model",
-          outcome: "Score",
-          predictors: ["Age"],
-        }),
+        answer:
+          "```json\n" +
+          JSON.stringify({
+            action: "draw",
+            task: "model",
+            chart: "model",
+            outcome: "Score",
+            predictors: ["Age"],
+          }) +
+          "\n```\nI will draw this regression.",
       },
     }),
   );

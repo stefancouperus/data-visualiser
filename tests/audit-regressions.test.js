@@ -145,3 +145,20 @@ test("whole-interview coding sends original passages once and respects an alread
     false,
   );
 });
+
+test("one model instruction survives Markdown and an explanation; competing instructions are rejected", async () => {
+  const { structuredAnswer } = await import("../src/bot-response.js");
+  const action = { action: "draw", task: "model" },
+    json = JSON.stringify(action),
+    block = "```json\n" + json + "\n```";
+  assert.deepEqual(
+    structuredAnswer(block + "\nHere is the regression."),
+    action,
+  );
+  assert.deepEqual(
+    structuredAnswer(json + "\nHere is the regression."),
+    action,
+  );
+  assert.throws(() => structuredAnswer(block + "\n" + block));
+  assert.throws(() => structuredAnswer("For example: " + block, false));
+});
