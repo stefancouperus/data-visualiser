@@ -1,4 +1,87 @@
 import { test, expect } from "@playwright/test";
+import { makeTable } from "../../src/import.js";
+import { fresh } from "../../src/project.js";
+
+test("exported comparison names the filter on each panel, including a fitted model", async ({
+  page,
+}) => {
+  const survey = makeTable(
+    [
+      ["Support", "Campus", "Hours", "Score"],
+      ["Yes", "North", "1", "4"],
+      ["Yes", "North", "2", "6"],
+      ["No", "South", "1", "3"],
+      ["Yes", "South", "2", "5"],
+      ["Yes", "South", "3", "8"],
+      ["No", "South", "4", "8"],
+    ],
+    "Student survey",
+  );
+  const project = {
+    ...fresh(),
+    datasets: [survey],
+    active: survey.id,
+    confirmed: [survey.id],
+    linked: false,
+    figurePanels: "both",
+    comparisonStarted: true,
+    views: [
+      {
+        task: "one",
+        x: "c0",
+        y: "",
+        chart: "bars",
+        measure: "count",
+        filter: "c1",
+        value: "North",
+      },
+      {
+        task: "model",
+        chart: "model",
+        outcome: "c3",
+        predictors: ["c2"],
+        filter: "c1",
+        value: "South",
+      },
+    ],
+  };
+  await page.goto("/");
+  const file = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Open a saved project" }).click();
+  await (
+    await file
+  ).setFiles({
+    name: "comparison.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await expect(page.locator("#graphic0 svg")).toBeVisible();
+  await expect(page.locator("#graphic1 svg")).toBeVisible();
+  await page
+    .getByRole("button", { name: "Save and export", exact: true })
+    .click();
+  await page.getByLabel("Image format").selectOption("svg");
+  const pending = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download figure" }).click();
+  const chunks = [];
+  for await (const chunk of await (await pending).createReadStream())
+    chunks.push(chunk);
+  const panels = await page.evaluate((xml) => {
+    const svg = new DOMParser().parseFromString(
+      xml,
+      "image/svg+xml",
+    ).documentElement;
+    return [...svg.children].map((panel) =>
+      [...panel.querySelectorAll("text")].map((t) => t.textContent).join(" "),
+    );
+  }, Buffer.concat(chunks).toString());
+  expect(panels).toHaveLength(2);
+  expect(panels[0]).toContain("Filtered by Campus = “North”");
+  expect(panels[0]).not.toContain("South");
+  expect(panels[1]).toContain("Filtered by Campus = “South”");
+  expect(panels[1]).not.toContain("North");
+  expect(panels[1]).toContain("4 complete records");
+});
 
 test("the bot filters an existing grouped chart using its displayed cohort, with undo", async ({
   page,

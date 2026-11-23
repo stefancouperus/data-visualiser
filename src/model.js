@@ -17,6 +17,13 @@ export function fitModel(
     throw Error(
       "Code written answers into themes before comparing them. Choose a closed question for this model.",
     );
+  const checkbox = predictors.map(field).find((f) => f?.type === "multiple");
+  if (checkbox)
+    throw Error(
+      "People can tick several answers to “" +
+        checkbox.label +
+        "”. Remove it from the factors and choose an individual option column or a single-answer question.",
+    );
   const used = rows.filter((r) =>
     [outcome, ...predictors].every(
       (k) =>

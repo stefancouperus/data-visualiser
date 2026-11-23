@@ -1,7 +1,14 @@
-import { hasAnswer, choicesIn, optionLevels } from "./survey-answers.js";
+import {
+  hasAnswer,
+  choicesIn,
+  optionLevels,
+  isSingleAnswerField,
+  groupingQuestionHint,
+} from "./survey-answers.js";
 import { patternSummary } from "./patterns.js";
 import { allCodes } from "./coding.js";
-import { wordCloudData } from "./word-cloud.js";
+import { passageUnits } from "./transcript-index.js";
+import { wordCounts } from "./word-counts.js";
 import { bin } from "d3";
 import { gapGroups } from "./survey-gap.js";
 import { filteredRows } from "./import.js";
@@ -20,7 +27,6 @@ export const kinds = {
   small: "Small multiples",
   presence: "Presence grid",
   excerpts: "Read excerpts",
-  wordcloud: "Word cloud",
   model: "Fitted model",
 };
 export { allCodes };
@@ -59,8 +65,7 @@ export function newView(d) {
   };
 }
 export function analyse(d, v) {
-  if (d.kind === "text" && (v.task === "words" || v.chart === "wordcloud"))
-    return wordCloudData(d, v);
+  if (d.kind === "text" && v.task === "words") return wordCounts(d, v);
   if (v.chart === "gap" && (v.task !== "group" || d.kind !== "table"))
     throw Error(
       "Choose a survey question and a question that splits its answers into two groups.",
@@ -83,6 +88,13 @@ export function analyse(d, v) {
   )
     throw Error(
       "Use a closed question to split or filter respondents. Open Written survey answers to compare themes.",
+    );
+  if (["group", "two"].includes(v.task) && !isSingleAnswerField(y))
+    throw Error(groupingQuestionHint(y));
+  if (["scatter", "line"].includes(v.chart) && v.z && !isSingleAnswerField(z))
+    throw Error(
+      groupingQuestionHint(z) +
+        " You can also choose One series under Colour by.",
     );
   const rows = filteredRows(d, v);
   const base = {
@@ -233,7 +245,9 @@ function qualitative(d, v) {
   const bySource = new Map(
     sources.map((source) => [source, { total: 0, codes: new Map() }]),
   );
-  const selected = d.passages.filter((p) => bySource.has(p.source));
+  const selected = passageUnits(
+    d.passages.filter((p) => bySource.has(p.source)),
+  );
   for (const p of selected) {
     const row = bySource.get(p.source);
     row.total++;
@@ -276,7 +290,7 @@ function qualitative(d, v) {
         value: v.measure === "percent" ? (100 * n) / sources.length : n,
       }));
     const reviewed = new Set(
-      selected.filter((p) => p.reviewed && !p.parent).map((p) => p.source),
+      selected.filter((p) => p.reviewed).map((p) => p.source),
     ).size;
     base.note =
       reviewed +
@@ -358,9 +372,6 @@ function qualitative(d, v) {
     selected.filter((p) => p.reviewed).length +
     " of " +
     selected.length +
-    " passages reviewed. Zero means no matching coded passage." +
-    (selected.some((p) => p.parent)
-      ? " Saved quotations count as separate passages."
-      : "");
+    " passages reviewed. Zero means no matching coded passage. A theme counts once per original passage, including labels on its quotations.";
   return base;
 }

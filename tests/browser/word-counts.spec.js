@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
+import { fresh } from "../../src/project.js";
 
-test("students explore the words in a coded interview, read passages, compare counts and export a bot-drawn cloud", async ({
+test("students explore the words in a coded interview, read passages, compare counts and export a ranked word table", async ({
   page,
 }) => {
   await page.addInitScript(() =>
@@ -33,9 +34,10 @@ test("students explore the words in a coded interview, read passages, compare co
   await button("Coding complete · explore themes").click();
   await page
     .getByLabel("What would you like to find out?")
-    .selectOption({ label: "Explore frequently used words" });
+    .selectOption({ label: "Count words in passages" });
   const graphic = page.locator("#graphic0");
-  const word = (label) => graphic.locator('[data-cloud-word="' + label + '"]');
+  const word = (label) =>
+    graphic.locator('[data-counted-word="' + label + '"]');
   await expect(word("stoep")).toHaveAttribute("aria-label", /3 occurrences/);
   await expect(word("de")).toHaveCount(0);
   await word("stoep").focus();
@@ -55,8 +57,7 @@ test("students explore the words in a coded interview, read passages, compare co
   await page.getByLabel("Keep this value").selectOption("Hill");
   await expect(word("stoep")).toHaveAttribute("aria-label", /2 occurrences/);
   await expect(word("haven")).toHaveCount(0);
-  await page.locator(".chart-picker summary").click();
-  await page.locator('[data-chart="table"]').click();
+  await expect(page.locator('[data-chart="wordcloud"]')).toHaveCount(0);
   await expect(graphic).toContainText("Occurrences");
   await expect(word("stoep")).toHaveAttribute("aria-label", /2 occurrences/);
   await word("stoep").press("Space");
@@ -67,9 +68,15 @@ test("students explore the words in a coded interview, read passages, compare co
   await button("Data bot").click();
   await page.locator("#question").fill("Draw a word cloud for all interviews");
   await button("Send").click();
-  await expect(
-    graphic.locator("text.cloud-word").filter({ hasText: "stoep" }),
-  ).toHaveAttribute("aria-label", /3 occurrences/);
+  await expect(page.locator(".chatlog")).toContainText(
+    "Count words in passages",
+  );
+  await expect(word("stoep")).toHaveAttribute("aria-label", /2 occurrences/);
+  await page
+    .locator("#question")
+    .fill("Show a word count table for all interviews");
+  await button("Send").click();
+  await expect(word("stoep")).toHaveAttribute("aria-label", /3 occurrences/);
   await expect(word("park")).toHaveAttribute("aria-label", /2 occurrences/);
   await page.locator("[data-act=closebot]").click();
   await button("Save and export").click();
@@ -80,8 +87,75 @@ test("students explore the words in a coded interview, read passages, compare co
   const chunks = [];
   for await (const chunk of await file.createReadStream()) chunks.push(chunk);
   const svg = Buffer.concat(chunks).toString();
-  expect(svg).toContain('class="cloud-word"');
+  expect(svg).toContain("Occurrences");
+  expect(svg).not.toContain("cloud-word");
   expect(svg).toContain("stoep");
-  expect(svg).not.toContain("data-cloud-word");
+  expect(svg).not.toContain("data-counted-word");
   expect(svg).not.toContain("stoep bij de haven");
+});
+
+test("a downloaded legacy cloud opens with the same theme and source as a word table", async ({
+  page,
+}) => {
+  const old = {
+    chart: "wordcloud",
+    task: "one",
+    x: "Cost",
+    filter: "source",
+    value: "River",
+    title: "Selected wording",
+    palette: "grey",
+  };
+  const data = {
+    id: "walks",
+    kind: "text",
+    name: "Walks",
+    textPurpose: "documents",
+    sources: ["River", "Hill"],
+    passages: [
+      {
+        id: "a",
+        source: "River",
+        text: "Timetables changed.",
+        codes: ["Planning"],
+      },
+      { id: "b", source: "River", text: "Fares rose.", codes: ["Cost"] },
+      {
+        id: "c",
+        source: "Hill",
+        text: "Tickets disappeared.",
+        codes: ["Cost"],
+      },
+    ],
+  };
+  const project = {
+    ...fresh(),
+    active: data.id,
+    datasets: [data],
+    confirmed: [data.id],
+    views: [old, old],
+    savedVisuals: [{ dataset: data.id, name: "Scoped wording", view: old }],
+  };
+  await page.goto("/");
+  const pick = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Open a saved project" }).click();
+  await (
+    await pick
+  ).setFiles({
+    name: "legacy.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  const graphic = page.locator("#graphic0");
+  await expect(graphic).toContainText("Selected wording");
+  await expect(graphic).toContainText("Occurrences");
+  await expect(graphic.locator('[data-counted-word="fares"]')).toHaveCount(1);
+  await expect(
+    graphic.locator(
+      '[data-counted-word="tickets"], [data-counted-word="timetables"]',
+    ),
+  ).toHaveCount(0);
+  await expect(
+    page.locator('[data-chart="wordcloud"], .cloud-word'),
+  ).toHaveCount(0);
 });

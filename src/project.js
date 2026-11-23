@@ -5,6 +5,7 @@ import {
 import { readFocus } from "./research-focus.js";
 import { readTutorHistory } from "./tutor-history.js";
 import { filteredRows } from "./import.js";
+import { passageUnits } from "./transcript-index.js";
 import { applyAnswerLabels } from "./survey-labels.js";
 import { interviews, sharedBook, pruneEmptyQuotations } from "./interviews.js";
 import { approvedBook, labelKey } from "./coding.js";
@@ -118,6 +119,18 @@ export function verifyProject(p) {
     throw Error(
       "The project file contains incomplete views or duplicate datasets. Open another saved copy.",
     );
+  // Earlier versions displayed the same ranked word counts as a cloud.
+  // Reopen every stored view as a table, keeping its original evidence scope.
+  const views = [
+    ...p.views,
+    ...(p.savedVisuals || []).map((saved) => saved.view),
+    ...p.saved.flatMap((saved) => saved.views),
+    ...Object.values(p.workingViews || {}).flatMap((saved) => saved.views),
+  ];
+  for (const v of views) {
+    if (v.chart === "wordcloud")
+      Object.assign(v, { chart: "table", task: "words" });
+  }
   if (!p.settingsOnly)
     for (const d of p.datasets) {
       const review = d.coding?.bookDraft;
@@ -377,7 +390,9 @@ function rewriteThemeReferences(project, d, old, name, undoViews) {
   ]);
   for (const v of views) {
     const affectedAxis = matches(v.x) || matches(v.y);
-    if (matches(v.x)) v.x = name;
+    // Keep an unavailable word-table theme until a student selects a replacement.
+    // An empty x explicitly means all passages.
+    if (matches(v.x) && (name || v.task !== "words")) v.x = name;
     if (matches(v.y)) v.y = name;
     if (v.items) v.items = [...new Set(v.items.map(rename).filter(Boolean))];
     if (affectedAxis && v.task === "two" && (!v.x || !v.y || v.x === v.y)) {
@@ -513,6 +528,6 @@ export function editInterviewLabel(
 }
 export function dataCount(d) {
   return d.kind === "text"
-    ? d.passages.length + " passages"
+    ? passageUnits(d.passages).length + " passages"
     : d.rows.length + " records";
 }

@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { analyse } from "../src/analysis.js";
-import { wordPassages } from "../src/word-cloud.js";
+import { wordPassages } from "../src/word-counts.js";
+import { editInterviewLabel, fresh, verifyProject } from "../src/project.js";
 
 const passage = (id, source, text, codes = [], extra = {}) => ({
   id,
@@ -16,7 +17,7 @@ const data = (passages, extra = {}) => ({
   passages,
   ...extra,
 });
-const view = { task: "words", chart: "wordcloud", x: "" };
+const view = { task: "words", chart: "table", x: "" };
 
 test("ranks actual words and reports distinct passages and sources with exact-word evidence", () => {
   const d = data(
@@ -58,7 +59,6 @@ test("ranks actual words and reports distinct passages and sources with exact-wo
     wordPassages(d, { ...view, filter: "source", value: "A" }, "stem"),
     [],
   );
-  assert.deepEqual(analyse(d, { ...view, task: "one" }).records, a.records);
   assert.deepEqual(analyse(d, { ...view, chart: "table" }).records, a.records);
 });
 
@@ -139,9 +139,93 @@ test("common-word settings, accents, written answers and empty selections", () =
     wordPassages(d, view, "coöperatie").map((p) => p.id),
     ["a"],
   );
-  assert.equal(analyse(d, { ...view, x: "unassigned code" }).records.length, 0);
+  assert.throws(
+    () => analyse(d, { ...view, x: "unassigned code" }),
+    /theme.*unavailable/,
+  );
   assert.equal(
     analyse(data([passage("b", "2", "de it van the")]), view).records.length,
     0,
   );
+});
+
+test("an ambiguous quotation cannot widen the words counted for a theme", () => {
+  const d = data([
+    passage(
+      "p",
+      "A",
+      "Rent rose. Rent rose. Piano lessons. Repairs.",
+      ["Housing"],
+      {
+        codingEvidence: [
+          { code: "Housing", quote: "Rent rose." },
+          { code: "Housing", quote: "Repairs." },
+        ],
+      },
+    ),
+  ]);
+  const v = { ...view, x: "Housing" };
+  const summary = analyse(d, v);
+  assert.deepEqual(
+    summary.records.map((r) => r.label),
+    ["repairs"],
+  );
+  assert.match(summary.note, /1 supporting quotation was omitted/);
+  assert.deepEqual(wordPassages(d, v, "piano"), []);
+});
+
+test("saved legacy clouds become ranked tables without losing scope, and removed themes require reselection", () => {
+  const d = data(
+    [
+      passage("p", "A", "Rent rose.", ["Housing"]),
+      passage("q", "B", "Shops closed.", ["Trade"]),
+    ],
+    {
+      id: "d",
+      coding: {
+        book: [
+          { label: "Housing", definition: "" },
+          { label: "Trade", definition: "" },
+        ],
+      },
+      interviews: { source: "A", done: ["A", "B"], established: true },
+    },
+  );
+  const legacy = () => ({
+    chart: "wordcloud",
+    task: "one",
+    x: "Housing",
+    filter: "source",
+    value: "A",
+    wordLanguage: "nl",
+    title: "Wording about rent",
+  });
+  const side = () => ({ chart: "bars", task: "one", x: "Trade" });
+  const project = verifyProject({
+    ...fresh(),
+    datasets: [d],
+    active: d.id,
+    views: [legacy(), side()],
+    savedVisuals: [{ dataset: "d", name: "Housing", view: legacy() }],
+    saved: [{ dataset: "d", views: [side(), legacy()] }],
+    workingViews: { d: { views: [legacy(), side()] } },
+  });
+  const migrated = [
+    project.views[0],
+    project.saved[0].views[1],
+    project.savedVisuals[0].view,
+    project.workingViews.d.views[0],
+  ];
+  for (const v of migrated) {
+    assert.deepEqual(v, { ...legacy(), chart: "table", task: "words" });
+    assert.deepEqual(
+      analyse(d, v).records.map((r) => r.label),
+      ["rent", "rose"],
+    );
+  }
+  editInterviewLabel(project, d, { oldLabel: "Housing", remove: true });
+  for (const v of migrated) {
+    assert.equal(v.x, "Housing");
+    assert.throws(() => analyse(d, v), /theme.*unavailable/);
+  }
 });

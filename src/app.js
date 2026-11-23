@@ -28,8 +28,9 @@ import {
   interviewActivity,
 } from "./interview-workspace.js";
 import { transcriptEndpoint } from "./interview-manual.js";
+import { passageUnits } from "./transcript-index.js";
 import { writtenAnswerSet, isOpenQuestion } from "./open-answers.js";
-import { wordPassages } from "./word-cloud.js";
+import { wordPassages } from "./word-counts.js";
 import { confirmedRoles, editRoles } from "./variable-roles.js";
 import { termHelp, bindTermHelp, termMeaning } from "./term-help.js";
 import "./style.css";
@@ -63,7 +64,7 @@ import {
   patternRequest,
   groupingRequest,
   namedChartRequest,
-  wordCloudRequest,
+  wordTableRequest,
   resolveAxis,
 } from "./question-matching.js";
 import { filterRequest } from "./filter-request.js";
@@ -76,6 +77,8 @@ import {
   matchesValue,
   optionLevels,
   displayedAnswer,
+  isSingleAnswerField,
+  groupingQuestionHint,
 } from "./survey-answers.js";
 import { uid, filteredRows } from "./import.js";
 import { importFiles } from "./import-ui.js";
@@ -729,19 +732,30 @@ function summary(i, v = project.views[i]) {
     throw Error(
       "The question used to group or filter this figure now contains written answers. Clear that selection or choose a closed question.",
     );
-  if (v.task !== "model") {
-    const result = analyse(d, v);
-    if (
-      v.filter &&
-      (["box", "gap", "wordcloud"].includes(v.chart) || v.task === "words")
-    ) {
-      const label =
-        d.fields?.find((f) => f.id === v.filter)?.label ||
-        (v.filter === "source" ? "Source" : v.filter);
-      result.note += " Filtered by " + label + " = “" + v.value + "”.";
-    }
-    return result;
+  const result = v.task === "model" ? modelSummary(d, v) : analyse(d, v);
+  if (v.filter) {
+    const field = d.fields?.find((f) => f.id === v.filter);
+    const label = field?.label || (v.filter === "source" ? "Source" : v.filter);
+    if (v.value === "")
+      result.note += " Filtered to blank answers for " + label + ".";
+    else if (field?.type === "multiple")
+      result.note +=
+        " Filtered to records that selected “" +
+        v.value +
+        "” for " +
+        label +
+        ".";
+    else result.note += " Filtered by " + label + " = “" + v.value + "”.";
+  } else if (
+    (step === 3 || step === 4) &&
+    project.views.some((view) => view.filter)
+  ) {
+    result.note += " No subgroup filter on this view.";
   }
+  if (d.rules?.length) result.note += " Project exclusions apply.";
+  return result;
+}
+function modelSummary(d, v) {
   const rows = filteredRows(d, v),
     m = fitModel(d, rows, { ...v, predictors: v.predictors || [] });
   return {
@@ -840,6 +854,17 @@ function tidy(v, key) {
   const d = getData(),
     fs =
       d.fields?.filter((f) => f.type !== "metadata" && f.levels.length) || [];
+  const nextGrouping = () => {
+    const choices = fs.filter((f) => f.id !== v.x && isSingleAnswerField(f));
+    return (
+      (
+        choices.find(
+          (f) =>
+            f.levels.length > 1 && ["category", "ordered"].includes(f.type),
+        ) || choices[0]
+      )?.id || ""
+    );
+  };
   if (
     key === "task" &&
     d.kind === "table" &&
@@ -863,10 +888,14 @@ function tidy(v, key) {
     Object.assign(v, {
       x: "",
       y: "",
-      chart: "wordcloud",
+      chart: "table",
       title: "",
       annotation: "",
     });
+    return;
+  }
+  if (key === "x" && v.task === "words") {
+    v.title = v.annotation = "";
     return;
   }
   if (key === "task" && v.task === "patterns") {
@@ -902,14 +931,7 @@ function tidy(v, key) {
           ? ""
           : d.kind === "text"
             ? allCodes(d).find((c) => c !== v.x) || ""
-            : (
-                fs.find(
-                  (f) =>
-                    f.id !== v.x &&
-                    f.levels.length > 1 &&
-                    ["category", "ordered"].includes(f.type),
-                ) || fs.find((f) => f.id !== v.x && !isOpenQuestion(f))
-              )?.id;
+            : nextGrouping();
     }
   }
   if (key === "outcome" || key === "task") {
@@ -927,16 +949,7 @@ function tidy(v, key) {
             ]) || "";
   if (key === "x" && v.x === v.y)
     v.y =
-      d.kind === "text"
-        ? allCodes(d).find((c) => c !== v.x)
-        : (
-            fs.find(
-              (f) =>
-                f.id !== v.x &&
-                f.levels.length > 1 &&
-                ["category", "ordered"].includes(f.type),
-            ) || fs.find((f) => f.id !== v.x && !isOpenQuestion(f))
-          )?.id;
+      d.kind === "text" ? allCodes(d).find((c) => c !== v.x) : nextGrouping();
 }
 function goto(i) {
   const d = getData();
@@ -953,9 +966,7 @@ function goto(i) {
         grid: "table",
         box: right.task === "one" ? "hist" : "box",
         gap: "stack",
-        wordcloud: "table",
       }[right.chart] || right.chart;
-    if (project.views[0].chart === "wordcloud") right.task = "words";
     project.views[1] = right;
     project.comparisonStarted = true;
   }
@@ -1051,8 +1062,21 @@ function openBot(question = "") {
 }
 function selectedPassages() {
   const d = getData();
-  if (d?.kind !== "text") return [];
-  return d.passages.filter((p) => chosen.has(p.id) || scope.includes(p.source));
+  if (d?.kind !== "text" || (!chosen.size && !scope.length)) return [];
+  const named = d.passages.filter(
+    (p) => chosen.has(p.id) && !scope.includes(p.source),
+  );
+  const sources = new Set([...scope, ...named.map((p) => p.source)]);
+  const units = passageUnits(d.passages.filter((p) => sources.has(p.source)));
+  // Selecting an original shares the codes shown on its evidence row.
+  // Selecting its quotation shares just those words and their own codes.
+  const selectedUnits = new Map(
+    units.filter((p) => chosen.has(p.id)).map((p) => [p.id, p]),
+  );
+  return [
+    ...named.map((p) => selectedUnits.get(p.id) || p),
+    ...units.filter((p) => scope.includes(p.source)),
+  ];
 }
 function botContext(question = "") {
   const d = getData();
@@ -1173,9 +1197,8 @@ function botContext(question = "") {
           },
           wordFrequencies: {
             task: "words",
-            chart: "wordcloud",
+            chart: "table",
             x: "Empty for all passages, or one exact theme",
-            alternative: "table for ranked word counts",
           },
         }
       : {}),
@@ -1223,16 +1246,11 @@ function proposedChart(pick) {
     )
       return null;
     const view = { ...current, chart: pick.chart };
-    if (pick.chart === "wordcloud") view.task = "words";
     summary(panel, view);
     return candidate(view);
   }
-  if (text && (pick.task === "words" || pick.chart === "wordcloud")) {
-    if (
-      !["wordcloud", "table"].includes(pick.chart) ||
-      (pick.x && !keys.includes(pick.x)) ||
-      pick.y
-    )
+  if (text && pick.task === "words") {
+    if (pick.chart !== "table" || (pick.x && !keys.includes(pick.x)) || pick.y)
       return null;
     const scoped = {};
     if (pick.filter !== undefined) {
@@ -1360,6 +1378,11 @@ function proposedChart(pick) {
   if (pick.task === "one" && pick.y) return null;
   const paired = pick.task !== "one" && !(text && pick.task === "group");
   if (paired && (!keys.includes(pick.y) || pick.y === pick.x)) return null;
+  if (!text && paired) {
+    const grouping = d.fields.find((f) => f.id === pick.y);
+    if (!isSingleAnswerField(grouping))
+      throw Error(groupingQuestionHint(grouping));
+  }
   const measure = pick.measure || (text ? "passages" : "count");
   if (
     !(text ? ["passages", "sources"] : ["count", "percent"]).includes(measure)
@@ -1580,11 +1603,22 @@ async function checkGroupSuggestion() {
               kind: d.kind,
               sources: d.sources,
               metadata: d.metadata,
-              passages: d.passages.map(({ source, codes, reviewed }) => ({
-                source,
-                codes,
-                reviewed,
-              })),
+              openAnswers: !!d.openAnswers,
+              ...(d.interviews?.established
+                ? {
+                    interviews: { established: true },
+                    coding: {
+                      book: approvedBook(d).map((entry) => entry.label),
+                    },
+                  }
+                : {}),
+              passages: passageUnits(d.passages).map(
+                ({ source, codes, reviewed }) => ({
+                  source,
+                  codes,
+                  reviewed,
+                }),
+              ),
             }
           : {
               kind: d.kind,
@@ -1792,10 +1826,15 @@ async function ask(question, skill, intent = "") {
     !intent &&
     skill === "recommend" &&
     dataset &&
-    (dataset.kind === "text"
-      ? wordCloudRequest(question, current, allCodes(dataset), dataset.sources)
-      : namedSurveyComparison(dataset.fields, question) ||
-        directComparison(dataset.fields, question));
+    (wordTableRequest(
+      question,
+      current,
+      dataset.kind === "text" ? allCodes(dataset) : [],
+      dataset.sources,
+    ) ||
+      (dataset.kind === "table" &&
+        (namedSurveyComparison(dataset.fields, question) ||
+          directComparison(dataset.fields, question))));
   if (direct?.chart === "gap" && !proposedChart(direct))
     direct = {
       action: "answer",
@@ -2610,7 +2649,7 @@ function patternEvidence(i, index) {
       (!v.groupBy || groupValue(d, v.groupBy, s) === cell.groupValue),
   );
   const set = new Set(sources),
-    passages = d.passages.filter((p) => set.has(p.source));
+    passages = passageUnits(d.passages.filter((p) => set.has(p.source)));
   const same = (codes) =>
     v.items.every((c) => codes.has(c) === cell.keyParts.includes(c));
   let included = passages,
@@ -2622,12 +2661,18 @@ function patternEvidence(i, index) {
       "<p>" +
       esc(cell.groupValue) +
       " · " +
-      interviews.size +
-      " of " +
-      sources.length +
-      (d.openAnswers
-        ? " respondents mentioned this theme.</p>"
-        : " interviews contained this theme.</p>");
+      (v.themeUnit === "passages"
+        ? included.length +
+          " of " +
+          passages.length +
+          " original passages contained this theme."
+        : interviews.size +
+          " of " +
+          sources.length +
+          (d.openAnswers
+            ? " respondents mentioned this theme."
+            : " interviews contained this theme.")) +
+      "</p>";
   } else if (v.patternMode === "interviews") {
     const bySource = new Map(sources.map((s) => [s, new Set()]));
     for (const p of passages)
@@ -2702,20 +2747,23 @@ function evidence(i, match, codingPrompt = "") {
     return;
   }
   const owner = project;
-  const ps = d.passages.filter(
+  const candidates =
+    codingPrompt && (chosen.size || scope.length)
+      ? selectedPassages()
+      : passageUnits(d.passages);
+  const ps = candidates.filter(
     (p) =>
-      (!codingPrompt ||
-        !scope.length ||
-        chosen.has(p.id) ||
-        scope.includes(p.source)) &&
       (!v.filter ||
         (v.filter === "source"
           ? p.source
           : d.metadata?.[p.source]?.[v.filter]) === v.value) &&
       (!match || (p.source === match.source && p.codes.includes(match.code))) &&
-      (!v.query || p.text.toLowerCase().includes(v.query.toLowerCase())),
+      (v.chart !== "excerpts" ||
+        !v.query ||
+        p.text.toLowerCase().includes(v.query.toLowerCase())),
   );
-  let page = 0,
+  let highlightedQuote,
+    page = 0,
     query = "";
   const selected = new Set(
     codingPrompt ? ps.slice(0, 10).map((p) => p.id) : [],
@@ -2724,13 +2772,19 @@ function evidence(i, match, codingPrompt = "") {
     const filtered = ps.filter(
       (p) => !query || p.text.toLowerCase().includes(query),
     );
+    const visible = filtered.slice(page * 25, (page + 1) * 25);
+    if (
+      highlightedQuote &&
+      !page &&
+      (!query || highlightedQuote.text.toLowerCase().includes(query))
+    )
+      visible.unshift(highlightedQuote);
     return (
       `<p>${filtered.length} matching passages</p>` +
-      filtered
-        .slice(page * 25, (page + 1) * 25)
+      visible
         .map(
           (p) =>
-            `<div class="excerpt"><label class="tick"><input name="pickp" type="checkbox" value="${p.id}" ${selected.has(p.id) ? "checked" : ""}>${esc(p.source)}</label><span data-passage-text="${p.id}">${esc(p.text)}</span><br><small>${esc(p.codes.join(" · "))}</small></div>`,
+            `<div class="excerpt"><label class="tick"><input name="pickp" type="checkbox" value="${p.id}" ${selected.has(p.id) ? "checked" : ""}>${p === highlightedQuote ? "Selected quotation · " : ""}${esc(p.source)}</label><span data-passage-text="${p.id}">${esc(p.text)}</span><br><small>${esc(p.codes.join(" · "))}</small></div>`,
         )
         .join("") +
       `<div class="bar"><button type="button" id="prevp" ${page ? "" : "disabled"}>Previous</button><button type="button" id="nextp" ${(page + 1) * 25 < filtered.length ? "" : "disabled"}>Next</button></div>`
@@ -2831,7 +2885,7 @@ function evidence(i, match, codingPrompt = "") {
     get("iv-open-passage").onclick = () => {
       const passage =
         selected.size === 1
-          ? ps.find((p) => selected.has(p.id))
+          ? d.passages.find((p) => selected.has(p.id))
           : !selected.size && ps.length === 1
             ? ps[0]
             : undefined;
@@ -2845,9 +2899,7 @@ function evidence(i, match, codingPrompt = "") {
       state.passage = passage.id;
       get("dialog").close();
       goto(1);
-      const row = [...document.querySelectorAll("[data-iv-id]")].find(
-        (el) => el.dataset.ivId === (passage.parent || passage.id),
-      );
+      const row = document.querySelector(".iv-text .iv-selected");
       row?.scrollIntoView({ block: "nearest" });
       row?.querySelector("button")?.focus({ preventScroll: true });
     };
@@ -2910,8 +2962,8 @@ function evidence(i, match, codingPrompt = "") {
         reviewed: false,
       };
       d.passages.push(p);
-      ps.unshift(p);
     }
+    highlightedQuote = ps.some((item) => item.id === p.id) ? undefined : p;
     selected.clear();
     selected.add(p.id);
     page = 0;
@@ -3350,7 +3402,6 @@ async function action(act, el) {
       if (step === 3) focusBot(i ? "right" : "left");
       proposal = captionDraft = queuedShortcut = null;
       view.chart = el.dataset.chart;
-      if (view.chart === "wordcloud") view.task = "words";
       render();
       document
         .querySelector(`[data-panel="${i}"] .chart-picker summary`)
@@ -4175,10 +4226,10 @@ document.addEventListener("click", async (e) => {
       await action(el.dataset.act, el);
       return;
     }
-    const word = e.target.closest("[data-cloud-word]");
+    const word = e.target.closest("[data-counted-word]");
     if (word?.closest("[data-panel]")) {
       const index = Number(word.closest("[data-panel]").dataset.panel);
-      const term = word.dataset.cloudWord;
+      const term = word.dataset.countedWord;
       const rows = wordPassages(getData(), project.views[index], term);
       modal(
         "Passages containing “" + term + "”",
@@ -4246,7 +4297,7 @@ document.addEventListener("keydown", (e) => {
     e.target.closest("[data-panel]") &&
     (e.target.hasAttribute("data-pattern-row") ||
       e.target.hasAttribute("data-code") ||
-      e.target.hasAttribute("data-cloud-word"))
+      e.target.hasAttribute("data-counted-word"))
   ) {
     e.preventDefault();
     e.target.dispatchEvent(new MouseEvent("click", { bubbles: true }));

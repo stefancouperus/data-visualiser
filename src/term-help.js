@@ -15,7 +15,7 @@ export function termMeaning(term, d, view = {}) {
   if (term === "theme" && d?.openAnswers)
     return "A code is a short label for an idea in a written answer. One respondent can mention several themes. Select a whole answer or highlight a passage to code it.";
   if (term === "theme")
-    return "A passage is a piece of text from a transcript. A code labels an idea in that passage. Splitting the same transcript into shorter passages can change how often a code is counted. To ask how widely a theme appears, count each interview source once. This counts people when each source contains one interview with a different person.";
+    return "A passage is a piece of text from a transcript. The chart counts a theme once in each original passage where you labelled it, even if you highlighted several quotations. To see how many people mentioned a theme, count interviews when each source is one interview with a different person.";
   const text = d?.kind === "text";
   const survey = !d || d.unit === "response";
   const meaning = d?.openAnswers

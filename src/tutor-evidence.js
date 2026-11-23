@@ -1,4 +1,5 @@
 import { filteredRows } from "./import.js";
+import { passageUnits } from "./transcript-index.js";
 
 function mentions(request, label) {
   if (!label) return false;
@@ -26,8 +27,9 @@ export function analyticalEvidence(d, v, question) {
     const counts = new Map();
     let passages = 0,
       reviewed = 0;
-    for (const p of d.passages) {
-      if (!sources.has(p.source)) continue;
+    for (const p of passageUnits(
+      d.passages.filter((p) => sources.has(p.source)),
+    )) {
       passages++;
       if (p.reviewed) reviewed++;
       for (const code of new Set(p.codes)) {

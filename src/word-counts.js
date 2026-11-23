@@ -1,4 +1,5 @@
 import { transcriptIndex } from "./transcript-index.js";
+import { allCodes } from "./coding.js";
 
 // Keep words in their original language, including accents. Only the explicitly
 // listed function words are removed. Differences in tense or number stay visible.
@@ -44,8 +45,9 @@ const speakerLabel =
   /^(?:\[[\d:. -]+\]\s*)?(?:interviewer|interviewee|geïnterviewde|respondent|participant|deelnemer|onderzoeker|researcher|moderator|speaker|spreker|question|vraag|answer|antwoord|[qa])(?:\s*\d+)?\s*:\s*/gimu;
 
 function selectedRanges(index, passage, theme) {
-  if (!theme) return [[0, passage.text.length]];
+  if (!theme) return { ranges: [[0, passage.text.length]], unresolved: 0 };
   const ranges = [];
+  let unresolved = 0;
   const pieces = [
     { p: passage, start: 0 },
     ...(index.excerpts.get(passage.id) || []),
@@ -62,9 +64,11 @@ function selectedRanges(index, passage, theme) {
         ? [start + offset, start + offset + quote.length]
         : null;
     });
-    if (!located.length || located.includes(null))
-      ranges.push([start, start + p.text.length]);
-    else ranges.push(...located);
+    if (!located.length) ranges.push([start, start + p.text.length]);
+    for (const range of located) {
+      if (range) ranges.push(range);
+      else unresolved++;
+    }
   }
   const merged = [];
   for (const range of ranges.sort((a, b) => a[0] - b[0])) {
@@ -72,10 +76,16 @@ function selectedRanges(index, passage, theme) {
     if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);
     else merged.push(range);
   }
-  return merged;
+  return { ranges: merged, unresolved };
 }
 
 function scan(d, v, findWord) {
+  if (v.x && !allCodes(d).includes(v.x))
+    throw Error(
+      "The theme “" +
+        v.x +
+        "” is unavailable. Choose another theme or All passages to update this table.",
+    );
   const language = Object.hasOwn(common, v.wordLanguage)
     ? v.wordLanguage
     : "both";
@@ -93,10 +103,13 @@ function scan(d, v, findWord) {
     evidence = [];
   const documentPositions = new Map();
   let wordCount = 0,
-    passageCount = 0;
+    passageCount = 0,
+    unresolved = 0;
   const sourceCount = new Set();
   for (const p of index.originals) {
-    const ranges = selectedRanges(index, p, v.x);
+    const located = selectedRanges(index, p, v.x);
+    const ranges = located.ranges;
+    unresolved += located.unresolved;
     if (!ranges.length) continue;
     sourceCount.add(p.source);
     passageCount++;
@@ -166,6 +179,7 @@ function scan(d, v, findWord) {
     passageCount,
     sourceCount: sourceCount.size,
     language,
+    unresolved,
   };
 }
 
@@ -173,8 +187,9 @@ export function wordPassages(d, v, word) {
   return scan(d, v, normal(word)).evidence;
 }
 
-export function wordCloudData(d, v) {
-  const { totals, wordCount, passageCount, sourceCount, language } = scan(d, v);
+export function wordCounts(d, v) {
+  const { totals, wordCount, passageCount, sourceCount, language, unresolved } =
+    scan(d, v);
   const records = [...totals.values()]
     .sort((a, b) => b.n - a.n || collator.compare(a.label, b.label))
     .slice(0, limit)
@@ -207,6 +222,14 @@ export function wordCloudData(d, v) {
     sourcesLabel: d.openAnswers ? "Respondents" : "Sources",
     note:
       `Showing ${records.length} of ${totals.size} distinct words from ${passageCount} passage${passageCount === 1 ? "" : "s"} in ${sourceCount} ${sourceName}${sourceCount === 1 ? "" : "s"}. ${stopNotes[language]}` +
+      (unresolved
+        ? " " +
+          unresolved +
+          (unresolved === 1
+            ? " supporting quotation was"
+            : " supporting quotations were") +
+          " omitted because the exact location was unclear."
+        : "") +
       (!d.openAnswers && d.textPurpose !== "documents"
         ? " Interviewer questions are included where present."
         : ""),

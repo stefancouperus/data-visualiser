@@ -1,3 +1,5 @@
+import { isSingleAnswerField, groupingQuestionHint } from "./survey-answers.js";
+
 // Match what a student calls a question against its wording and categorical
 // choices locally. Only words already in the request are sent as matching hints.
 const ignore = new Set(
@@ -223,29 +225,38 @@ export function namedSurveyComparison(fields, question, chosen) {
       f.levels.length &&
       !f.roles?.includes("open"),
   );
-  const matches = axes.map((axis, index) =>
-    axisChoices(
-      options.filter((f) =>
-        chart === "box" && index === 0
-          ? f.type === "number"
-          : ["box", "gap"].includes(chart)
-            ? ["category", "ordered"].includes(f.type)
-            : true,
+  const requestedGroups = axisChoices(options, axes[1]);
+  if (
+    requestedGroups.length &&
+    requestedGroups.every((f) => f.type === "multiple")
+  )
+    return {
+      action: "answer",
+      explanation: groupingQuestionHint(
+        requestedGroups.length === 1 ? requestedGroups[0] : undefined,
       ),
-      axis,
+    };
+  const eligible = axes.map((_, index) =>
+    options.filter((f) =>
+      chart === "box" && index === 0
+        ? f.type === "number"
+        : ["box", "gap"].includes(chart)
+          ? ["category", "ordered"].includes(f.type)
+          : index === 0 || isSingleAnswerField(f),
     ),
   );
+  const matches = axes.map((axis, index) => axisChoices(eligible[index], axis));
   if (!chosen && matches.some((list) => list.length > 1)) {
     return {
       action: "clarifyAxes",
       axes: matches.map((list, i) => ({
         phrase: axes[i],
-        choices: (list.length ? list : options).map((f) => [f.id, f.label]),
+        choices: (list.length ? list : eligible[i]).map((f) => [f.id, f.label]),
       })),
     };
   }
   const [x, y] = chosen
-    ? chosen.map((id) => options.find((f) => f.id === id))
+    ? chosen.map((id, index) => eligible[index].find((f) => f.id === id))
     : matches.map((list) => list[0]);
   if (
     !x ||
@@ -360,7 +371,7 @@ export function namedChartRequest(question) {
     ...question
       .trim()
       .matchAll(
-        /(?:^|[.!?]\s+)(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:draw|create|make|show|plot|build)\s+(?:me\s+)?(?:a |an |the )?(100% stacked bar(?: chart)?s?|stacked bar(?: chart)?s?|bar (?:chart|plot)|dot plot|heat\s?map|scatter\s?plot|histogram|word\s?cloud|box\s?plot|gap (?:chart|plot)|presence (?:grid|matrix)|line (?:chart|graph)|small multiples|data table)\b/gi,
+        /(?:^|[.!?]\s+)(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:draw|create|make|show|plot|build)\s+(?:me\s+)?(?:a |an |the )?(100% stacked bar(?: chart)?s?|stacked bar(?: chart)?s?|bar (?:chart|plot)|dot plot|heat\s?map|scatter\s?plot|histogram|box\s?plot|gap (?:chart|plot)|presence (?:grid|matrix)|line (?:chart|graph)|small multiples|data table)\b/gi,
       ),
   ];
   if (commands.length !== 1) return;
@@ -369,7 +380,6 @@ export function namedChartRequest(question) {
   if (name.startsWith("bar")) return "bars";
   if (name.startsWith("dot")) return "dots";
   if (name.startsWith("heat")) return "grid";
-  if (name.startsWith("word")) return "wordcloud";
   if (name.startsWith("box")) return "box";
   if (name.startsWith("gap")) return "gap";
   if (name.startsWith("scatter")) return "scatter";
@@ -380,20 +390,36 @@ export function namedChartRequest(question) {
   return "table";
 }
 
-// Keep explicit cloud requests on the device, including the requested text scope.
-export function wordCloudRequest(question, current, codes, sources) {
-  if (namedChartRequest(question) !== "wordcloud") return null;
+// Keep explicit word count requests on the device, including the requested text scope.
+export function wordTableRequest(question, current, codes, sources) {
+  const command = question
+    .trim()
+    .match(
+      /^(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:draw|create|make|show|plot|build|list)\s+(?:me\s+)?(?:a |an |the )?(word[ -]?cloud|word[ -]?(?:frequency|count) table|word counts|(?:most )?frequent words)\b/i,
+    );
+  if (!command) return null;
+  if (!sources)
+    return {
+      action: "answer",
+      explanation:
+        "Word counts use interview passages or written survey answers. Open a written-answer collection and choose Count words in passages.",
+    };
+  if (/cloud/i.test(command[1]))
+    return {
+      action: "answer",
+      explanation:
+        "Choose Count words in passages to see a ranked table. Select a word in the table to read where it appears.",
+    };
   const tail = question
     .trim()
     .replace(/[.!?]+$/, "")
-    .split(/\bword\s?cloud\b/i)
-    .pop()
+    .slice(command[0].length)
     .trim()
     .replace(/^(?:of|for|from|using|showing|with)\s+/i, "");
   const draw = {
     action: "draw",
     task: "words",
-    chart: "wordcloud",
+    chart: "table",
     x: "",
     y: "",
   };

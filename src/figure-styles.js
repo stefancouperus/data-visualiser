@@ -175,7 +175,6 @@ export function highlightChoices(a, v) {
       "presence",
       "hist",
       "box",
-      "wordcloud",
       "table",
     ].includes(v.chart)
   )

@@ -28,13 +28,19 @@ Under **Apply your labels**, choose **Code manually** to label a passage or high
 
 For inductive coding, ask the bot to suggest labels from named interviews, or choose the interviews and passages yourself. Confirm the selection to start. **Review draft labels** reopens the suggestions under **Set up your codebook**. Check the supporting quotations, edit the names and meanings, and keep the labels that fit. **Use these labels** approves the codebook. To code the full collection, choose **Code with the bot** and select all interviews. You can close the review and return to the saved draft before approval. You can also start with labels from an already coded interview. Use **Manage labels** to edit the project vocabulary. Codebook changes that affect earlier decisions make those interviews available for checking again.
 
-Coding progress is saved in this browser. After a refresh, choose **Resume coding project** on Upload. **Save coding project** downloads the transcripts, codebook, draft labels, accepted coding and any pending coding review. Use **+ Add interview** to extend the collection. Once each interview is marked as checked, **Coding complete · explore themes** opens the visualisation workspace. A highlights-only export covers the supplied excerpts.
+Coding progress is saved in this browser. After a refresh, choose **Resume coding project** on Upload. **Save coding project** downloads the transcripts, codebook, draft labels, accepted coding and any pending coding review. Use **+ Add interview** to extend the collection. Once each interview is marked as checked, **Coding complete · explore themes** opens the visualisation workspace. A highlights-only export covers the supplied excerpts. Theme charts count each original imported passage once. Repeating the same label on several quotations in a passage contributes one match. Two different labels on different words of that passage count as appearing together there. Counting by interview instead gives each listed interview one unit.
 
-## Development and deployment
+## Reading and exporting figures
 
 In **Explore**, choose **Compare groups** and two single-answer survey questions to see a **Gap chart** when two groups have usable answers. Each row joins the percentages for one answer in each group. For a numerical answer, choose **Box plot** to see its median, middle half and full range, either overall or by group.
 
-In an interview or written-answer collection, choose **Explore frequently used words**. Select all passages or one theme. Use **Chart settings** to filter by source or change which common words are omitted. Select a word to read its passages. Switch **Chart type** to **Table** to see how often a word occurs and how many passages and sources contain it.
+A multiple-answer survey question can be the outcome or a filter. To form groups, choose a single-answer question or an individual checkbox indicator column. Each filtered figure carries the field name and the selected value into its export, including when the two panels in **Compare** use different filters.
+
+When a chart counts passages, a theme counts once per original passage. Highlighting several quotations with the same label and accepting the same label from the bot give that passage the same weight. To count how widely a theme occurs across interviews, choose **Interview** as the counting unit.
+
+In an interview or written-answer collection, choose **Count words in passages**. Select all passages or one theme. Use **Chart settings** to filter by source or change which common words are omitted. Select a word to read its passages. The ranked table shows how often each word occurs and how many passages and sources contain it.
+
+## Development and deployment
 
 Use Node 22. Run `npm ci`, `npm run dev`, `npm test` and `npm run build`. Run the interaction checks with `npx playwright test`; install the Playwright Chromium browser on systems without the configured macOS Chrome. Browser test fixtures are synthetic and are not included in the landing page.
 

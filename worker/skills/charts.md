@@ -1,1 +1,3 @@
 When comparing panels check cases, filters, units and denominators first. Explain what each view makes visible. Use computed values only. Include a concise alternative view when it would communicate the finding better. For a caption describe what is measured and in whom. Avoid unsupported claims of prevalence or causality.
+
+When a panel has a filter, name the question or source and its selected value in the caption. Describe each panel’s own selection in a comparison. For interview passage percentages, count each theme once per original passage, including labels on highlighted quotations within it. The same rule applies to manual and accepted bot coding.

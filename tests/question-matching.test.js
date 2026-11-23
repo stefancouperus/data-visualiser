@@ -4,21 +4,34 @@ import {
   chartFields,
   directComparison,
   resolveAxis,
-  wordCloudRequest,
+  wordTableRequest,
 } from "../src/question-matching.js";
-test("a word cloud uses the requested source or theme and clarifies unresolved names", () => {
+test("the word table uses the requested source or theme and clarifies unresolved names", () => {
   const ask = (q) =>
-    wordCloudRequest(
+    wordTableRequest(
       q,
       { task: "one", x: "Travel" },
       ["Travel", "River"],
       ["River", "Hill.txt"],
     );
-  assert.equal(ask("Draw a word cloud").x, "Travel");
-  assert.equal(ask("Draw a word cloud for interview Hill").value, "Hill.txt");
-  assert.equal(ask("Draw a word cloud for theme River").x, "River");
-  assert.equal(ask("Draw a word cloud for River").action, "answer");
-  assert.equal(ask("Draw a word cloud for interview Unknown").action, "answer");
+  assert.deepEqual(ask("Show a word count table"), {
+    action: "draw",
+    task: "words",
+    chart: "table",
+    x: "Travel",
+    y: "",
+  });
+  assert.match(ask("Draw a word cloud").explanation, /Count words in passages/);
+  assert.equal(
+    ask("Show a word count table for interview Hill").value,
+    "Hill.txt",
+  );
+  assert.equal(ask("Show a word count table for theme River").x, "River");
+  assert.equal(ask("Show a word count table for River").action, "answer");
+  assert.equal(
+    ask("Show a word count table for interview Unknown").action,
+    "answer",
+  );
 });
 const fields = [
   {

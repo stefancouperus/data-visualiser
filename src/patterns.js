@@ -1,6 +1,7 @@
 // Counts are computed locally from the records selected in the workspace.
 import { hasAnswer, choicesIn, optionLevels } from "./survey-answers.js";
 import { allCodes } from "./coding.js";
+import { passageUnits } from "./transcript-index.js";
 import { filteredRows } from "./import.js";
 
 export const selectionLimit = 6;
@@ -63,6 +64,7 @@ export function groupValue(d, key, record) {
     : "";
 }
 export function patternSummary(d, v) {
+  if (d.kind === "text") d = { ...d, passages: passageUnits(d.passages) };
   if (v.groupBy) return groupedSummary(d, v);
   return summarise(d, v);
 }
@@ -149,7 +151,7 @@ function summarise(d, v, rankLimit = 12, choices = new Map(patternChoices(d))) {
       reviewed +
       " of " +
       passages.length +
-      " imported passages reviewed. Counts refer to applied codes.";
+      " original passages reviewed. A label on a saved quotation counts once in its original passage.";
     if (mode === "sources") {
       if (sources.length * items.length > 20000)
         throw Error(

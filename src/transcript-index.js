@@ -44,3 +44,18 @@ export function transcriptIndex(passages) {
     numbers.set(id, numbers.get(position.original.id));
   return { originals, positions, excerpts, numbers };
 }
+
+// Count one unit per original passage. A quotation can add a theme to it but
+// does not certify that the whole passage has been reviewed. Retain the stored
+// records and their offsets for editing and for opening the exact quotation.
+export function passageUnits(passages) {
+  if (!passages.some((p) => p.parent)) return passages;
+  const { originals, excerpts } = transcriptIndex(passages);
+  return originals.map((original) => {
+    const quotations = excerpts.get(original.id);
+    if (!quotations) return original;
+    const codes = new Set(original.codes);
+    for (const { p } of quotations) for (const code of p.codes) codes.add(code);
+    return { ...original, codes: [...codes] };
+  });
+}

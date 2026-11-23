@@ -167,3 +167,22 @@ export function restoreLegacyCheckboxes(table) {
     fillCheckboxField(table, field);
   }
 }
+// A group gives each record one place in a comparison. Individual checkbox
+// indicator columns can do this, while their combined multiple-answer field cannot.
+export function isSingleAnswerField(field) {
+  return (
+    ["category", "ordered", "number", "date"].includes(field?.type) &&
+    !field.roles?.includes("open")
+  );
+}
+
+export function groupingQuestionHint(field) {
+  if (field?.type === "multiple") {
+    return (
+      "People can tick several answers to “" +
+      field.label +
+      "”. Choose a single-answer question to form groups, or use an individual option column if your file has one."
+    );
+  }
+  return "Choose a single-answer question to form groups. If you have no other suitable column, choose a different first question or explore one question.";
+}

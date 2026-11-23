@@ -5,7 +5,7 @@ import {
   paletteFor,
 } from "./figure-styles.js";
 import * as d3 from "d3";
-import { drawWordCloud, drawWordTable } from "./word-cloud-figure.js";
+import { drawWordTable } from "./word-table.js";
 import { drawGap } from "./survey-gap.js";
 import { drawBoxPlot } from "./box-plot.js";
 export const esc = (s) =>
@@ -117,7 +117,7 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
     interactive &&
     (v.task === "patterns" ||
       v.task === "words" ||
-      ["grid", "presence", "wordcloud"].includes(v.chart));
+      ["grid", "presence"].includes(v.chart));
   const style = styleFor(v.style),
     theme = figureStyles[style],
     mono = v.palette === "grey";
@@ -374,17 +374,6 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
       scale: theme.scale,
       wrap,
       line,
-    });
-  } else if (v.chart === "wordcloud") {
-    pos = drawWordCloud({
-      root,
-      records,
-      w,
-      margin,
-      pos,
-      theme,
-      ink: markInk,
-      interactive,
     });
   } else if (v.task === "words" && v.chart === "table") {
     pos = drawWordTable({
@@ -727,7 +716,7 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
     !a.predictions?.length
   ) {
     block(
-      v.chart === "wordcloud" || v.task === "words"
+      v.task === "words"
         ? "No words to show. Try a different theme, source or common-word setting."
         : "No matching observations.",
       65,
