@@ -958,3 +958,43 @@ dialog h2 {
   .iv-label-jump { display: inline; font-size: .85rem; }
   #iv-project-labels { scroll-margin-top: 1rem; }
 }
+
+.bot-working {
+  display: inline-flex;
+  align-items: center;
+  gap: .52rem;
+  color: var(--ink);
+  font-size: .88rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.bot-activity-icon {
+  width: 1.2rem;
+  height: 1.2rem;
+  flex: none;
+  color: var(--blue);
+}
+.bot-activity-icon g rect {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: bot-bar-wave 1.2s ease-in-out infinite alternate;
+}
+.bot-activity-icon g rect:nth-child(2) { animation-delay: -.7s; }
+.bot-activity-icon g rect:nth-child(3) { animation-delay: -.35s; }
+.bot-activity-icon g rect:nth-child(4) { animation-delay: -.95s; }
+@keyframes bot-bar-wave {
+  from { transform: scaleY(.4); }
+  to { transform: scaleY(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bot-activity-icon g rect { animation: none; }
+}
+#bot-task-status:empty { display: none; }
+#bot-task-status:not(:empty) { margin: .4rem 0; }
+#apply-book-collection:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .45rem .75rem;
+  margin: .75rem 0;
+}

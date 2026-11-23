@@ -1,6 +1,6 @@
 import { setQuestionRoles } from "./open-answers.js";
 import { esc } from "./chart.js";
-import { get, modal } from "./ui.js";
+import { busyIndicator, get, modal } from "./ui.js";
 
 const roles = [
   ["outcome", "Outcome", "The answer you want to understand."],
@@ -103,7 +103,10 @@ export function editRoles(d, project, suggest, done) {
       return;
     }
     trigger.disabled = true;
-    status.textContent = "Reading your research question and question labels…";
+    status.innerHTML = busyIndicator(
+      "Suggesting roles for your questions…",
+      false,
+    );
     const boxes = [...form.querySelectorAll("[data-role-field]")];
     try {
       const result = await suggest(

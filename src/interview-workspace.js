@@ -15,6 +15,7 @@ import {
 } from "./interview-manual.js";
 import {
   askForm,
+  busyIndicator,
   button as b,
   formselect,
   get,
@@ -36,6 +37,16 @@ import {
 } from "./interviews.js";
 
 const jobs = new WeakMap();
+export function interviewActivity(d) {
+  const job = jobs.get(d);
+  if (!job || job.draft !== d.interviews?.draft) return "";
+  const { draft } = job;
+  if (draft.next >= draft.total) return "Saving your coding draft…";
+  if (job.stop) return "Finishing this batch before pausing…";
+  const action = draft.sample ? "Suggesting labels" : "Applying your labels";
+  return action + " · batch " + (draft.next + 1) + " of " + draft.total;
+}
+
 const tools = [
   [
     "imported",
@@ -68,13 +79,19 @@ function routeButtons(d) {
     )
     .join("");
 }
+function applyCodebookTitle(d) {
+  return d.sources.length === 1
+    ? "Apply codebook to interview"
+    : "Apply codebook to interviews";
+}
 export function interviewScreen(d, storageStatus = "") {
   const s = interviews(d),
     ps = d.passages.filter((p) => p.source === s.source),
     book = sharedBook(d);
   const done = s.done.includes(s.source),
     selected = ps.find((p) => p.id === s.passage) || ps[0];
-  const job = jobs.has(d),
+  const activity = interviewActivity(d),
+    job = jobs.get(d),
     draft = s.draft;
   const draftSources = draft ? draft.sources || [draft.source] : [];
   const locked = !!draft,
@@ -92,17 +109,19 @@ export function interviewScreen(d, storageStatus = "") {
   <section class="iv-paper"><header><small>${d.excerptSources?.includes(s.source) ? "Imported passages" : "Transcript"}</small><h2>${esc(s.source)}</h2><p>Choose a passage or highlight the words you want to label. Click a saved quotation to change its labels.</p>${selected ? '<div class="iv-manual-tools">' + b("iv-manual", "Edit labels on selected text") + '<a class="iv-label-jump" href="#iv-project-labels">Project labels</a></div>' : ""}${d.excerptSources?.includes(s.source) ? "<small>Check the coverage of your export. Only the imported passages can be coded or compared.</small>" : ""}</header>
   <div class="iv-text">${transcriptRows(ps, selected)}</div>
   ${done ? "<p>✓ You have checked this interview.</p>" : b("iv-done", "Mark this interview as checked", "", locked || !book.length ? "disabled" : "")}</section>
-  <aside class="iv-tools"><h2 id="iv-project-labels" tabindex="-1">Project labels</h2>${book.length ? '<div class="iv-legend">' + book.map((e) => "<div>" + chip(e.label) + (e.definition ? "<small>" + esc(e.definition) + "</small>" : "") + "</div>").join("") + "</div>" : "<p>Add your first label here or while reading a passage.</p>"}
+  <aside class="iv-tools"><h2 id="iv-project-labels" tabindex="-1">Project labels</h2>
+  ${draft ? `<section class="iv-review" aria-live="polite"><h3>${draft.sample ? "Suggested labels" : "Bot coding draft"}</h3>${activity ? busyIndicator(activity, false) : ""}<p>${draft.next} of ${draft.total} batches processed · ${draft.matches.length} new suggested matches</p><small>Interviews in this draft: ${draftSources.map(esc).join(", ")}</small>${draft.error ? "<p>" + esc(draft.error) + "</p>" : ""}${job ? b("iv-stop", "Pause after this batch", "", job.stop || draft.next >= draft.total ? "disabled" : "") : draft.next < draft.total ? b("iv-resume", "Resume coding") : b("iv-review", "Review suggested coding", "primary")}${job ? "" : b("iv-discard", "Discard draft", "plain")}</section>` : ""}
+  ${!locked && shared ? b("iv-auto", applyCodebookTitle(d), "primary") : ""}
+  ${book.length ? '<div class="iv-legend">' + book.map((e) => "<div>" + chip(e.label) + (e.definition ? "<small>" + esc(e.definition) + "</small>" : "") + "</div>").join("") + "</div>" : "<p>Add your first label here or while reading a passage.</p>"}
   ${b("iv-editbook", "Manage labels", "plain")}
   ${!locked && !shared && s.method !== "manual" ? methods : ""}
   ${!locked && !shared && s.method === "book" ? b("iv-book", "Upload or review codebook") : ""}
   ${!locked && !shared && s.method === "inductive" ? b("iv-sample", "Ask the bot for labels", "primary") : ""}
   ${!locked && !shared && book.length ? b("iv-establish", "Use these labels for all interviews") + "<small>This confirms your shared codebook. You can then ask the bot to apply it to the interviews you choose.</small>" : ""}
-  ${!locked && shared ? "<p>Use these same labels across interviews.</p>" + b("iv-sample", "Look for additional labels", "plain") + b("iv-auto", d.sources.length > 1 ? "Code interviews with the bot" : "Code this interview with the bot", "primary") : ""}
+  ${!locked && shared ? b("iv-sample", "Look for additional labels", "plain") : ""}
   ${!locked && !shared && s.method === "manual" ? '<details class="iv-coding-options" data-chart-options="iv-manual-options"><summary>Coding options</summary>' + b("iv-sample", "Ask the bot for labels", "plain") + b("iv-method", "Use an uploaded codebook", "plain", 'data-method="book"') + "</details>" : ""}
   ${!locked && !shared && s.method && s.method !== "manual" ? b("iv-change", "Choose another approach", "plain") : ""}
-  ${draft ? `<section class="iv-review" aria-live="polite"><h3>${draft.sample ? "Suggested labels" : "Bot coding draft"}</h3><p>${draft.next} of ${draft.total} batches processed · ${draft.matches.length} new suggested matches</p><small>Interviews in this draft: ${draftSources.map(esc).join(", ")}</small>${draft.error ? "<p>" + esc(draft.error) + "</p>" : ""}${job ? b("iv-stop", "Pause after this batch") : draft.next < draft.total ? b("iv-resume", "Resume coding") : b("iv-review", "Review suggested coding", "primary")}${job ? "" : b("iv-discard", "Discard draft", "plain")}</section>` : ""}
-  </aside></div>`;
+</aside></div>`;
 }
 // Every new batch operation previews its scope before any text is sent.
 function codingScope(d, state, sample, resuming, initialScope, api) {
@@ -155,9 +174,7 @@ function codingScope(d, state, sample, resuming, initialScope, api) {
     return ids;
   };
   const choice = askForm(
-    sample
-      ? "Suggest labels from selected passages"
-      : "Apply the shared codebook",
+    sample ? "Suggest labels from selected passages" : applyCodebookTitle(d),
     `<p>The university Data bot will receive ${sample ? "the passages you select and your existing labels" : "all original passages in the selected interviews and your shared codebook"}. You will review its suggestions before any coding is applied.</p>` +
       (sample
         ? `<p>${labelAllowance ? "The bot can suggest up to " + labelAllowance + " new labels in this sample." : "Your codebook has reached the bot’s limit for discovering new labels. It can still suggest matches for existing labels."} One label can fit several passages.</p>` +
@@ -224,7 +241,7 @@ function codingScope(d, state, sample, resuming, initialScope, api) {
         focus: val("iv-focus").trim(),
       };
     },
-    sample ? "Send selected passages" : "Send this interview",
+    sample ? "Send selected passages" : "Send to bot for coding",
   );
   function countSample() {
     const groups = [
@@ -252,10 +269,7 @@ function codingScope(d, state, sample, resuming, initialScope, api) {
     get("iv-scope-summary").innerHTML = draft
       ? `<p>Resume the saved ${sample ? "sample" : "coding"} for <strong>${names}</strong>. ${draft.next} of ${draft.total} batches are complete.</p>`
       : `<p>${sources.length ? "<strong>" + names + "</strong> · " + items + " original passages" : "Select the interviews to include."}</p>`;
-    const submit = get("modalform").querySelector('[type="submit"]');
-    if (!sample)
-      submit.textContent =
-        sources.length > 1 ? "Send selected interviews" : "Send this interview";
+
     if (!get("iv-sample-pick")) return;
     const defaults = new Set(
       balancedSample(d, sources, sources.length > 1 ? sampleLimit(sources) : 6),
@@ -351,6 +365,9 @@ export async function interviewAction(act, el, d, api) {
       establish(d);
       get("dialog").close();
       refresh();
+      interviewAction("iv-auto", el, d, api).catch((error) =>
+        notice(error.message),
+      );
     });
     for (const id of ["coding-method", "coding-focus"])
       get(id).closest("label").hidden = true;
@@ -392,7 +409,7 @@ export async function interviewAction(act, el, d, api) {
   if (act === "iv-stop") {
     const job = jobs.get(d);
     if (job) job.stop = true;
-    notice("Pausing after the current batch.");
+    refresh(false);
     return;
   }
   if (act === "iv-discard") {
@@ -460,9 +477,9 @@ export async function interviewAction(act, el, d, api) {
     draft.error = "";
     const job = { stop: false, draft };
     jobs.set(d, job);
-    await api.checkpoint();
     refresh(false);
     try {
+      await api.checkpoint();
       while (
         s.draft === draft &&
         draft.next < batches.length &&

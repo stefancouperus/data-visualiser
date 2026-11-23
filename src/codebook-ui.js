@@ -1,7 +1,7 @@
 import { esc } from "./chart.js";
 import { readFile } from "./import.js";
 import { bookEntries, codingLimits, labelsInCodebook } from "./coding.js";
-import { formselect, get, val } from "./ui.js";
+import { busyIndicator, formselect, get, val } from "./ui.js";
 
 async function fileText(file) {
   if (!/\.pdf$/i.test(file.name)) {
@@ -83,16 +83,20 @@ export function bindCodingControls(d, extract, onApprove) {
     file = get("book-file"),
     draft = get("book-draft"),
     status = get("book-status"),
+    collection = get("apply-book-collection"),
     rows = get("book-rows");
   function update() {
     const deductive = mode.value === "deductive";
     get("codebook-controls").hidden = !deductive;
     get("inductive-help").hidden = deductive;
     const size = d.coding?.book?.length || 0;
+    if (collection)
+      collection.hidden = !size || pending || editing || !!file.files.length;
     get("approved-book").textContent = size
       ? size + " approved labels · " + d.coding.bookName
       : "Upload your codebook and check the labels before coding.";
     get("edit-book").hidden = !size || editing;
+    get("edit-book").disabled = pending;
     get("book-access").hidden = !!sessionStorage.getItem("dv-session");
     get("extract-book").disabled = !file.files.length || pending;
     file.disabled = pending;
@@ -135,10 +139,12 @@ export function bindCodingControls(d, extract, onApprove) {
     if (!source || pending) return;
     pending = true;
     editing = false;
-    status.textContent = "Reading the codebook…";
+    const active = () => draft.isConnected && draft.closest("dialog")?.open;
+    status.innerHTML = busyIndicator("Reading the codebook…", false);
     update();
     try {
       const documentText = (await fileText(source)).trim();
+      if (!active()) return;
       if (!documentText)
         throw Error(
           "This file has no selectable text. Use a text-based PDF, Word document or spreadsheet.",
@@ -147,9 +153,12 @@ export function bindCodingControls(d, extract, onApprove) {
         throw Error(
           "Upload the section containing your labels and definitions (up to 65,000 characters).",
         );
-      status.textContent = "The bot is extracting labels for your review…";
+      status.innerHTML = busyIndicator(
+        "Extracting labels from your codebook…",
+        false,
+      );
       const entries = await extract(documentText, val("book-course"));
-      if (!draft.isConnected) return;
+      if (!active()) return;
       if (
         !Array.isArray(entries) ||
         entries.some(
@@ -170,13 +179,14 @@ export function bindCodingControls(d, extract, onApprove) {
           : "");
       review(grounded, documentText);
     } catch (error) {
-      if (draft.isConnected) status.textContent = error.message;
+      if (active()) status.textContent = error.message;
     } finally {
       pending = false;
-      if (draft.isConnected) update();
+      if (active()) update();
     }
   };
   get("use-book").onclick = () => {
+    if (!editing || pending) return;
     try {
       const book = bookEntries(
         [...rows.children].map((row) => ({
@@ -193,9 +203,9 @@ export function bindCodingControls(d, extract, onApprove) {
       };
       editing = false;
       file.value = "";
-      onApprove();
       status.textContent = "Codebook approved.";
       update();
+      onApprove();
     } catch (error) {
       status.textContent = error.message;
     }

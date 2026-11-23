@@ -408,7 +408,7 @@ test("a student's edit during a live request survives resuming the same batch", 
   try {
     await openProject(page, project);
     await page.locator("[data-act=iv-auto]").click();
-    await btn(page, "Send this interview").click();
+    await btn(page, "Send to bot for coding").click();
     await received;
     await expect(btn(page, "Pause after this batch")).toBeVisible();
     await manage(page, "Delay");
@@ -421,7 +421,7 @@ test("a student's edit during a live request survives resuming the same batch", 
     await savePassage(page);
     release();
     await btn(page, "Resume coding").click();
-    await btn(page, "Send this interview").click();
+    await btn(page, "Send to bot for coding").click();
     await btn(page, "Review suggested coding").click();
     expect(requests).toHaveLength(2);
     expect(requests[1].guide.vocabulary.map((entry) => entry.label)).toContain(

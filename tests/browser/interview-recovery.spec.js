@@ -63,14 +63,14 @@ test("interview recovery checkpoints a failed batch, reviewer decisions and manu
   });
   await page.goto("/");
   await openFile(page, seed());
-  await button(page, "Code this interview with the bot").click();
-  await button(page, "Send this interview").click();
+  await button(page, "Apply codebook to interview").click();
+  await button(page, "Send to bot for coding").click();
   await expect(button(page, "Resume coding")).toBeVisible();
   await expect(page.locator(".iv-review")).toContainText("1 of 2");
   await page.reload();
   await button(page, "Resume coding project").click();
   await button(page, "Resume coding").click();
-  await button(page, "Send this interview").click();
+  await button(page, "Send to bot for coding").click();
   await button(page, "Review suggested coding").click();
   expect(batches.map((ps) => ps.length)).toEqual([6, 1, 1]);
   const first = page.locator(".iv-review-passage").first();

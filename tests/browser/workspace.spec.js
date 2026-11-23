@@ -1930,8 +1930,8 @@ test("two interviews share an approved inductive codebook, resume a bot draft an
     ),
   });
   await expect(page.locator(".iv-progress")).toContainText("1 of 2");
-  await btn("Code interviews with the bot").click();
-  await btn("Send this interview").click();
+  await btn("Apply codebook to interviews").click();
+  await btn("Send to bot for coding").click();
   await expect(btn("Resume coding")).toBeVisible();
   await expect(page.locator(".iv-passage .iv-chip")).toHaveCount(0);
   const download = page.waitForEvent("download");
@@ -1950,7 +1950,7 @@ test("two interviews share an approved inductive codebook, resume a bot draft an
     buffer: Buffer.concat(chunks),
   });
   await btn("Resume coding").click();
-  await btn("Send this interview").click();
+  await btn("Send to bot for coding").click();
   await btn("Review suggested coding").click();
   await btn("Apply reviewed coding").click();
   await expect(page.locator(".iv-passage")).toHaveCount(8);
@@ -2015,8 +2015,20 @@ test("deductive interview codebook upload, review, whole-transcript matching and
   await btn("Extract labels").click();
   await page.locator("[data-label]").fill("Fare cost");
   await btn("Use these labels").click();
-  await btn("Code this interview with the bot").click();
-  await btn("Send this interview").click();
+  await expect(
+    page
+      .getByRole("dialog")
+      .getByRole("heading", { name: "Apply codebook to interview" }),
+  ).toBeVisible();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Close", exact: true })
+    .click();
+  await expect(page.locator(".iv-tools button").first()).toHaveText(
+    "Apply codebook to interview",
+  );
+  await btn("Apply codebook to interview").click();
+  await btn("Send to bot for coding").click();
   await btn("Review suggested coding").click();
   await expect(page.locator("[name=iv-match]")).toHaveCount(1);
   await btn("Apply reviewed coding").click();

@@ -20,7 +20,11 @@ import {
   saveCodingCopy,
   useCodingCopy,
 } from "./interview-recovery.js";
-import { interviewScreen, interviewAction } from "./interview-workspace.js";
+import {
+  interviewScreen,
+  interviewAction,
+  interviewActivity,
+} from "./interview-workspace.js";
 import { transcriptEndpoint } from "./interview-manual.js";
 import { writtenAnswerSet, isOpenQuestion } from "./open-answers.js";
 import { confirmedRoles, editRoles } from "./variable-roles.js";
@@ -114,6 +118,8 @@ import {
 } from "./chart.js";
 import {
   icon,
+  activityIcon,
+  busyIndicator,
   mark,
   button as b,
   opts,
@@ -205,7 +211,42 @@ function botWorkspaceControls() {
       b("botcaption", "Draft a caption");
   return `<div class="bot-selection">${target}<strong>${esc(names)}</strong><div class="bar">${controls}</div></div>`;
 }
-let checkingGroups = false;
+// Work belongs to the open project and dataset. Separate active tasks can
+// finish in any order, including after the student has closed the bot panel.
+const botTasks = new Set();
+function refreshBotActivity() {
+  const dataset = getData();
+  let message = interviewActivity(dataset);
+  for (const task of botTasks) {
+    if (task.owner === project && task.dataset === dataset)
+      message = task.message;
+  }
+  const nav = document.querySelector(".botnav");
+  if (nav && (nav.dataset.activity || "") !== message) {
+    nav.dataset.activity = message;
+    nav.title = message ? "Data bot · " + message : "Data bot";
+    if (message) nav.setAttribute("aria-description", message);
+    else nav.removeAttribute("aria-description");
+    nav.querySelector("svg").outerHTML = message ? activityIcon : icon("bot");
+  }
+  const status = get("bot-task-status");
+  if (status && (status.dataset.activity || "") !== message) {
+    status.dataset.activity = message;
+    status.innerHTML = message ? busyIndicator(message, false) : "";
+  }
+}
+async function withBotActivity(message, run) {
+  const task = { owner: project, dataset: getData(), message };
+  botTasks.add(task);
+  try {
+    refreshBotActivity();
+    return await run();
+  } finally {
+    botTasks.delete(task);
+    refreshBotActivity();
+  }
+}
+
 let undoViews = [],
   project = { ...fresh(), mode: readHelpMode() },
   step = 0,
@@ -330,7 +371,7 @@ function botBox() {
   const unlocked = !!botURL && !!botSession();
   const header = `<header class="bothead" data-window-handle="move"><h2 title="Drag the title bar to move the floating window">Data bot</h2><div class="bottools">${unlocked ? helpSettings() : ""}${unlocked && innerWidth >= 900 ? b("dockbot", isDocked() ? "Float window" : "Dock right") : ""}${b("closebot", "Close", "plain")}</div></header>`;
   const gate = botURL
-    ? `<div class="bot-access"><label for="course">Workshop course code</label><input id="course" type="password" autocomplete="off" aria-describedby="course-error"><div id="course-error" role="alert"></div>${b("unlock", unlocking ? "Unlocking…" : "Unlock the bot", "primary", unlocking ? "disabled" : "")}</div>`
+    ? `<div class="bot-access"><label for="course">Workshop course code</label><input id="course" type="password" autocomplete="off" aria-describedby="course-error"><div id="course-error" role="alert"></div>${b("unlock", unlocking ? "Unlocking…" : "Unlock the bot", "primary", unlocking ? "disabled" : "")}<div id="bot-task-status" role="status"></div></div>`
     : "<p>The workshop bot is currently unavailable.</p>";
   return `<section id="data-bot" aria-label="Data bot workspace" class="bot ${isDocked() ? "docked" : "floating"} ${unlocked ? "" : "bot-locked"}">${header}<div class="botbody">${unlocked ? botChat() : gate}</div>${unlocked ? '<div class="botsize" data-window-handle="resize" title="Drag to resize"></div>' : ""}</section>`;
 }
@@ -352,7 +393,7 @@ function botChat() {
         `<div class="msg ${t.role === "user" ? "msg-user" : "msg-assistant"}"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`,
     )
     .join("");
-  return `${projectFocusControls()}<section class="bot-conversation" aria-label="Chat"><h3>Chat</h3><div class="chatlog" role="log" aria-label="Conversation">${messages}</div>${requesting ? `<p role="status">${checkingGroups ? "Checking possible groups in your selection…" : "Waiting for the university model…"}</p>` : ""}
+  return `${projectFocusControls()}<section class="bot-conversation" aria-label="Chat"><h3>Chat</h3><div class="chatlog" role="log" aria-label="Conversation">${messages}</div><div id="bot-task-status" role="status"></div>
     ${proposal ? b("botdraw", "Make this chart", "primary") + (proposal.groupSuggestion ? b("declinegroups", "No thanks", "plain") : "") : ""}
     ${suggestions.length ? b("applycodes", "Apply all suggested labels", "primary") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><small>${esc(s.source)}</small><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
     ${captionDraft ? b("applycaption", "Add caption to figure") : ""}
@@ -598,6 +639,7 @@ function render() {
     restoreReadingSelection?.();
     document.querySelector(".iv-text").scrollTop = transcriptScroll;
   }
+  refreshBotActivity();
   if (step === 0) showCodingCopies(get("coding-copies"));
   bindTermHelp(get("app"));
   if (bot) {
@@ -1348,17 +1390,19 @@ async function requestTutor(payload) {
   return data.answer;
 }
 async function extractCodebook(document, code) {
-  if (!botSession()) {
-    if (!code.trim())
-      throw Error("Enter your workshop course code to extract labels.");
-    await unlockBot(code.trim());
-  }
-  const answer = await requestTutor({
-    skill: "codebook",
-    question: "Extract the code labels and their meanings for review.",
-    context: { document },
+  return withBotActivity("Extracting labels from your codebook…", async () => {
+    if (!botSession()) {
+      if (!code.trim())
+        throw Error("Enter your workshop course code to extract labels.");
+      await unlockBot(code.trim());
+    }
+    const answer = await requestTutor({
+      skill: "codebook",
+      question: "Extract the code labels and their meanings for review.",
+      context: { document },
+    });
+    return structuredAnswer(answer).entries;
   });
-  return structuredAnswer(answer).entries;
 }
 async function checkGroupSuggestion() {
   proposal = captionDraft = null;
@@ -1376,7 +1420,6 @@ async function checkGroupSuggestion() {
   const stage = step,
     target = botFocus,
     chat = history;
-  checkingGroups = true;
   render();
   const worker = new Worker(
     new URL("./group-search-worker.js", import.meta.url),
@@ -1437,7 +1480,6 @@ async function checkGroupSuggestion() {
     history.push({ role: "assistant", content: result.message });
   } finally {
     worker.terminate();
-    checkingGroups = false;
   }
 }
 function finishCodingBatch(question) {
@@ -1591,10 +1633,12 @@ async function ask(question, skill, intent = "") {
     requesting = true;
     history.push({ role: "user", content: question });
     try {
-      await checkGroupSuggestion();
+      await withBotActivity(
+        "Checking possible groups in your selection…",
+        checkGroupSuggestion,
+      );
     } finally {
       requesting = false;
-      checkingGroups = false;
       render();
     }
     return;
@@ -1817,13 +1861,27 @@ async function ask(question, skill, intent = "") {
   history.push({ role: "user", content: question });
   render();
   try {
-    const answer = await requestTutor({
-      question,
-      skill: research ? "research" : skill,
-      mode: project.mode,
-      context,
-      history: coding || research ? [] : previous,
-    });
+    const activity =
+      {
+        compare: "Comparing your views…",
+        caption: "Drafting a figure caption…",
+        explain: "Reading your chart…",
+        excerpts: "Reading the selected passages…",
+      }[intent] ||
+      (coding
+        ? "Suggesting labels for your selection…"
+        : research
+          ? "Checking your research question and data…"
+          : "Preparing a reply…");
+    const answer = await withBotActivity(activity, () =>
+      requestTutor({
+        question,
+        skill: research ? "research" : skill,
+        mode: project.mode,
+        context,
+        history: coding || research ? [] : previous,
+      }),
+    );
     if (
       project !== activeProject ||
       history !== activeChat ||
@@ -1970,7 +2028,10 @@ async function ask(question, skill, intent = "") {
         return;
       }
       if (pick.action === "suggestGroups" && !intent && [2, 3].includes(step)) {
-        await checkGroupSuggestion();
+        await withBotActivity(
+          "Checking possible groups in your selection…",
+          checkGroupSuggestion,
+        );
         return;
       }
       if (intent === "suggest" && pick.action === "draw")
@@ -2541,7 +2602,7 @@ function evidence(i, match, codingPrompt = "") {
       : "") +
       (d.openAnswers
         ? `<p>${d.openAnswers.answered} of ${d.openAnswers.eligible} included respondents answered. Select an answer, give the idea a short label, or ask the bot to suggest labels for your selection.</p>`
-        : "") +
+        : `<div id="apply-book-collection" hidden><button type="button" class="primary" id="apply-book-interviews">Apply codebook to ${d.sources.length === 1 ? "interview" : "interviews"}</button><small>Choose the transcripts you want the bot to code.</small></div>`) +
       `<label>Find a passage<input id="searchPass"></label><div id="passlist">${list()}</div><div class="bar"><button type="button" id="shortpass">Use highlighted words as a passage</button><button type="button" id="discusspass" data-i="${i}">Discuss selected passages</button>${isInterview(d) && !codingPrompt ? '<button type="button" id="iv-open-passage">Open passage in transcript</button>' : ""}</div><label>Code to apply<input id="applycode" list="knowncodes"></label><datalist id="knowncodes">${opts(allCodes(d), "")}</datalist>${codingControls(d)}`,
     () => {
       if (codingPrompt) {
@@ -2708,7 +2769,35 @@ function evidence(i, match, codingPrompt = "") {
   bindCodingControls(d, extractCodebook, () => {
     suggestions = [];
     render();
+    get("apply-book-interviews")?.focus();
   });
+  const applyBook = get("apply-book-interviews");
+  if (applyBook) {
+    applyBook.onclick = async () => {
+      if (getData() !== d || !d.coding?.book?.length) return;
+      const owner = project;
+      delete d.textPurpose;
+      const state = interviews(d);
+      get("dialog").close();
+      if (!state.draft) {
+        d.coding.mode = "deductive";
+        state.method = "book";
+        state.established = true;
+      }
+      goto(1);
+      await checkpointInterview(owner, d);
+      if (project !== owner || getData() !== d || step !== 1) return;
+      if (state.draft) {
+        notice("Review or resume the existing coding draft first.");
+        return;
+      }
+      try {
+        await handleInterview("iv-auto", applyBook, d);
+      } catch (error) {
+        notice(error.message);
+      }
+    };
+  }
   if (isInterview(d) && interviews(d).established) {
     get("coding-method").disabled = true;
     get("codebook-controls").hidden = true;
@@ -2786,7 +2875,8 @@ async function handleInterview(act, el, d) {
     focus: () => project.researchFocus,
     changeLabel: (change) => changeInterviewLabel(d, change),
     extract: extractCodebook,
-    unlock: unlockBot,
+    unlock: (code) =>
+      withBotActivity("Checking your course code…", () => unlockBot(code)),
     code: (context) => requestInterviewCoding(context, requestTutor),
     finish: () => {
       const s = interviews(d);
@@ -2871,23 +2961,24 @@ async function action(act, el) {
         d,
         project,
         botURL
-          ? async (context, code) => {
-              if (!botSession()) {
-                if (!code.trim())
-                  throw Error(
-                    "Enter your course code or tick the roles yourself.",
-                  );
-                await unlockBot(code.trim());
-              }
-              return structuredAnswer(
-                await requestTutor({
-                  skill: "variables",
-                  context,
-                  question:
-                    "Suggest question roles for this research question.",
-                }),
-              );
-            }
+          ? (context, code) =>
+              withBotActivity("Suggesting question roles…", async () => {
+                if (!botSession()) {
+                  if (!code.trim())
+                    throw Error(
+                      "Enter your course code or tick the roles yourself.",
+                    );
+                  await unlockBot(code.trim());
+                }
+                return structuredAnswer(
+                  await requestTutor({
+                    skill: "variables",
+                    context,
+                    question:
+                      "Suggest question roles for this research question.",
+                  }),
+                );
+              })
           : null,
         () => {
           render();
@@ -3361,7 +3452,9 @@ async function action(act, el) {
       el.textContent = "Unlocking…";
       get("course-error").textContent = "";
       try {
-        await unlockBot(code);
+        await withBotActivity("Checking your course code…", () =>
+          unlockBot(code),
+        );
       } catch (error) {
         const field = get("course");
         if (field) {

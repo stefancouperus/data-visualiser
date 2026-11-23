@@ -23,6 +23,12 @@ const paths = {
 };
 export const icon = (k) =>
   `<svg aria-hidden="true" class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[k] || paths.text}"/></svg>`;
+// Four bars echo the app mark. The accompanying text carries the status for
+// assistive technology and when animation is switched off.
+export const activityIcon =
+  '<svg class="bot-activity-icon" viewBox="0 0 36 36" aria-hidden="true" focusable="false"><rect width="36" height="36" rx="8" fill="currentColor"/><g fill="white"><rect x="7" y="14" width="3.5" height="13" rx="1"/><rect x="13" y="7" width="3.5" height="20" rx="1"/><rect x="19" y="12" width="3.5" height="15" rx="1"/><rect x="25" y="9" width="3.5" height="18" rx="1"/></g></svg>';
+export const busyIndicator = (message, announce = true) =>
+  `<span class="bot-working"${announce ? ' role="status"' : ""}>${activityIcon}<span>${esc(message)}</span></span>`;
 export const mark = '<img class="mark" src="./data-visualiser.svg" alt="">';
 export const pict = (k) =>
   k === "survey"
