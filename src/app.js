@@ -6,6 +6,7 @@ import {
   saveHelpMode,
 } from "./bot-help.js";
 import { structuredAnswer } from "./bot-response.js";
+import { requestInterviewCoding } from "./interview-coding-request.js";
 import {
   isInterview,
   interviews,
@@ -2680,17 +2681,7 @@ async function handleInterview(act, el, d) {
     focus: () => project.researchFocus,
     extract: extractCodebook,
     unlock: unlockBot,
-    code: async (context) =>
-      structuredAnswer(
-        await requestTutor({
-          skill: "coding",
-          question:
-            context.guide.mode === "deductive"
-              ? "Check every supplied passage against each approved code, including when the speaker expresses its meaning in different words. For each supported assignment give the exact passage ID, an exact verbatim quotation and a reason. Check for a separate second meaning within the per-passage limit. Leave unsupported passages uncoded."
-              : "Read to the end of every supplied passage. Consider later answers, exceptions and differences between speakers in light of the research focus. Reuse labels for the same meaning and propose a distinct label for a different, well-supported idea within the supplied limits. Quote the participant’s exact words for every proposed assignment.",
-          context,
-        }),
-      ).suggestions,
+    code: (context) => requestInterviewCoding(context, requestTutor),
     finish: () => {
       const s = interviews(d);
       if (

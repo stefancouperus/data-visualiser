@@ -306,3 +306,63 @@ test("in a transcript with speaker turns, six default places include six replies
     "12",
   ]);
 });
+
+test("open discovery requests new labels directly and resolves an unnecessary permission question once", async () => {
+  const { requestInterviewCoding } =
+    await import("../src/interview-coding-request.js");
+  const context = {
+    guide: {
+      mode: "inductive",
+      vocabulary: [{ label: "Timing" }],
+      limits: { newPerBatch: 3 },
+    },
+    passages: [p],
+  };
+  const asks =
+    '{"suggestions":[]}\nWould you like me to propose a new label for this?';
+  const proposal = {
+    id: "a",
+    code: "Shift patterns",
+    quote: "shift ended late",
+  };
+  const calls = [];
+  assert.deepEqual(
+    await requestInterviewCoding(context, async (request) => {
+      calls.push(request);
+      return calls.length === 1
+        ? asks
+        : JSON.stringify({ suggestions: [proposal] });
+    }),
+    [proposal],
+  );
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].question, /3 NEW labels/);
+  assert.ok(calls.every((call) => call.context === context));
+  let attempts = 0;
+  await assert.rejects(
+    requestInterviewCoding(context, async () => {
+      attempts++;
+      return asks;
+    }),
+    /asked for permission again/,
+  );
+  assert.equal(attempts, 2);
+  attempts = 0;
+  assert.deepEqual(
+    await requestInterviewCoding(context, async () => {
+      attempts++;
+      return '{"suggestions":[]}';
+    }),
+    [],
+  );
+  assert.equal(attempts, 1);
+  context.guide.mode = "deductive";
+  assert.deepEqual(
+    await requestInterviewCoding(context, async () => {
+      attempts++;
+      return asks;
+    }),
+    [],
+  );
+  assert.equal(attempts, 2);
+});
