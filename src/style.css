@@ -884,3 +884,42 @@ dialog h2 {
 .withbot .iv-grid {grid-template-columns:minmax(0,1fr);}
 @media(max-width:950px){.iv-grid {grid-template-columns:minmax(0,1fr) minmax(175px,.5fr);} .iv-side {grid-column:1/-1;} .iv-side button {width:auto;margin-right:.4rem;}}
 @media(max-width:650px){.iv-grid {grid-template-columns:1fr;} .iv-text{max-height:45vh;}}
+
+.bot-access { display: grid; gap: .6rem; }
+.bot-access label, .bot-puzzle-editor label { font-weight: 650; }
+.bot-access button { justify-self: start; }
+.bot-access [role=alert]:empty { display: none; }
+.bot-access [role=alert] { color: #963920; font-size: .88rem; }
+.bot.floating.bot-locked { max-height: 15rem; }
+.bot-puzzle-editor, .bot-puzzle-summary, .bot-puzzle-collapsed { border-bottom: 1px solid var(--line); padding-bottom: .75rem; }
+.bot-puzzle-editor label { display: block; }
+.bot-puzzle-editor label small { display: inline; font-weight: 400; }
+.bot-puzzle-editor .bar, .bot-conversation .bar { margin: .45rem 0; }
+.bot-puzzle-editor textarea, .bot-conversation textarea { width: 100%; min-height: 3.25rem; margin: .25rem 0; }
+.bot-puzzle-editor small { font-size: .85rem; }
+.bot-puzzle-summary { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.bot-puzzle-summary > div { min-width: 0; }
+.bot-puzzle-summary p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: .2rem 0; }
+.bot-conversation h3 { margin: .75rem 0 .25rem; font-size: 1rem; }
+.bot-conversation .chatlog:empty { display: none; }
+.bot-extras { margin-top: .75rem; font-size: .9rem; }
+.bot-extras .bot-selection { border-top: 0; }
+
+.bot-hint { display:flex; gap:.35rem .55rem; align-items:baseline; flex-wrap:wrap; margin-block:.5rem; }
+.bot-hint > span { font-size:.82rem; color:var(--muted); }
+.bot-hint button { font-size:.88rem; padding:.25rem .55rem; text-align:left; }
+.bot-help-options { border:0; margin:.7rem 0 1rem; padding:0; }
+.bot-help-options legend { font-weight:600; margin-bottom:.5rem; }
+.bot-help-option { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; padding:.45rem .2rem; border-bottom:1px solid var(--line); }
+.bot-help-option label { display:flex; align-items:center; gap:.55rem; margin:0; cursor:pointer; }
+.bot-help-option input { width:auto; margin:0; }
+.bot-help-option .help-about { border-radius:50%; width:1.65rem; height:1.65rem; padding:0; cursor:help; }
+/* Stack explanations in one reserved row. Hovering or focusing never shifts a
+   radio button between pointer-down and pointer-up. */
+.bot-help-descriptions { display:grid; padding:.5rem .2rem 0; font-size:.9rem; line-height:1.4; }
+.bot-help-descriptions [role="tooltip"] { grid-area:1/1; visibility:hidden; }
+.bot-help-descriptions [data-visible="true"] { visibility:visible; }
+.bothead { flex-wrap: wrap; gap: .3rem; }
+.bot-included { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.bot.bot-locked { height: fit-content !important; }
+.bot-locked .botbody { flex: 0 1 auto; }

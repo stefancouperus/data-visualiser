@@ -1,3 +1,10 @@
+import {
+  chooseHelpMode,
+  helpSettings,
+  helpSuggestion,
+  readHelpMode,
+  saveHelpMode,
+} from "./bot-help.js";
 import { structuredAnswer } from "./bot-response.js";
 import { isInterview, interviews, appendInterviews } from "./interviews.js";
 import {
@@ -175,10 +182,6 @@ function botWorkspaceControls() {
       : "";
     return viewName(d, v) + " · " + kinds[v.chart] + filter;
   };
-  const included =
-    chosen.size || scope.length
-      ? `<div class="bar"><small>${chosen.size} selected passages · ${scope.length} whole sources included</small>${b("clearevidence", "Clear included text", "plain")}</div>`
-      : "";
   const names = both ? project.views.map(describe).join(" / ") : describe(view);
   const controls = both
     ? b("askboth", "Compare findings")
@@ -191,11 +194,11 @@ function botWorkspaceControls() {
         ? b("suggestgroups", "Suggest groups to compare")
         : "") +
       b("botcaption", "Draft a caption");
-  return `<div class="bot-selection">${target}<strong>${esc(names)}</strong>${included}<details data-chart-options="bot-prompts"><summary>Suggested questions</summary><div class="bar">${controls}</div></details></div>`;
+  return `<div class="bot-selection">${target}<strong>${esc(names)}</strong><div class="bar">${controls}</div></div>`;
 }
 let checkingGroups = false;
 let undoViews = [],
-  project = fresh(),
+  project = { ...fresh(), mode: readHelpMode() },
   step = 0,
   compact = false,
   bot = false,
@@ -265,15 +268,23 @@ function activate(id) {
   switchDataset(project, id, newView);
   resetTutor();
 }
-const modeNames = [
-  ["hints", "Contextual hints"],
-  ["request", "On request"],
-  ["guided", "Guided exploration"],
-];
 const botURL = (import.meta.env.VITE_BOT_URL || "").replace(/\/$/, "");
+const puzzleDrafts = new WeakMap();
+let unlocking = false;
+
 function projectFocusControls() {
-  const focus = project.researchFocus;
-  return `<div class="bot-selection"><strong>Research question</strong>${focus ? "<details><summary>View saved focus</summary><p>" + esc(focus) + "</p></details>" : "<small>Tell the bot what you want to find out for suggestions that fit your project.</small>"}<div class="bar">${b("editfocus", focus ? "Edit project focus" : "Tell the bot about your project")}${getData()?.kind === "table" ? b("variables", "Identify question roles") : ""}${focus && [2, 3].includes(step) ? b("researchsuggest", "Suggest what to explore", "primary") : ""}</div></div>`;
+  const saved = project.researchFocus;
+  const editing =
+    puzzleDrafts.has(project) || (!saved && !project.puzzleSkipped);
+  if (!editing) {
+    if (!saved)
+      return `<div class="bot-puzzle-collapsed">${b("editpuzzle", "Add research question or puzzle", "plain")}</div>`;
+    return `<section class="bot-puzzle-summary"><div><small>Research question or puzzle</small><p title="${esc(saved)}">${esc(saved)}</p></div>${b("editpuzzle", "Edit", "plain", 'aria-label="Edit research question or puzzle"')}</section>`;
+  }
+  return `<section class="bot-puzzle-editor"><label for="puzzle-field">Research question or puzzle <small>(optional)</small></label>
+    <textarea id="puzzle-field" rows="2" maxlength="${focusLimit}" aria-describedby="puzzle-help" placeholder="What are you trying to find out?">${esc(puzzleDrafts.get(project) ?? saved)}</textarea>
+    <small id="puzzle-help">The bot uses this to suggest questions, themes and comparisons for your project.</small>
+    <div class="bar">${b("savepuzzle", "Save")}${b("skippuzzle", saved ? "Cancel" : "Skip for now", "plain")}</div></section>`;
 }
 function editProjectFocus(draft) {
   modal(
@@ -283,6 +294,8 @@ function editProjectFocus(draft) {
       if (val("research-focus").trim().length > focusLimit)
         throw Error("Keep your project focus to 2,000 characters or fewer.");
       project.researchFocus = readFocus(val("research-focus"));
+      puzzleDrafts.delete(project);
+      project.puzzleSkipped = !project.researchFocus;
       proposal = captionDraft = queuedShortcut = null;
       if (draft !== undefined) lastQuestion = "";
       render();
@@ -295,16 +308,57 @@ function editProjectFocus(draft) {
     "Save project focus",
   );
 }
+function botSession() {
+  const token = sessionStorage.getItem("dv-session");
+  const expiry = token?.split(".")[1];
+  if (expiry && /^\d+$/.test(expiry) && Number(expiry) <= Date.now()) {
+    sessionStorage.removeItem("dv-session");
+    return null;
+  }
+  return token;
+}
 function botBox() {
-  return `<section id="data-bot" aria-label="Data bot workspace" class="bot ${isDocked() ? "docked" : "floating"}"><header class="bothead" data-window-handle="move"><h2 title="Drag the title bar to move the floating window">Data bot</h2><div class="bottools">${innerWidth >= 900 ? b("dockbot", isDocked() ? "Float window" : "Dock right") : ""}${b("closebot", "Close", "plain")}</div></header><div class="botbody"><details class="botprefs"><summary>Help settings</summary><label>Help mode<select id="mode">${opts(modeNames, project.mode)}</select></label>${b("scope", "What the bot can see")}</details>${projectFocusControls()}${!history.length && !requesting ? (step === 1 && isInterview(getData()) ? "<p>Ask me to suggest labels or code the open interview with your shared codebook.</p>" : "<p>Ask about a pattern or ask me to make a chart.</p>") : ""}${!botURL ? "<p>Live help will be available when the workshop service is connected. You can explore, compare and export your data now.</p>" : !sessionStorage.getItem("dv-session") ? '<label>Workshop course code<input id="course" type="password" autocomplete="off"></label>' + b("unlock", "Unlock the bot") : ""}${
-    tutorRecord(project).activity.length
-      ? `<details><summary>Project activity</summary><ul>${tutorRecord(project)
-          .activity.map((note) => "<li>" + esc(note) + "</li>")
-          .join("")}</ul></details>`
-      : ""
-  }<div class="chatlog">${history.map((t) => `<div class="msg ${t.role === "user" ? "msg-user" : "msg-assistant"}"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`).join("")}</div>${requesting ? `<p role="status">${checkingGroups ? "Checking possible groups in your selection…" : "Waiting for the university model…"}</p>` : ""}
- ${proposal ? b("botdraw", "Make this chart", "primary") + (proposal.groupSuggestion ? b("declinegroups", "No thanks", "plain") : "") : ""}${suggestions.length ? b("applycodes", "Apply all suggested labels", "primary") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><small>${esc(s.source)}</small><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
- ${captionDraft ? b("applycaption", "Add caption to figure") : ""}${botWorkspaceControls()}<label>Ask about your project<textarea id="question" maxlength="4000" placeholder="${step === 1 && isInterview(getData()) ? "Help me code this transcript…" : getData()?.kind === "text" ? "Which of these themes come up in the same passage?" : "Show me which answers people gave together…"}">${esc(lastQuestion)}</textarea></label><div class="bar">${b("send", "Send", "primary", requesting || !botURL ? "disabled" : "")}</div></div><div class="botsize" data-window-handle="resize" title="Drag to resize"></div></section>`;
+  const unlocked = !!botURL && !!botSession();
+  const header = `<header class="bothead" data-window-handle="move"><h2 title="Drag the title bar to move the floating window">Data bot</h2><div class="bottools">${unlocked ? helpSettings() : ""}${unlocked && innerWidth >= 900 ? b("dockbot", isDocked() ? "Float window" : "Dock right") : ""}${b("closebot", "Close", "plain")}</div></header>`;
+  const gate = botURL
+    ? `<div class="bot-access"><label for="course">Workshop course code</label><input id="course" type="password" autocomplete="off" aria-describedby="course-error"><div id="course-error" role="alert"></div>${b("unlock", unlocking ? "Unlocking…" : "Unlock the bot", "primary", unlocking ? "disabled" : "")}</div>`
+    : "<p>The workshop bot is currently unavailable.</p>";
+  return `<section id="data-bot" aria-label="Data bot workspace" class="bot ${isDocked() ? "docked" : "floating"} ${unlocked ? "" : "bot-locked"}">${header}<div class="botbody">${unlocked ? botChat() : gate}</div>${unlocked ? '<div class="botsize" data-window-handle="resize" title="Drag to resize"></div>' : ""}</section>`;
+}
+
+function botChat() {
+  const dataset = getData();
+  const context = {
+    step,
+    dataset,
+    view: project.views[focusIndex()],
+    panel: focusIndex(),
+    both: step === 3 && botFocus === "both",
+  };
+  const messages = history
+    .map(
+      (t) =>
+        `<div class="msg ${t.role === "user" ? "msg-user" : "msg-assistant"}"><strong>${t.role === "user" ? "You" : "Data bot"}</strong><p>${esc(t.content)}</p></div>`,
+    )
+    .join("");
+  return `${projectFocusControls()}<section class="bot-conversation" aria-label="Chat"><h3>Chat</h3><div class="chatlog" role="log" aria-label="Conversation">${messages}</div>${requesting ? `<p role="status">${checkingGroups ? "Checking possible groups in your selection…" : "Waiting for the university model…"}</p>` : ""}
+    ${proposal ? b("botdraw", "Make this chart", "primary") + (proposal.groupSuggestion ? b("declinegroups", "No thanks", "plain") : "") : ""}
+    ${suggestions.length ? b("applycodes", "Apply all suggested labels", "primary") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><small>${esc(s.source)}</small><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
+    ${captionDraft ? b("applycaption", "Add caption to figure") : ""}
+    ${chosen.size || scope.length ? `<div class="bot-included"><small>Included with your message · ${chosen.size} selected passages · ${scope.length} whole sources</small>${b("clearevidence", "Clear included text", "plain")}</div>` : ""}
+    <textarea id="question" rows="2" aria-label="Ask about your project" maxlength="4000" placeholder="Ask about your project…">${esc(lastQuestion)}</textarea><div class="bar">${b("send", "Send", "primary", requesting ? "disabled" : "")}</div></section>
+    ${requesting ? "" : helpSuggestion(project.mode, context)}
+    <details class="bot-extras" data-chart-options="bot-extras"><summary>Chat tools</summary>${botWorkspaceControls()}
+    <div class="bar">${dataset?.kind === "table" ? b("variables", "Identify question roles") : ""}${project.researchFocus && [2, 3].includes(step) ? b("researchsuggest", "Suggest what to explore") : ""}${b("scope", "What the bot can see")}</div>
+    ${
+      tutorRecord(project).activity.length
+        ? `<details><summary>Project activity</summary><ul>${tutorRecord(
+            project,
+          )
+            .activity.map((note) => "<li>" + esc(note) + "</li>")
+            .join("")}</ul></details>`
+        : ""
+    }</details>`;
 }
 function analysisReady(d) {
   return (
@@ -483,7 +537,7 @@ function render() {
   }
   const previousBody = document.querySelector(".botbody");
   const scroll = previousBody?.scrollTop || 0;
-  const settingsOpen = previousBody?.querySelector(".botprefs")?.open;
+  const previousCode = previousBody?.querySelector("#course")?.value;
   const asideBot = bot && isDocked();
   get("app").innerHTML =
     `<div class="shell ${compact ? "compact" : ""}"><aside class="rail"><div class="brand">${mark}<span>Data<br>visualiser</span></div><nav class="nav" aria-label="Workflow">${labels.map((s, i) => `<button title="${s}" aria-label="${s}" data-act="nav" data-i="${i}" ${step === i ? 'aria-current="step"' : ""} ${(i > 0 && !d) || (i > 1 && !confirmed && !(interview && i === 4)) ? "disabled" : ""}>${icon(icons[i])}<span>${s}</span></button>`).join("")}${b("bot", icon("bot") + "<span>Data bot</span>", "botnav", 'aria-label="Data bot" title="Data bot" aria-expanded="' + bot + '"')}</nav><div class="rail-bottom">${b("compact", icon("menu") + "<span>Collapse sidebar</span>", "plain", 'aria-label="Toggle sidebar"')}<small class="app-version">0.1 beta</small></div></aside><main class="main" id="workspace"><header class="top"><span>${esc(project.name)} &nbsp; / &nbsp; ${labels[step]}</span></header><div class="content"><div class="${asideBot ? "withbot" : ""}"><div>${content}</div>${asideBot ? botBox() : ""}</div>${bot && !asideBot ? botBox() : ""}</div></main></div>`;
@@ -496,7 +550,7 @@ function render() {
   bindTermHelp(get("app"));
   if (bot) {
     layoutBot();
-    document.querySelector(".botprefs").open = !!settingsOpen;
+    if (previousCode && get("course")) get("course").value = previousCode;
     document.querySelector(".botbody").scrollTop = scroll;
   }
   for (const i of expanded) {
@@ -767,6 +821,7 @@ function setProject(p) {
   pendingSelections.clear();
   selectionConfirmed = false;
   project = verifyProject(p);
+  project.mode = readHelpMode();
   project.comparisonStarted ??=
     project.figurePanels === "both" ||
     (project.views.length === 2 &&
@@ -834,7 +889,7 @@ function openBot(question = "") {
   bot = true;
   if (question) lastQuestion = question;
   render();
-  get("question")?.focus();
+  (get("course") || get("question"))?.focus({ preventScroll: true });
 }
 function selectedPassages() {
   const d = getData();
@@ -1217,6 +1272,10 @@ async function unlockBot(code) {
   });
   const json = await res.json();
   if (!res.ok) throw Error(json.error || "Could not unlock the tutor.");
+  if (typeof json.token !== "string" || !json.token.trim())
+    throw Error(
+      "The workshop service did not return a session. Try unlocking again.",
+    );
   sessionStorage.setItem("dv-session", json.token);
 }
 
@@ -1225,7 +1284,7 @@ async function requestTutor(payload) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: "Bearer " + sessionStorage.getItem("dv-session"),
+      Authorization: "Bearer " + botSession(),
     },
     body: JSON.stringify(payload),
   });
@@ -1237,7 +1296,7 @@ async function requestTutor(payload) {
   return data.answer;
 }
 async function extractCodebook(document, code) {
-  if (!sessionStorage.getItem("dv-session")) {
+  if (!botSession()) {
     if (!code.trim())
       throw Error("Enter your workshop course code to extract labels.");
     await unlockBot(code.trim());
@@ -1369,7 +1428,7 @@ async function ask(question, skill, intent = "") {
   if (requesting) throw Error("A tutor request is already pending.");
   if (!botURL)
     throw Error("The workshop tutor service has not been connected.");
-  if (!sessionStorage.getItem("dv-session")) {
+  if (!botSession()) {
     openBot(question);
     if (skill === "coding") {
       queuedShortcut = {
@@ -2699,7 +2758,7 @@ async function action(act, el) {
         project,
         botURL
           ? async (context, code) => {
-              if (!sessionStorage.getItem("dv-session")) {
+              if (!botSession()) {
                 if (!code.trim())
                   throw Error(
                     "Enter your course code or tick the roles yourself.",
@@ -2792,6 +2851,25 @@ async function action(act, el) {
       goto(2);
       return;
     }
+    case "editpuzzle":
+      puzzleDrafts.set(project, project.researchFocus);
+      render();
+      get("puzzle-field")?.focus();
+      return;
+    case "savepuzzle":
+      project.researchFocus = readFocus(val("puzzle-field"));
+      project.puzzleSkipped = !project.researchFocus;
+      proposal = captionDraft = queuedShortcut = null;
+      puzzleDrafts.delete(project);
+      render();
+      get("question")?.focus();
+      return;
+    case "skippuzzle":
+      if (!project.researchFocus) project.puzzleSkipped = true;
+      puzzleDrafts.delete(project);
+      render();
+      get("question")?.focus();
+      return;
     case "editfocus":
       editProjectFocus();
       return;
@@ -2981,6 +3059,38 @@ async function action(act, el) {
       render();
       document.querySelector('[data-act="dockbot"]')?.focus();
       return;
+    case "bothelp": {
+      const mode = await chooseHelpMode(project.mode);
+      if (mode) {
+        saveHelpMode(mode);
+        project.mode = mode;
+        render();
+        document.querySelector('[data-act="bothelp"]')?.focus();
+      }
+      return;
+    }
+    case "bothintsuggestion": {
+      if (requesting)
+        return notice("The Data bot is working on your previous request.");
+      return action(el.dataset.next, el);
+    }
+    case "botfilehelp":
+    case "bottexthelp":
+    case "botsavehelp": {
+      const answers = {
+        botfilehelp:
+          "For a questionnaire, choose your Qualtrics export or a table of responses. For interviews, choose transcripts or coded passages. To continue a previous project, choose Open a saved project and select your downloaded project file.",
+        bottexthelp:
+          "Read a passage with its surrounding words. If it is already coded, check whether its labels capture what the speaker means. If you are starting from scratch, you can build labels from the passages or apply a codebook you already have.",
+        botsavehelp:
+          "Choose Download project with data. To continue on this or another computer, choose Open a saved project on Upload and select that file.",
+      };
+      history.push(
+        { role: "user", content: el.textContent.trim() },
+        { role: "assistant", content: answers[act] },
+      );
+      break;
+    }
     case "closebot":
       bot = false;
       render();
@@ -3077,7 +3187,7 @@ async function action(act, el) {
         ],
       }[act];
       openBot(prompt);
-      if (!sessionStorage.getItem("dv-session")) {
+      if (!botSession()) {
         queuedShortcut = {
           prompt,
           intent,
@@ -3124,7 +3234,36 @@ async function action(act, el) {
       return;
     }
     case "unlock": {
-      await unlockBot(val("course"));
+      if (unlocking) return;
+      const code = val("course").trim();
+      if (!code) {
+        get("course-error").textContent = "Enter your workshop course code.";
+        get("course").focus();
+        return;
+      }
+      unlocking = true;
+      el.disabled = true;
+      el.textContent = "Unlocking…";
+      get("course-error").textContent = "";
+      try {
+        await unlockBot(code);
+      } catch (error) {
+        const field = get("course");
+        if (field) {
+          get("course-error").textContent = error.message;
+          field.setAttribute("aria-invalid", "true");
+          field.focus();
+          field.select();
+          const retry = document.querySelector('[data-act="unlock"]');
+          retry.disabled = false;
+          retry.textContent = "Unlock the bot";
+        }
+        return;
+      } finally {
+        unlocking = false;
+      }
+      render();
+      (get("puzzle-field") || get("question"))?.focus({ preventScroll: true });
       const queued = queuedShortcut;
       queuedShortcut = null;
       if (
@@ -3138,9 +3277,8 @@ async function action(act, el) {
           queued.selection === JSON.stringify([[...chosen], scope]))
       ) {
         await ask(queued.prompt, queued.skill || "recommend", queued.intent);
-        return;
       }
-      break;
+      return;
     }
     case "send": {
       let q = val("question").trim();
@@ -3155,6 +3293,8 @@ async function action(act, el) {
         if (declaration.focus.length > focusLimit)
           throw Error("Keep your project focus to 2,000 characters or fewer.");
         project.researchFocus = readFocus(declaration.focus);
+        puzzleDrafts.delete(project);
+        project.puzzleSkipped = false;
         proposal = captionDraft = queuedShortcut = null;
         history.push({ role: "user", content: declaration.focus });
         notice("Project focus saved.");
@@ -3587,8 +3727,14 @@ document.addEventListener("input", (e) => {
       label.hidden = !label.textContent.toLowerCase().includes(query);
   }
   if (e.target.id === "question") lastQuestion = e.target.value;
+  if (e.target.id === "puzzle-field") puzzleDrafts.set(project, e.target.value);
 });
 document.addEventListener("keydown", (e) => {
+  if (e.target.id === "course" && e.key === "Enter" && !e.isComposing) {
+    e.preventDefault();
+    document.querySelector('[data-act="unlock"]')?.click();
+    return;
+  }
   if (e.key === "Escape") {
     const help =
       e.target.closest(".term-help[open]") ||
@@ -3634,11 +3780,6 @@ document.addEventListener("change", (e) => {
   }
   if (t.id === "bot-focus") {
     focusBot(t.value);
-    render();
-    return;
-  }
-  if (t.id === "mode") {
-    project.mode = t.value;
     render();
     return;
   }

@@ -28,7 +28,7 @@ export function layoutBot() {
     innerWidth - 16,
   );
   const height = limit(
-    prefs.h || 440,
+    prefs.h || 540,
     Math.min(220, innerHeight - 16),
     innerHeight - 16,
   );

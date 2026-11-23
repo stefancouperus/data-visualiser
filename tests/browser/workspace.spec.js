@@ -234,6 +234,7 @@ test("a recognised two-header survey opens immediately and the tutor draws sugge
 test("questionnaire labels reach charts and the bot can move, resize and dock", async ({
   page,
 }) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
   await upload(
     page,
     /I have a Qualtrics export/,
@@ -1016,7 +1017,7 @@ test("the bot works on the selected panel, drafts a caption and compares both wi
     .locator('[data-panel="1"] [data-key=x]')
     .selectOption({ label: "Year" });
   await page.locator('[data-panel="0"] [data-act=describechart]').click();
-  await expand(page, "Suggested questions");
+  await expand(page, "Chat tools");
   await btn("Explain the pattern").click();
   await expect(page.locator(".chatlog")).toContainText("Compare counts");
   expect(calls[0].focus).toBe("left");
@@ -1096,7 +1097,7 @@ test("discussing interview passages uses only the checked text and the student c
   ]);
   expect(JSON.stringify(received)).not.toContain("I play tennis.");
   await btn("Clear included text").click();
-  await expand(page, "Suggested questions");
+  await expand(page, "Chat tools");
   await btn("Explain the pattern").click();
   await expect.poll(() => received.requestedOutput).toBe("explain");
   expect(received.passages).toEqual([]);
@@ -1287,7 +1288,7 @@ test("a group suggestion explains the comparison, keeps the figure until consent
   await expect(btn("Make this chart")).toBeVisible();
   await btn("No thanks").click();
   await expect(btn("Make this chart")).toHaveCount(0);
-  await expand(page, "Suggested questions");
+  await expand(page, "Chat tools");
   await btn("Suggest groups to compare").click();
   await expect(btn("Make this chart")).toBeVisible();
   await send("Yes, please draw that comparison");
@@ -1391,6 +1392,7 @@ for (const text of [false, true]) {
       await expect(page.locator("#research-focus")).toHaveValue(focus);
       await btn("Save project focus").click();
       const first = await page.locator("#graphic0").innerText();
+      await expand(page, "Chat tools");
       await btn("Suggest what to explore").click();
       await expect(btn("Make this chart")).toBeVisible();
       expect(context.projectFocus).toBe(focus);
@@ -1405,16 +1407,19 @@ for (const text of [false, true]) {
         text ? "Shift" : "c2",
       );
       invalid = true;
-      await expand(page, "Suggested questions");
+      await expand(page, "Chat tools");
       await btn("Suggest groups to compare").click();
       await expect(page.locator(".chatlog")).toContainText(
         "couldn’t match that suggestion",
       );
       expect(context.selectionToKeep).toEqual([text ? "Late bus" : "c1"]);
       await expect(btn("Make this chart")).toHaveCount(0);
-      await btn("Edit project focus").click();
-      await page.locator("#research-focus").fill("");
-      await btn("Save project focus").click();
+      await btn("Edit research question or puzzle").click();
+      await page.locator("#puzzle-field").fill("");
+      await page
+        .locator("#data-bot")
+        .getByRole("button", { name: "Save", exact: true })
+        .click();
       await expect(btn("Suggest what to explore")).toHaveCount(0);
     },
   );
@@ -1423,6 +1428,7 @@ for (const text of [false, true]) {
 test("students can preview, pin and dismiss an explanation using their own survey labels", async ({
   page,
 }) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
   await upload(
     page,
     /I have a Qualtrics export/,
