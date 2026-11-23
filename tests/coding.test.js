@@ -366,3 +366,28 @@ test("open discovery requests new labels directly and resolves an unnecessary pe
   );
   assert.equal(attempts, 2);
 });
+
+test("a prose-only batch is retried before it can be counted as reviewed", async () => {
+  const { requestInterviewCoding } =
+    await import("../src/interview-coding-request.js");
+  const context = { guide: { mode: "deductive" }, passages: [p] };
+  const calls = [];
+  const result = await requestInterviewCoding(context, async (request) => {
+    calls.push(request);
+    return calls.length === 1
+      ? "No codes have been suggested for this passage."
+      : '{"suggestions":[]}';
+  });
+  assert.deepEqual(result, []);
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((call) => call.context === context));
+  let attempts = 0;
+  await assert.rejects(
+    requestInterviewCoding(context, async () => {
+      attempts++;
+      return '{"matches":[]}';
+    }),
+    /format this batch/,
+  );
+  assert.equal(attempts, 2);
+});
