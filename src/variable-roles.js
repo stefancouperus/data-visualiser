@@ -45,7 +45,7 @@ export function roleChoices(fields, preferred) {
       ];
     });
 }
-export function editRoles(d, project, suggest, done) {
+export function editRoles(d, project, suggest, done, ensureAccess) {
   const fields = fieldsFor(d);
   const existing = new Map(confirmedRoles(d).map((f) => [f.id, f.roles]));
   const roleNames = (selected) =>
@@ -65,7 +65,7 @@ export function editRoles(d, project, suggest, done) {
     <label>What do you want to find out?<textarea id="role-focus" maxlength="2000">${esc(project.researchFocus || "")}</textarea></label>
     <label>What might explain the outcome? (optional)<input id="role-idea" maxlength="1000" value="${esc(d.explanation || "")}"></label>
     <details><summary>What do the four roles mean?</summary><p>${roles.map(([, name, meaning]) => "<strong>" + name + "</strong> · " + meaning).join("<br>")}</p></details>
-    ${suggest ? `<div class="role-help">${sessionStorage.getItem("dv-session") ? "" : '<label>Course code for bot suggestions<input id="role-code" type="password"></label>'}<button type="button" id="suggest-roles">Suggest roles from my project</button><p role="status" id="role-status"></p></div>` : ""}
+    ${suggest ? `<div class="role-help"><button type="button" id="suggest-roles">Suggest roles from my project</button><p role="status" id="role-status"></p></div>` : ""}
     <p>Choose a question to edit its roles. Each question can have more than one.</p>
     <div class="role-list">${fields.map((f) => `<details name="question-roles"><summary>${esc(f.label)} <span class="role-summary">${esc(roleNames(existing.get(f.id) || []))}</span></summary><fieldset data-role-field="${esc(f.id)}" aria-label="${esc(f.label)}">${roles.map(([r, name]) => `<label class="tick"><input type="checkbox" value="${r}" ${existing.get(f.id)?.includes(r) ? "checked" : ""}>${name}</label>`).join("")}<small class="role-reason"></small></fieldset></details>`).join("")}</div>`,
     () => {
@@ -103,20 +103,23 @@ export function editRoles(d, project, suggest, done) {
       return;
     }
     trigger.disabled = true;
-    status.innerHTML = busyIndicator(
-      "Suggesting roles for your questions…",
-      false,
-    );
     const boxes = [...form.querySelectorAll("[data-role-field]")];
     try {
-      const result = await suggest(
-        {
-          focus,
-          explanation,
-          questions: fields.map(({ id, label, type }) => ({ id, label, type })),
-        },
-        get("role-code")?.value || "",
+      if (
+        !(await ensureAccess("Suggest roles from my project")) ||
+        get("modalform") !== form ||
+        !get("dialog").open
+      )
+        return;
+      status.innerHTML = busyIndicator(
+        "Suggesting roles for your questions…",
+        false,
       );
+      const result = await suggest({
+        focus,
+        explanation,
+        questions: fields.map(({ id, label, type }) => ({ id, label, type })),
+      });
       if (get("modalform") !== form || !get("dialog").open) return;
       if (
         focus !== get("role-focus").value.trim() ||

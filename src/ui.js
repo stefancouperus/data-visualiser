@@ -83,17 +83,31 @@ export function modal(title, content, onOK, accept = "Apply") {
     }
   };
 }
-export function askForm(title, content, read, accept = "Continue") {
+export function askForm(
+  title,
+  content,
+  read,
+  accept = "Continue",
+  beforeSubmit,
+) {
   return new Promise((resolve) => {
-    modal(
-      title,
-      content,
-      () => {
-        const value = read();
-        resolve(value);
-      },
-      accept,
-    );
+    const submit = () => {
+      const value = read();
+      resolve(value);
+    };
+    const onOK = beforeSubmit
+      ? async () => {
+          const form = get("modalform");
+          if (
+            !(await beforeSubmit()) ||
+            get("modalform") !== form ||
+            !get("dialog").open
+          )
+            return false;
+          submit();
+        }
+      : submit;
+    modal(title, content, onOK, accept);
     const d = get("dialog");
     d.oncancel = () => resolve(null);
     get("closeDialog").onclick = () => {

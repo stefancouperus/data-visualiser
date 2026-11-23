@@ -1,4 +1,5 @@
 import { esc } from "./chart.js";
+import { botSession } from "./bot-access.js";
 import {
   bindSampleLabelEditor,
   reviewVocabulary,
@@ -212,7 +213,7 @@ export function interviewScreen(d, storageStatus = "") {
 </div>`;
 }
 // Every new batch operation previews its scope before any text is sent.
-function codingScope(d, state, sample, resuming, request, api) {
+function codingScope(d, state, sample, resuming, request, api, title) {
   const draft = resuming ? state.draft : null;
   const source = state.source;
   const scope =
@@ -265,7 +266,7 @@ function codingScope(d, state, sample, resuming, request, api) {
     return ids;
   };
   const choice = askForm(
-    sample ? "Suggest labels from selected passages" : applyCodebookTitle(d),
+    title,
     `<p>The university Data bot will receive ${sample ? "the passages you select and your existing labels" : "all original passages in the selected interviews and your shared codebook"}. You will review its suggestions before any coding is applied.</p>` +
       (sample
         ? `<p>${labelAllowance ? "The bot can suggest up to " + labelAllowance + " new labels in this sample." : "Your codebook has reached the bot’s limit for discovering new labels. It can still suggest matches for existing labels."} One label can fit several passages.</p>` +
@@ -306,9 +307,6 @@ function codingScope(d, state, sample, resuming, request, api) {
         ? '<label>What should the bot look for? (optional)<input id="iv-focus" maxlength="600" value="' +
           esc(d.coding?.focus || api.focus()) +
           '"></label>'
-        : "") +
-      (!sessionStorage.getItem("dv-session")
-        ? '<label>Workshop course code<input id="iv-access" type="password"></label>'
         : ""),
     () => {
       const sources = currentSources();
@@ -342,11 +340,17 @@ function codingScope(d, state, sample, resuming, request, api) {
       return {
         sources: used,
         ids,
-        access: val("iv-access"),
         focus: val("iv-focus").trim(),
       };
     },
     sample ? "Send selected passages" : "Send to bot for coding",
+    async () => {
+      if (botSession()) return true;
+      // A session may expire while the student chooses passages. Restore
+      // this exact selection and let them explicitly send after unlocking.
+      await api.ensureAccess(title);
+      return false;
+    },
   );
   function countSample() {
     const groups = [
@@ -465,9 +469,15 @@ export async function interviewAction(act, el, d, api) {
     const manual = d.coding?.bookDraft
       ? d.coding.bookDraft.method === "manual"
       : act === "iv-enterbook";
+    const title = manual
+      ? "Enter your codebook labels"
+      : "Extract labels from a codebook";
+    if (act === "iv-book" && !d.coding?.bookDraft) {
+      if (!(await api.ensureAccess(title)) || api.current() !== d) return;
+    }
     const previous = JSON.stringify(approvedBook(d));
     modal(
-      manual ? "Enter your codebook labels" : "Extract labels from a codebook",
+      title,
       codingControls(d, { mode: "deductive", standalone: true, manual }),
     );
     bindCodingControls(
@@ -488,6 +498,7 @@ export async function interviewAction(act, el, d, api) {
         );
       },
       () => refresh(),
+      api.ensureAccess,
     );
     return;
   }
@@ -548,6 +559,18 @@ export async function interviewAction(act, el, d, api) {
     if (!sample && (!s.established || !approvedBook(d).length))
       throw Error("Confirm the shared labels before coding a whole interview.");
     const resuming = act === "iv-resume";
+    const initialDraft = s.draft;
+    const title = sample
+      ? "Suggest labels from selected passages"
+      : applyCodebookTitle(d);
+    if (
+      !(await api.ensureAccess(title)) ||
+      api.current() !== d ||
+      s.source !== source ||
+      s.draft !== initialDraft ||
+      jobs.has(d)
+    )
+      return;
     const selection = await codingScope(
       d,
       s,
@@ -555,11 +578,16 @@ export async function interviewAction(act, el, d, api) {
       resuming,
       el.scopeRequest,
       api,
+      title,
     );
-    if (!selection || (s.draft && act !== "iv-resume")) return;
-    if (!sessionStorage.getItem("dv-session"))
-      await api.unlock(selection.access);
-    if (api.current() !== d || s.source !== source || jobs.has(d)) return;
+    if (
+      !selection ||
+      api.current() !== d ||
+      s.source !== source ||
+      s.draft !== initialDraft ||
+      jobs.has(d)
+    )
+      return;
     if (!resuming) {
       if (sample && !s.established) s.method = "inductive";
       d.coding = { ...d.coding, focus: selection.focus };

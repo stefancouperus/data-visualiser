@@ -508,9 +508,9 @@ dialog {
   padding: 0;
   overflow: hidden;
 }
-#modalform { display: flex; flex-direction: column; max-height: calc(90dvh - 2px); }
-#dialog-title, .dialog-footer { flex: none; }
-#dialog-title { padding: 1rem 1.25rem .85rem; margin: 0; border-bottom: 1px solid var(--line); }
+#modalform, .course-access form { display: flex; flex-direction: column; max-height: calc(90dvh - 2px); }
+#dialog-title, #access-title, .dialog-footer { flex: none; }
+#dialog-title, #access-title { padding: 1rem 1.25rem .85rem; margin: 0; border-bottom: 1px solid var(--line); }
 .dialog-body { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 1rem 1.25rem; }
 .dialog-body > :first-child { margin-top: 0; }
 .dialog-body > :last-child { margin-bottom: 0; }
@@ -527,9 +527,12 @@ dialog {
 }
 @media (max-height: 420px) {
   dialog { max-height: 97dvh; }
-  #modalform { max-height: calc(97dvh - 2px); }
-  #dialog-title, .dialog-body, .dialog-footer { padding: .5rem .8rem; }
+  #modalform, .course-access form { max-height: calc(97dvh - 2px); }
+  #dialog-title, #access-title, .dialog-body, .dialog-footer { padding: .5rem .8rem; }
 }
+dialog.course-access { width: min(27rem, 92vw); }
+dialog.awaiting-course-code { visibility: hidden; }
+dialog.awaiting-course-code::backdrop { background: transparent; }
 dialog::backdrop {
   background: #17212e66;
 }

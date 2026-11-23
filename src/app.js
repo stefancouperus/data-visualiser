@@ -6,6 +6,7 @@ import {
   saveHelpMode,
 } from "./bot-help.js";
 import { structuredAnswer } from "./bot-response.js";
+import { botSession, confirmTaskAccess } from "./bot-access.js";
 import { interviewScopeRequest } from "./interview-scope.js";
 import { requestInterviewCoding } from "./interview-coding-request.js";
 import {
@@ -361,15 +362,6 @@ function editProjectFocus(draft) {
     },
     "Save project focus",
   );
-}
-function botSession() {
-  const token = sessionStorage.getItem("dv-session");
-  const expiry = token?.split(".")[1];
-  if (expiry && /^\d+$/.test(expiry) && Number(expiry) <= Date.now()) {
-    sessionStorage.removeItem("dv-session");
-    return null;
-  }
-  return token;
 }
 function botBox() {
   const unlocked = !!botURL && !!botSession();
@@ -1395,7 +1387,7 @@ function applyProposal(explanation) {
   render();
   get("graphic" + candidate.panel)?.scrollIntoView({ block: "nearest" });
 }
-async function unlockBot(code) {
+async function unlockBot(code, stillCurrent = () => true) {
   if (!botURL)
     throw Error("The workshop tutor service has not been connected.");
   const res = await fetch(botURL + "/session", {
@@ -1409,34 +1401,53 @@ async function unlockBot(code) {
     throw Error(
       "The workshop service did not return a session. Try unlocking again.",
     );
+  if (!stillCurrent()) return false;
   sessionStorage.setItem("dv-session", json.token);
+  return true;
+}
+
+async function ensureBotAccess(title) {
+  if (!botURL)
+    throw Error("The workshop tutor service has not been connected.");
+  if (botSession()) return true;
+  const owner = project,
+    dataset = getData();
+  const allowed = await confirmTaskAccess(title, (code, stillOpen) =>
+    withBotActivity("Checking your course code…", () =>
+      unlockBot(code, stillOpen),
+    ),
+  );
+  if (!allowed || owner !== project || dataset !== getData()) return false;
+  if (bot) render();
+  return true;
 }
 
 async function requestTutor(payload) {
   if (payload.skill === "coding")
     payload = { ...payload, context: codingRequestContext(payload.context) };
+  const session = botSession();
+  if (!session)
+    throw Error(
+      "Your session has expired. Choose the bot action again to confirm your course code.",
+    );
   const res = await fetch(botURL + "/ask", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: "Bearer " + botSession(),
+      Authorization: "Bearer " + session,
     },
     body: JSON.stringify(payload),
   });
   const data = await res.json();
   if (!res.ok) {
-    if (res.status === 401) sessionStorage.removeItem("dv-session");
+    if (res.status === 401 && botSession() === session)
+      sessionStorage.removeItem("dv-session");
     throw Error(data.error || "Tutor unavailable.");
   }
   return data.answer;
 }
-async function extractCodebook(document, code) {
+async function extractCodebook(document) {
   return withBotActivity("Extracting labels from your codebook…", async () => {
-    if (!botSession()) {
-      if (!code.trim())
-        throw Error("Enter your workshop course code to extract labels.");
-      await unlockBot(code.trim());
-    }
     const answer = await requestTutor({
       skill: "codebook",
       question: "Extract the code labels and their meanings for review.",
@@ -2853,6 +2864,7 @@ function evidence(i, match, codingPrompt = "") {
       get("apply-book-interviews")?.focus();
     },
     refreshDocumentBook,
+    ensureBotAccess,
   );
   syncPassageLabels();
   const applyBook = get("apply-book-interviews");
@@ -2953,8 +2965,7 @@ async function handleInterview(act, el, d) {
     focus: () => project.researchFocus,
     changeLabel: (change) => changeInterviewLabel(d, change),
     extract: extractCodebook,
-    unlock: (code) =>
-      withBotActivity("Checking your course code…", () => unlockBot(code)),
+    ensureAccess: ensureBotAccess,
     code: (context) => requestInterviewCoding(context, requestTutor),
     finish: () => {
       const s = interviews(d);
@@ -3039,15 +3050,8 @@ async function action(act, el) {
         d,
         project,
         botURL
-          ? (context, code) =>
+          ? (context) =>
               withBotActivity("Suggesting question roles…", async () => {
-                if (!botSession()) {
-                  if (!code.trim())
-                    throw Error(
-                      "Enter your course code or tick the roles yourself.",
-                    );
-                  await unlockBot(code.trim());
-                }
                 return structuredAnswer(
                   await requestTutor({
                     skill: "variables",
@@ -3064,6 +3068,7 @@ async function action(act, el) {
             "Question roles confirmed. Explore shows them beside the question labels.",
           );
         },
+        ensureBotAccess,
       );
       return;
     case "editselection":

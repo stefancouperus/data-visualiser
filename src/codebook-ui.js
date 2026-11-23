@@ -1,3 +1,4 @@
+import { botSession } from "./bot-access.js";
 import { esc } from "./chart.js";
 import { readFile } from "./import.js";
 import {
@@ -70,7 +71,6 @@ export function codingControls(d, options = {}) {
     <p id="approved-book"></p>
     <div id="book-upload"><label>Upload your codebook<input id="book-file" type="file" accept=".pdf,.docx,.txt,.xlsx,.csv,.tsv"></label>
     <small>Choose a Word document, a PDF with selectable text, a text file or a spreadsheet. Select Extract labels to send the codebook to the bot.</small>
-    <div id="book-access" hidden><label>Workshop course code<input type="password" id="book-course" autocomplete="off"></label></div>
     <div class="bar"><button type="button" id="extract-book">Extract labels</button></div></div>
     <div class="bar"><button type="button" id="book-manual">Enter labels manually</button><button type="button" id="edit-book" hidden>Review approved labels</button></div>
     <p id="book-status" role="status"></p>
@@ -99,6 +99,7 @@ export function bindCodingControls(
   extract,
   onApprove,
   onDraftChange = () => {},
+  ensureAccess,
 ) {
   const controls = get("codebook-controls");
   const form = controls.closest("form");
@@ -179,7 +180,6 @@ export function bindCodingControls(
     el("book-manual").hidden = !!draft || !!pending || (standalone && !manual);
     el("edit-book").hidden =
       !book?.length || !!draft || !!pending || standalone;
-    el("book-access").hidden = !!sessionStorage.getItem("dv-session");
     el("extract-book").disabled = !file.files.length || !!pending;
     file.disabled = !!pending;
     el("book-draft").hidden = !draft;
@@ -260,7 +260,24 @@ export function bindCodingControls(
   el("extract-book").onclick = async () => {
     const source = file.files[0];
     if (!source || requests.has(d) || d.coding?.bookDraft) return;
-    const access = el("book-course").value;
+    if (!botSession()) {
+      try {
+        if (
+          (await ensureAccess("Extract labels from a codebook")) &&
+          isOpen()
+        ) {
+          messages.set(
+            d,
+            "Course code confirmed. Choose Extract labels to send your codebook.",
+          );
+          show();
+          el("extract-book").focus();
+        }
+      } catch (err) {
+        if (isOpen()) status.textContent = err.message;
+      }
+      return;
+    }
     const approved = d.coding?.book;
     requests.set(d, "Reading the codebook…");
     show();
@@ -276,7 +293,7 @@ export function bindCodingControls(
         );
       requests.set(d, "Extracting labels from your codebook…");
       editors.get(d)?.();
-      const response = await extract(sourceText, access);
+      const response = await extract(sourceText);
       if (
         !Array.isArray(response) ||
         response.some(
