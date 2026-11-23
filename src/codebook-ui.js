@@ -76,7 +76,7 @@ export function codingControls(d, options = {}) {
     <p id="book-status" role="status"></p>
     <section id="book-draft" hidden><h3>Review your labels</h3><p>Check the labels and their meanings. Your draft stays in this project when you close this window.</p>
     <details id="book-original"><summary>Read text from the upload</summary><pre class="book-source"></pre></details>
-    <div id="book-rows"></div><div class="bar"><button type="button" id="book-add">Add label</button><button type="button" class="primary" id="use-book">Use these labels</button><button type="button" id="cancel-book">Discard draft</button></div>
+    <div id="book-rows"></div><div class="bar"><button type="button" id="book-add">Add label</button><button type="button" class="primary" id="use-book">Use these labels</button><button type="button" class="plain" id="cancel-book">Discard draft</button></div>
     <p role="alert" id="book-error" tabindex="-1"></p></section></div>`;
   if (options.standalone) return edit;
   return `<details${d.coding?.bookDraft ? " open" : ""}><summary>Code with the Data bot</summary>
@@ -183,6 +183,10 @@ export function bindCodingControls(
     el("extract-book").disabled = !file.files.length || !!pending;
     file.disabled = !!pending;
     el("book-draft").hidden = !draft;
+    if (standalone) {
+      el("extract-book").hidden = !!draft || manual;
+      el("use-book").hidden = !draft;
+    }
     if (draft !== displayed) {
       displayed = draft;
       rows.replaceChildren();
@@ -215,9 +219,11 @@ export function bindCodingControls(
     rows.querySelector("[data-label]")?.focus();
   }
   editors.set(d, show);
-  // The outer modal normally offers Done. Here approval and dismissal each have one action.
   if (standalone) {
-    form.querySelector('button[type="submit"]')?.remove();
+    const actions = form.querySelector(".dialog-actions");
+    const extractButton = el("extract-book");
+    extractButton.classList.add("primary");
+    actions.prepend(extractButton, el("use-book"));
     form.onsubmit = (event) => {
       event.preventDefault();
     };

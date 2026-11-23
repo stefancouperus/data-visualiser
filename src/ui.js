@@ -62,7 +62,13 @@ export const notice = (msg) => {
 export function modal(title, content, onOK, accept = "Apply") {
   const d = get("dialog");
   if (d.open) d.close();
-  d.innerHTML = `<form method="dialog" id="modalform"><h2>${esc(title)}</h2>${content}<div class="bar"><button type="submit" class="primary">${esc(accept)}</button><button type="button" id="closeDialog">Close</button></div><p role="alert" id="formerror"></p></form>`;
+  d.setAttribute("aria-labelledby", "dialog-title");
+  d.innerHTML = `<form method="dialog" id="modalform">
+    <h2 id="dialog-title">${esc(title)}</h2>
+    <div class="dialog-body">${content}</div>
+    <footer class="dialog-footer"><p role="alert" id="formerror"></p>
+      <div class="action-row dialog-actions">${onOK ? `<button type="submit" class="primary">${esc(accept)}</button>` : ""}<button type="button" id="closeDialog">Close</button></div>
+    </footer></form>`;
   d.showModal();
   d.oncancel = null;
   get("closeDialog").onclick = () => d.close();

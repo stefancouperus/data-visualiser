@@ -6,6 +6,7 @@ import {
   saveHelpMode,
 } from "./bot-help.js";
 import { structuredAnswer } from "./bot-response.js";
+import { interviewScopeRequest } from "./interview-scope.js";
 import { requestInterviewCoding } from "./interview-coding-request.js";
 import {
   isInterview,
@@ -404,10 +405,14 @@ function botChat() {
     <textarea id="question" rows="2" aria-label="Ask about your project" maxlength="4000" placeholder="Ask about your project…">${esc(lastQuestion)}</textarea><div class="bar">${b("send", "Send", "primary", requesting ? "disabled" : "")}</div></section>
     ${
       reviewReady
-        ? '<div class="bot-hint" role="status"><span>Coding draft ready · ' +
-          draft.matches.length +
-          " new suggested matches</span>" +
-          b("iv-review", "Check the suggested labels", "primary") +
+        ? '<div class="bot-hint" role="status"><span>' +
+          (draft.sample ? "Draft labels ready" : "Coding draft ready") +
+          "</span>" +
+          b(
+            "iv-review",
+            draft.sample ? "Review draft labels" : "Review suggested coding",
+            "primary",
+          ) +
           "</div>"
         : requesting
           ? ""
@@ -627,9 +632,9 @@ function render() {
         check(d) +
         "</details>";
     } else if (step === 1)
-      content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (d.kind === "text" ? "coded" : "table") + '"')}</div>${check(d)}${roleButton ? `<section class="card"><h2>Which questions help answer your research question?</h2><p>Identify the outcome, groups and possible explanations. Mark questions with written answers too.</p>${roleButton}</section>` : ""}${openRoute}<div class="bar">${b("confirm", "Confirm and explore", "primary")}</div>`;
+      content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (d.kind === "text" ? "coded" : "table") + '"')}</div>${check(d)}${roleButton ? `<section class="card"><h2>Which questions help answer your research question?</h2><p>Identify the outcome, groups and possible explanations. Mark questions with written answers too.</p>${roleButton}</section>` : ""}${openRoute}<div class="bar step-actions">${b("confirm", "Confirm and explore", "primary")}</div>`;
     else if (step === 2 || step === 3)
-      content += `${step === 2 ? openRoute : ""}<div class="bar">${step === 2 ? b("compare", "Compare two views") : b("savecompare", "Save comparison", "primary")}${step === 3 ? b("askboth", icon("bot") + " Compare findings") : ""}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
+      content += `${step === 2 ? openRoute : ""}<div class="bar view-actions">${step === 2 ? b("compare", "Compare two views") : b("savecompare", "Save comparison", "primary")}${step === 3 ? b("askboth", icon("bot") + " Compare findings") : ""}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
         .slice(0, step === 3 ? 2 : 1)
         .map((v, i) =>
           panel(
@@ -646,18 +651,25 @@ function render() {
         )}</div> ${undoViews.length ? b("undo", "Undo view change", "plain") : ""}<div id="hint"></div>`;
     else if (interview && !confirmed)
       content +=
-        '<section class="card"><h2>Save your coding progress</h2><p>Reopen the project to continue with your shared codebook, interviews and any coding draft.</p>' +
+        '<section class="card"><h2>Save your coding progress</h2><p>Reopen the project to continue with your shared codebook, interviews and any coding draft.</p><div class="bar action-row">' +
         b("download", "Download project with data", "primary") +
         b("device", "Save on this device") +
-        "</section>";
+        "</div></section>";
     else content += saveScreen(project);
   }
   const previousBody = document.querySelector(".botbody");
   const scroll = previousBody?.scrollTop || 0;
   const previousCode = previousBody?.querySelector("#course")?.value;
   const asideBot = bot && isDocked();
+  const shortSteps = [
+    "Upload",
+    interview ? "Code" : "Check",
+    interview ? "Themes" : "Explore",
+    "Compare",
+    "Save",
+  ];
   get("app").innerHTML =
-    `<div class="shell ${compact ? "compact" : ""}"><aside class="rail"><div class="brand">${mark}<span>Data<br>visualiser</span></div><nav class="nav" aria-label="Workflow">${labels.map((s, i) => `<button title="${s}" aria-label="${s}" data-act="nav" data-i="${i}" ${step === i ? 'aria-current="step"' : ""} ${(i > 0 && !d) || (i > 1 && !confirmed && !(interview && i === 4)) ? "disabled" : ""}>${icon(icons[i])}<span>${s}</span></button>`).join("")}${b("bot", icon("bot") + "<span>Data bot</span>", "botnav", 'aria-label="Data bot" title="Data bot" aria-expanded="' + bot + '"')}</nav><div class="rail-bottom">${b("compact", icon("menu") + "<span>Collapse sidebar</span>", "plain", 'aria-label="Toggle sidebar"')}<small class="app-version">0.1 beta</small></div></aside><main class="main" id="workspace"><header class="top"><span>${esc(project.name)} &nbsp; / &nbsp; ${labels[step]}</span></header><div class="content"><div class="${asideBot ? "withbot" : ""}"><div>${content}</div>${asideBot ? botBox() : ""}</div>${bot && !asideBot ? botBox() : ""}</div></main></div>`;
+    `<div class="shell ${compact ? "compact" : ""}"><aside class="rail"><div class="brand">${mark}<span>Data<br>visualiser</span></div><nav class="nav" aria-label="Workflow">${labels.map((s, i) => `<button title="${s}" aria-label="${s}" data-short="${shortSteps[i]}" data-act="nav" data-i="${i}" ${step === i ? 'aria-current="step"' : ""} ${(i > 0 && !d) || (i > 1 && !confirmed && !(interview && i === 4)) ? "disabled" : ""}>${icon(icons[i])}<span>${s}</span></button>`).join("")}${b("bot", icon("bot") + "<span>Data bot</span>", "botnav", 'aria-label="Data bot" title="Data bot" data-short="Data bot" aria-expanded="' + bot + '"')}</nav><div class="rail-bottom">${b("compact", icon("menu") + "<span>Collapse sidebar</span>", "plain", 'aria-label="Toggle sidebar"')}<small class="app-version">0.1 beta</small></div></aside><main class="main" id="workspace"><header class="top"><span>${esc(project.name)} &nbsp; / &nbsp; ${labels[step]}</span></header><div class="content"><div class="${asideBot ? "withbot" : ""}"><div>${content}</div>${asideBot ? botBox() : ""}</div>${bot && !asideBot ? botBox() : ""}</div></main></div>`;
   if (
     previousSource &&
     previousSource === document.querySelector(".iv-paper h2")?.textContent
@@ -2474,8 +2486,6 @@ function patternEvidence(i, index) {
             .slice(0, 200)
             .map((r) => fields.map((f) => displayedAnswer(r, f))),
         ),
-      null,
-      "Done",
     );
     return;
   }
@@ -2536,8 +2546,6 @@ function patternEvidence(i, index) {
           .slice(0, 200)
           .map((p) => [p.source, p.text, p.codes.join(" · ")]),
       ),
-    null,
-    "Done",
   );
 }
 function evidence(i, match, codingPrompt = "") {
@@ -2558,8 +2566,6 @@ function evidence(i, match, codingPrompt = "") {
             .slice(0, 200)
             .map((r) => fields.map((f) => displayedAnswer(r, f))),
         ),
-      null,
-      "Done",
     );
     return;
   }
@@ -2581,8 +2587,6 @@ function evidence(i, match, codingPrompt = "") {
             .slice(0, 200)
             .map((r) => fields.map((f) => displayedAnswer(r, f))),
         ),
-      null,
-      "Done",
     );
     return;
   }
@@ -3158,8 +3162,6 @@ async function action(act, el) {
         "Original transcript",
         formselect("origSource", "Source", names) +
           '<div class="excerpt" id="origText"></div>',
-        null,
-        "Done",
       );
       const show = () =>
         (get("origText").textContent = d.originals[val("origSource")] || "");
@@ -3586,21 +3588,17 @@ async function action(act, el) {
       if (
         isInterview(d) &&
         (step === 1 || /\b(?:transcripts?|interviews?)\b/i.test(q)) &&
-        requestsCoding(q)
+        (requestsCoding(q) ||
+          (d.interviews?.draft &&
+            /\b(?:review|edit|approve|rename|reopen)\b.{0,45}\b(?:draft|labels?|codes?|suggestions|them)\b/i.test(
+              q,
+            )))
       ) {
         if (step !== 1) goto(1);
         const s = interviews(d);
         history.push({ role: "user", content: q });
         lastQuestion = "";
-        const explicitAll =
-          /\b(?:all(?:\s+of)?|both|each|every)(?:\s+(?:my|our|the|these|those|loaded|uploaded|\d+|three|two))*\s+(?:interviews?|transcripts?)\b/i.test(
-            q,
-          );
-        const interviewScope = explicitAll
-          ? "all"
-          : /\b(?:interviews|transcripts)\b/i.test(q)
-            ? "selected"
-            : "current";
+        const selection = interviewScopeRequest(q, d.sources, s.source);
         const useBook =
           /\b(?:deductiv\w*|code\s?book|pre[- ]?defined|approved|existing)\b|\b(?:apply|use|assign)\b.{0,30}\b(?:codes?|labels?|them)\b/i.test(
             q,
@@ -3608,9 +3606,20 @@ async function action(act, el) {
         const discover = requestsLabelDiscovery(q, s.established);
         let command, reply;
         if (s.draft) {
-          command = s.draft.next === s.draft.total ? "iv-review" : "iv-resume";
-          reply =
-            "Your existing draft is ready to review or continue. It keeps the interviews you chose when you started it.";
+          const ready = s.draft.total > 0 && s.draft.next === s.draft.total;
+          if (interviewActivity(d)) {
+            reply =
+              "I'm still reading the selected passages. You can close the chat and follow progress in Code interviews.";
+          } else if (ready) {
+            command = "iv-review";
+            reply = s.draft.sample
+              ? "Your draft labels are ready. Edit their names and meanings, check the quotations and choose Use these labels to approve your codebook."
+              : "Your coding draft is ready. Review the suggested matches before saving them to your interviews.";
+          } else {
+            command = "iv-resume";
+            reply =
+              "Your saved draft will continue from the first unfinished batch using your original selection.";
+          }
         } else if (d.coding?.bookDraft && !discover) {
           command = "iv-reviewbook";
           reply =
@@ -3657,12 +3666,20 @@ async function action(act, el) {
           reply =
             "Choose the interviews and passages I should read to suggest labels. You can review the labels and their supporting quotations together.";
         }
+        if (
+          ["iv-auto", "iv-sample"].includes(command) &&
+          selection.minimum > d.sources.length
+        ) {
+          reply =
+            "This collection has only one interview. Choose + Add interview to include a second one, then ask me again.";
+          command = null;
+        }
         history.push({ role: "assistant", content: reply });
         render();
         if (command)
           await handleInterview(
             command,
-            { dataset: { scope: interviewScope } },
+            { dataset: {}, scopeRequest: selection },
             d,
           );
         return;
@@ -3862,8 +3879,10 @@ async function action(act, el) {
         "Save comparison",
         `<label>Name<input id="compname" required></label><label>What does this comparison show?<textarea id="compnote"></textarea></label>`,
         () => {
+          const name = val("compname").trim();
+          if (!name) throw Error("Give the comparison a name.");
           project.saved.push({
-            name: val("compname"),
+            name,
             note: val("compnote"),
             dataset: d.id,
             views: structuredClone(project.views),
@@ -3872,6 +3891,7 @@ async function action(act, el) {
           notice("Comparison saved in the project.");
           render();
         },
+        "Save to project",
       );
       return;
     case "loadcomp": {
@@ -3987,8 +4007,6 @@ async function action(act, el) {
         modal(
           "Figure preview",
           '<div class="graphic" id="previewFigure"></div>',
-          null,
-          "Done",
         );
         get("previewFigure").append(out);
       } else await exportSVG(out, act === "copyfig" ? "copy" : act);

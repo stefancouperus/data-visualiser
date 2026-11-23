@@ -282,6 +282,7 @@ export function requestsCoding(message) {
     return false;
   return (
     acceptsCodingBatch(message) ||
+    /\b(?:apply|use|assign) (?:them|those|these)(?: to| across| on| in) (?:all |both |each |every |the |my |our |selected |other )*(?:interviews?|transcripts?)\b/i.test(message) ||
     /\b(?:come up with|suggest|propose|generate|recommend|identify|assign|apply|adopt|create|give me|develop|find)\b.{0,65}\b(?:labels?|codes?|themes?)\b/i.test(
       message,
     ) ||

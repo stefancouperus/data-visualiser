@@ -49,7 +49,7 @@ test("survey review, comparison, project save and figure export", async ({
   page.on("pageerror", (e) => errors.push(e.message));
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "survey.csv",
     "Vote,Age,Group\nYes,19,A\nNo,21,A\nYes,23,B\nNo,20,B\n",
   );
@@ -64,7 +64,9 @@ test("survey review, comparison, project save and figure export", async ({
     .getByRole("button", { name: "Save comparison", exact: true })
     .click();
   await page.getByLabel("Name", { exact: true }).fill("Turnout");
-  await page.getByRole("button", { name: "Apply", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Save to project", exact: true })
+    .click();
   await page
     .getByRole("button", { name: "Save and export", exact: true })
     .click();
@@ -91,7 +93,7 @@ test("Word comments and highlights map to the same source passage", async ({
       `<w:comments xmlns:w="${w}"><w:comment w:id="0"><w:p><w:r><w:t>CODE: Work</w:t></w:r></w:p></w:comment></w:comments>`,
     ),
   });
-  await upload(page, /I have coded interviews/, "interview.docx", doc);
+  await upload(page, /Upload coded interviews/, "interview.docx", doc);
   await expect(
     page.getByRole("heading", { name: /Where did you put/ }),
   ).toBeVisible();
@@ -130,7 +132,7 @@ test("Taguette all-highlights export keeps source and joint labels", async ({
     "</w:body></w:document>";
   await upload(
     page,
-    /I have coded interviews/,
+    /Upload coded interviews/,
     "taguette.docx",
     zipSync({ "word/document.xml": strToU8(xml) }),
   );
@@ -148,7 +150,7 @@ test("spreadsheet source mapping imports coded excerpts", async ({ page }) => {
   ]);
   await upload(
     page,
-    /I have coded interviews/,
+    /Upload coded interviews/,
     "coded.xlsx",
     await book.xlsx.writeBuffer(),
   );
@@ -192,7 +194,7 @@ test("a recognised two-header survey opens immediately and the tutor draws sugge
   });
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "test.csv",
     "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Turnout,Group\n2026,2026,Yes,A\n2026,2026,No,B\n",
   );
@@ -237,7 +239,7 @@ test("questionnaire labels reach charts and the bot can move, resize and dock", 
   await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "example.csv",
     "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Q1,Age\n2026,2026,7,20\n2026,2026,9,23\n",
   );
@@ -320,7 +322,7 @@ test("an informal comparison draws the attitude question by preferences mentione
   await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "choices.csv",
     "StartDate,EndDate,Q1,Q2\nStart Date,End Date,I prefer...,Should specialists decide?\n2026,2026,Cats,Agree\n2026,2026,Dogs,Strongly agree\n2026,2026,Both,Disagree\n2026,2026,Neither,Agree\n",
   );
@@ -353,7 +355,7 @@ test("all survey chart families, regression, filters, comparison controls and fi
   );
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "analysis.csv",
     "StartDate,EndDate,Q1,Q2,Q3,Q4\nStart Date,End Date,Age,Score,Year,Vote\n" +
       rows.join("\n"),
@@ -377,7 +379,7 @@ test("all survey chart families, regression, filters, comparison controls and fi
   await shown("grid");
   await svg.locator('[data-code="Yes"][data-source="First"]').click();
   await expect(page.locator("dialog")).toContainText("10 records");
-  await click("Done");
+  await click("Close");
   await key("task").selectOption("two");
   await key("x").selectOption("c2");
   await key("y").selectOption("c3");
@@ -404,7 +406,7 @@ test("all survey chart families, regression, filters, comparison controls and fi
   await page.locator("#linked").check();
   await click("Save comparison");
   await page.locator("#compname").fill("Test comparison");
-  await click("Apply");
+  await click("Save to project");
   await click("Save and export");
   await click("Duplicate");
   await expect(
@@ -416,7 +418,7 @@ test("all survey chart families, regression, filters, comparison controls and fi
   await page.locator("#preset").selectOption("940");
   await click("Preview figure");
   await expect(page.locator("#previewFigure > svg > svg")).toHaveCount(2);
-  await click("Done");
+  await click("Close");
   const file = page.waitForEvent("download");
   await click("Download figure");
   expect((await file).suggestedFilename()).toBe("data-visualiser.png");
@@ -453,7 +455,7 @@ test("tutor proposals fit a regression through the normal chart controls", async
   );
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "test.csv",
     "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Age,Score\n2026,2026,20,5\n2026,2026,21,7\n2026,2026,22,8\n2026,2026,23,11",
   );
@@ -472,7 +474,7 @@ test("Check edits, exclusions and transforming open answers retain the right res
 }) => {
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "test.csv",
     "StartDate,EndDate,Q1,Q2,Q3,Q4\nStart Date,End Date,Status flag,Comment,Support,Plan\n2026,2026,Preview,Test wording,1,1\n2026,2026,Keep,I plan ahead,1,0\n2026,2026,Keep,I work late,0,1",
   );
@@ -556,7 +558,7 @@ test("UTF-16 TSV, interview bot matrix, evidence drill-down and accepted coding 
   });
   await upload(
     page,
-    /I have coded interviews/,
+    /Upload coded interviews/,
     "codes.tsv",
     Buffer.from(
       "\ufeffInterview\tPassage\tCodes\nA\tI worked late\tTime\nB\tI arrived early\tPlanning",
@@ -609,7 +611,7 @@ test("an explicitly requested heatmap takes precedence over a different model ch
   );
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "test.csv",
     "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Turnout,Study year\n2026,2026,Yes,First\n2026,2026,No,Second",
   );
@@ -643,7 +645,7 @@ test("a student can request a grouped heatmap from a single-question view even w
   });
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "class.csv",
     "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Turnout,Study year\n2026,2026,Yes,First\n2026,2026,Yes,First\n2026,2026,No,Second\n2026,2026,Yes,Second",
   );
@@ -703,7 +705,7 @@ test("portable download reopens from the start screen with optional bot memory",
   });
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "Workshop survey.csv",
     "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Turnout,Year\n2026,2026,Yes,First\n2026,2026,No,Second",
   );
@@ -769,7 +771,7 @@ test("figure styles preview the current data and survive comparison, export and 
 }) => {
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "survey.csv",
     "Vote,Age,Group\nYes,19,A\nNo,21,A\nYes,23,B\nNo,20,B\n",
   );
@@ -1003,7 +1005,7 @@ test("the bot works on the selected panel, drafts a caption and compares both wi
   });
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "tiny.csv",
     "Vote,Year\nYes,First\nNo,First\nNo,Second\nYes,Second",
   );
@@ -1124,7 +1126,7 @@ test("a student can follow a multi-question pattern to its responses and redraw 
   });
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "survey.csv",
     "Vote,Trust,Duty\nYes,High,Often\nYes,High,Often\nNo,Low,Rarely\nYes,,Often",
   );
@@ -1140,7 +1142,7 @@ test("a student can follow a multi-question pattern to its responses and redraw 
   await expect(svg).toContainText("3 of 4");
   await svg.locator("[data-pattern-row]").first().click();
   await expect(page.locator("dialog")).toContainText("2 of 2");
-  await btn("Done").click();
+  await btn("Close").click();
   await btn("Ask about this visual").click();
   await page
     .locator("#question")
@@ -1159,7 +1161,7 @@ test("students switch from interview coverage to exact co-coding and open the ma
 }) => {
   await upload(
     page,
-    /I have coded interviews/,
+    /Upload coded interviews/,
     "codes.tsv",
     "Interview\tPassage\tCodes\nA\tworked late\tTime\nA\tplanned ahead\tPlanning\nB\tcombined both\tTime;Planning",
   );
@@ -1177,7 +1179,7 @@ test("students switch from interview coverage to exact co-coding and open the ma
   await expect(page.locator("dialog")).toContainText(
     "Matching interviews: A, B",
   );
-  await btn("Done").click();
+  await btn("Close").click();
   await mode.selectOption("passages");
   await page
     .getByRole("button", {
@@ -1195,7 +1197,7 @@ test("split the current three survey questions by study year using the bot and i
   await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "survey.csv",
     "Vote,Trust,Duty,Study year\nYes,High,Often,First\nYes,High,Often,First\nNo,Low,Rarely,Final\nYes,,Often,Final",
   );
@@ -1225,7 +1227,7 @@ test("enter interview groups, compare theme coverage and retrieve only that grou
 }) => {
   await upload(
     page,
-    /I have coded interviews/,
+    /Upload coded interviews/,
     "codes.tsv",
     "Interview\tPassage\tCodes\nA\tworked late\tTime\nA\tcombined both\tTime;Planning\nB\tplanned ahead\tPlanning\nC\talso late\tTime",
   );
@@ -1263,7 +1265,7 @@ test("a group suggestion explains the comparison, keeps the figure until consent
   await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "survey.csv",
     "Vote,Trust,Study year\nYes,High,First\nYes,High,First\nNo,Low,Final\nNo,Low,Final",
   );
@@ -1301,7 +1303,7 @@ test("spreadsheet interviews apply only marker values confirmed for each project
 }) => {
   await upload(
     page,
-    /I have coded interviews/,
+    /Upload coded interviews/,
     "repairs.tsv",
     "Interview\tPassage\tSupply delay\tFault located\nBench A\tOrder pending\tPENDING\tCLEARED\nBench B\tProblem found\tCLEARED\tFOUND",
   );
@@ -1362,7 +1364,7 @@ for (const text of [false, true]) {
       });
       await upload(
         page,
-        text ? /I have coded interviews/ : /I have a Qualtrics export/,
+        text ? /Upload coded interviews/ : /Upload Qualtrics export/,
         text ? "commutes.tsv" : "commutes.csv",
         text
           ? "Interview\tPassage\tCodes\nA\tPrivate passage A\tLate bus\nB\tPrivate passage B\tReliable bus"
@@ -1431,7 +1433,7 @@ test("students can preview, pin and dismiss an explanation using their own surve
   await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "service.csv",
     "Bus reliability,Work shift\nLate,Day\nEarly,Night\nEarly,Day\nLate,Night",
   );
@@ -1481,7 +1483,7 @@ test("touch users can read how interview groups are formed and what each theme c
     const page = await context.newPage();
     await upload(
       page,
-      /I have coded interviews/,
+      /Upload coded interviews/,
       "repairs.tsv",
       "Interview\tPassage\tCodes\nA\tOrder pending\tDelay\nB\tSeal replaced\tRepair",
     );
@@ -1520,7 +1522,7 @@ test("interview heatmaps use the chosen colour ramp and pattern dots use the sty
 }) => {
   await upload(
     page,
-    /I have coded interviews/,
+    /Upload coded interviews/,
     "codes.tsv",
     "Interview\tPassage\tCodes\nA\tFirst\tDelay\nA\tSecond\tDelay\nB\tThird\tRepair",
   );
@@ -1563,7 +1565,7 @@ test("a partial Word highlight preserves surrounding text and repeated unmarked 
       `<w:document xmlns:w="${w}"><w:body><w:p><w:r><w:t>Before </w:t></w:r><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>delayed</w:t></w:r><w:r><w:t> after.</w:t></w:r></w:p><w:p><w:r><w:t>delayed</w:t></w:r></w:p></w:body></w:document>`,
     ),
   });
-  await upload(page, /I have coded interviews/, "timing.docx", doc);
+  await upload(page, /Upload coded interviews/, "timing.docx", doc);
   const btn = (name) => page.getByRole("button", { name, exact: true });
   await btn("Continue").click();
   await page.getByLabel("colour: yellow").fill("Timing");
@@ -1608,7 +1610,7 @@ test("an Excel worksheet with a title, blank cells and zero opens via its chosen
   ]);
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "synthetic.xlsx",
     await book.xlsx.writeBuffer(),
   );
@@ -1652,7 +1654,7 @@ test("review question roles, apply selections and reopen a saved visual", async 
   });
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "cohorts.csv",
     "Trust,Year,Contact\nHigh,First,Often\nLow,Second,Rarely\nHigh,Second,Often\nLow,First,Rarely",
   );
@@ -1723,7 +1725,7 @@ test("open survey questions keep their research role and reopen reviewed written
 }) => {
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "transport.csv",
     "Study year,What makes travel difficult?,Arrival time\nFirst,Cost,Early\nSecond,Time and cost,Late\nFirst,,Late",
   );
@@ -1905,14 +1907,15 @@ test("two interviews share an approved inductive codebook, resume a bot draft an
   await btn("Send").click();
   await btn("Send selected passages").click();
   await page.locator("[data-act=closebot]").click();
-  await btn("Review suggested coding").click();
+  await btn("Review draft labels").click();
   await expect(page.getByRole("dialog")).toContainText("My fare doubled.");
+  await page.locator("[name=iv-code-examples]").check();
   await page.locator("[name=iv-match]").last().uncheck();
-  await btn("Apply reviewed coding").click();
+  await btn("Use these labels").click();
   await expect(page.locator(".iv-passage").last()).not.toContainText(
     "Fare cost",
   );
-  await btn("Use these labels for all interviews").click();
+  await expect(btn("Code with the bot")).toBeEnabled();
   await btn("Mark this interview as checked").click();
   await btn("Mark as checked").click();
   await btn("+ Add interview").click();
@@ -2084,17 +2087,24 @@ test("a focus statement followed by a plotting request uses the new focus and dr
   page,
 }) => {
   await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
-  const requests=[];
+  const requests = [];
   await page.route("https://tutor.example.test/ask", (route) => {
     requests.push(route.request().postDataJSON());
-    return route.fulfill({json:{answer:JSON.stringify({action:"answer", explanation:"The paired data address commuting."})}});
+    return route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          action: "answer",
+          explanation: "The paired data address commuting.",
+        }),
+      },
+    });
   });
   const csv =
     "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Distance cycled,Minutes cycling\n" +
     Array.from({ length: 15 }, (_, i) =>
       [2026, 2026, i + 1, 5 * (i + 1) + 7].join(","),
     ).join("\n");
-  await upload(page, /I have a Qualtrics export/, "commute.csv", csv);
+  await upload(page, /Upload Qualtrics export/, "commute.csv", csv);
   const btn = (name) => page.getByRole("button", { name, exact: true });
   await btn("Confirm and explore").click();
   await btn("Data bot").click();
@@ -2108,13 +2118,21 @@ test("a focus statement followed by a plotting request uses the new focus and dr
     page.locator('[data-chart][aria-pressed="true"]'),
   ).toHaveAttribute("data-chart", "scatter");
   expect(requests).toHaveLength(0);
-  await expect(page.locator('#graphic0 svg')).toContainText("15 paired observations");
-  await page.locator('#question').fill("My project is about cycle travel. Please explain the chart.");
+  await expect(page.locator("#graphic0 svg")).toContainText(
+    "15 paired observations",
+  );
+  await page
+    .locator("#question")
+    .fill("My project is about cycle travel. Please explain the chart.");
   await btn("Send").click();
-  await expect(page.locator(".chatlog .msg-assistant").last()).toContainText("The paired data address commuting");
+  await expect(page.locator(".chatlog .msg-assistant").last()).toContainText(
+    "The paired data address commuting",
+  );
   expect(requests).toHaveLength(1);
   expect(requests[0].question).toBe("Please explain the chart.");
-  expect(requests[0].context.projectFocus).toBe("My project is about cycle travel");
+  expect(requests[0].context.projectFocus).toBe(
+    "My project is about cycle travel",
+  );
   await expect(page.locator("dialog[open]")).toHaveCount(0);
 });
 
@@ -2129,7 +2147,7 @@ test("choosing among similar survey questions draws exactly the confirmed pair",
   });
   const csv =
     "StartDate,EndDate,Q1,Q2,Q3,Q4\nStart Date,End Date,Trust in council,Trust in courts,Current year,Year joined\n2026,2026,High,Low,First,2023\n2026,2026,Low,High,Second,2024";
-  await upload(page, /I have a Qualtrics export/, "trust.csv", csv);
+  await upload(page, /Upload Qualtrics export/, "trust.csv", csv);
   const btn = (name) => page.getByRole("button", { name, exact: true });
   await btn("Confirm and explore").click();
   await btn("Data bot").click();

@@ -5,7 +5,7 @@ const gateway = "https://tutor.example.test";
 async function openSurveyChat(page) {
   await page.goto("/");
   const picker = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: /I have a Qualtrics export/ }).click();
+  await page.getByRole("button", { name: /Upload Qualtrics export/ }).click();
   await (
     await picker
   ).setFiles({

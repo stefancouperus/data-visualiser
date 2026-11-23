@@ -41,7 +41,7 @@ test("chat activity stays visible when closed, respects reduced motion and clear
 }) => {
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "survey.csv",
     "StartDate,EndDate,Q1\nStart Date,End Date,Do you feel heard?\n2026,2026,Yes\n2026,2026,No",
   );
@@ -96,7 +96,7 @@ test("a failed survey role request clears activity and leaves the form usable", 
 }) => {
   await upload(
     page,
-    /I have a Qualtrics export/,
+    /Upload Qualtrics export/,
     "roles.csv",
     "Trust,Year\nHigh,First\nLow,Second\nHigh,Second",
   );

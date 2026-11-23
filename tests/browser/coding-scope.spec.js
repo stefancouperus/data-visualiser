@@ -140,7 +140,8 @@ test("pooled discovery includes and reviews one passage from each of eleven inte
   await choose(page, "iv-sample", "all");
   await expect(page.locator("[name=iv-example]:checked")).toHaveCount(11);
   await submit(page);
-  await button(page, "Review suggested coding").click();
+  await button(page, "Review draft labels").click();
+  await page.locator("[name=iv-code-examples]").check();
   const sent = calls.flatMap(({ passages }) => passages);
   expect(sent).toHaveLength(sources.length);
   expect(sent.map((p) => p.source).sort()).toEqual([...sources].sort());
@@ -149,7 +150,7 @@ test("pooled discovery includes and reviews one passage from each of eleven inte
       page.locator(`[data-review-source="${source}"] [name=iv-match]:checked`),
     ).toHaveCount(1);
   }
-  await apply(page);
+  await button(page, "Use these labels").click();
   const accepted = assignments((await save(page)).datasets[0]);
   expect(accepted).toHaveLength(sources.length);
   expect(accepted.map((p) => p.source).sort()).toEqual([...sources].sort());
@@ -275,7 +276,7 @@ test("inductive sampling combines chosen interviews, honours the passage choices
   for (const input of await options.all())
     await input.setChecked(ids.includes(await input.inputValue()));
   await submit(page);
-  await expect(button(page, "Review suggested coding")).toBeVisible();
+  await expect(button(page, "Review draft labels")).toBeVisible();
   const pending = (await save(page)).datasets[0];
   expect(new Set(pending.interviews.draft.ids)).toEqual(new Set(ids));
   expect(assignments(pending)).toEqual([]);
@@ -285,13 +286,14 @@ test("inductive sampling combines chosen interviews, honours the passage choices
     expect.arrayContaining(sample.map((p) => [p.source, p.text])),
   );
   expect(calls.every((c) => c.guide.mode === "inductive")).toBe(true);
-  await button(page, "Review suggested coding").click();
-  await apply(page);
+  await button(page, "Review draft labels").click();
+  await page.locator("[name=iv-code-examples]").check();
+  await button(page, "Use these labels").click();
   expect(assignments((await save(page)).datasets[0])).toEqual([
     expected("North", waits, "Delays"),
     expected("East", fare, "Fares"),
   ]);
-  await button(page, "Use these labels for all interviews").click();
+  await expect(button(page, "Code with the bot")).toBeEnabled();
   const first = calls.length;
   await choose(page, "iv-auto", "all");
   await submit(page);
@@ -335,9 +337,9 @@ test("a reopened shared codebook can gain student-approved inductive labels", as
   await button(page, "Send").click();
   await expect(page.locator("#iv-scope")).toHaveValue("all");
   await submit(page);
-  await button(page, "Check the suggested labels").click();
+  await button(page.locator("#data-bot"), "Review draft labels").click();
   expect(calls[0].guide.mode).toBe("inductive");
-  await apply(page);
+  await button(page, "Use these labels").click();
   await page.locator("#data-bot [data-act=closebot]").click();
   const updated = (await save(page)).datasets[0];
   expect(updated.coding.book.map((entry) => entry.label)).toEqual([
@@ -393,7 +395,7 @@ test("a chat request using existing codes sends only the approved book and saves
   await expect(page.locator("#iv-scope")).toHaveValue("all");
   await expect(page.locator("#iv-sample-pick")).toHaveCount(0);
   await submit(page);
-  await button(page, "Check the suggested labels").click();
+  await button(page.locator("#data-bot"), "Review suggested coding").click();
   expect(calls).toHaveLength(1);
   expect(calls[0].guide.mode).toBe("deductive");
   expect(calls[0].guide.limits.newPerBatch).toBe(0);

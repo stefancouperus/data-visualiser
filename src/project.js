@@ -156,6 +156,17 @@ export function verifyProject(p) {
                 (!Array.isArray(draft.ids) ||
                   draft.ids.some((id) => !safeID(id)))) ||
               !Array.isArray(draft.matches) ||
+              (draft.codeExamples !== undefined &&
+                typeof draft.codeExamples !== "boolean") ||
+              (draft.labelEdits !== undefined &&
+                (!Array.isArray(draft.labelEdits) ||
+                  draft.labelEdits.some(
+                    (row) =>
+                      typeof row?.original !== "string" ||
+                      typeof row.label !== "string" ||
+                      typeof row.definition !== "string" ||
+                      typeof row.keep !== "boolean",
+                  ))) ||
               [draft.rejected, draft.manual, draft.withdrawnLabels].some(
                 (choices) =>
                   choices !== undefined &&

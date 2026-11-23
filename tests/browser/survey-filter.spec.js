@@ -6,7 +6,7 @@ test("the bot filters an existing grouped chart using its displayed cohort, with
   await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
   await page.goto("/");
   const picker = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: /I have a Qualtrics export/ }).click();
+  await page.getByRole("button", { name: /Upload Qualtrics export/ }).click();
   await (
     await picker
   ).setFiles({
@@ -53,7 +53,7 @@ test("applying a QSF after exclusions creates a labelled copy of the same respon
     if (!(await s.evaluate((el) => el.parentElement.open))) await s.click();
   };
   const file = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: /I have a Qualtrics export/ }).click();
+  await page.getByRole("button", { name: /Upload Qualtrics export/ }).click();
   await (
     await file
   ).setFiles({
