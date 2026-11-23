@@ -7,7 +7,7 @@ import { readTutorHistory } from "./tutor-history.js";
 import { filteredRows } from "./import.js";
 import { applyAnswerLabels } from "./survey-labels.js";
 import { interviews, sharedBook, pruneEmptyQuotations } from "./interviews.js";
-import { labelKey } from "./coding.js";
+import { approvedBook, labelKey } from "./coding.js";
 
 export const fresh = () => ({
   tutorHistory: Object.create(null),
@@ -120,6 +120,24 @@ export function verifyProject(p) {
     );
   if (!p.settingsOnly)
     for (const d of p.datasets) {
+      const review = d.coding?.bookDraft;
+      if (
+        review != null &&
+        (!["upload", "manual"].includes(review.method) ||
+          typeof review.name !== "string" ||
+          typeof review.sourceText !== "string" ||
+          review.sourceText.length > 65000 ||
+          !Array.isArray(review.entries) ||
+          review.entries.some(
+            (entry) =>
+              typeof entry?.label !== "string" ||
+              typeof entry.definition !== "string",
+          ))
+      ) {
+        throw Error(
+          "The saved codebook draft is incomplete. Open another project download.",
+        );
+      }
       const draft = d.interviews?.draft;
       if (
         d.interviews &&
@@ -403,7 +421,10 @@ export function editInterviewLabel(
   const entry = { label: name, definition: meaning };
   // Imported labels can exist only on passages. Record their meaning even if
   // the last use on a passage is subsequently removed.
-  const primary = state.established ? "book" : "meanings";
+  const isApproved =
+    state.established &&
+    (!old || approvedBook(d).some((e) => same(e.label, old.label)));
+  const primary = isApproved ? "book" : "meanings";
   for (const key of ["book", "meanings"]) {
     if (!d.coding[key] && key !== primary) continue;
     const entries = (d.coding[key] || []).map((e) =>
@@ -462,7 +483,10 @@ export function editInterviewLabel(
     draft.withdrawnLabels = [...new Set(withdrawn)];
     state.draft = draft;
   }
-  if (remove && book.length === 1) {
+  if (
+    remove &&
+    (book.length === 1 || (state.established && !approvedBook(d).length))
+  ) {
     state.established = false;
     if (state.method === "book" || state.method === "imported")
       state.method = "manual";

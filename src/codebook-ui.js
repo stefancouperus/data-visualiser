@@ -1,7 +1,13 @@
 import { esc } from "./chart.js";
 import { readFile } from "./import.js";
-import { bookEntries, codingLimits, labelsInCodebook } from "./coding.js";
-import { busyIndicator, formselect, get, val } from "./ui.js";
+import {
+  approvedBook,
+  bookEntries,
+  codingLimits,
+  labelKey,
+  labelsInCodebook,
+} from "./coding.js";
+import { busyIndicator, formselect, get } from "./ui.js";
 
 async function fileText(file) {
   if (!/\.pdf$/i.test(file.name)) {
@@ -50,8 +56,30 @@ async function fileText(file) {
   }
 }
 
-export function codingControls(d) {
-  return `<details><summary>Code with the Data bot</summary>
+// A request belongs to its dataset. Closing the editor only dismisses its view.
+const requests = new WeakMap();
+const editors = new WeakMap();
+const messages = new WeakMap();
+
+export function codingControls(d, options = {}) {
+  const mode =
+    options.mode ||
+    (d.coding?.bookDraft ? "deductive" : d.coding?.mode) ||
+    "inductive";
+  const edit = `<div id="codebook-controls" data-standalone="${!!options.standalone}" data-manual="${!!options.manual}">
+    <p id="approved-book"></p>
+    <div id="book-upload"><label>Upload your codebook<input id="book-file" type="file" accept=".pdf,.docx,.txt,.xlsx,.csv,.tsv"></label>
+    <small>Choose a Word document, a PDF with selectable text, a text file or a spreadsheet. Select Extract labels to send the codebook to the bot.</small>
+    <div id="book-access" hidden><label>Workshop course code<input type="password" id="book-course" autocomplete="off"></label></div>
+    <div class="bar"><button type="button" id="extract-book">Extract labels</button></div></div>
+    <div class="bar"><button type="button" id="book-manual">Enter labels manually</button><button type="button" id="edit-book" hidden>Review approved labels</button></div>
+    <p id="book-status" role="status"></p>
+    <section id="book-draft" hidden><h3>Review your labels</h3><p>Check the labels and their meanings. Your draft stays in this project when you close this window.</p>
+    <details id="book-original"><summary>Read text from the upload</summary><pre class="book-source"></pre></details>
+    <div id="book-rows"></div><div class="bar"><button type="button" id="book-add">Add label</button><button type="button" class="primary" id="use-book">Use these labels</button><button type="button" id="cancel-book">Discard draft</button></div>
+    <p role="alert" id="book-error" tabindex="-1"></p></section></div>`;
+  if (options.standalone) return edit;
+  return `<details${d.coding?.bookDraft ? " open" : ""}><summary>Code with the Data bot</summary>
     ${formselect(
       "coding-method",
       "How do you want to code?",
@@ -59,156 +87,287 @@ export function codingControls(d) {
         ["inductive", "Build labels from the passages (inductive)"],
         ["deductive", "Use my codebook (deductive)"],
       ],
-      d.coding?.mode || "inductive",
+      mode,
     )}
     <label>What are you trying to understand? (optional)<input id="coding-focus" maxlength="600" value="${esc(d.coding?.focus)}"></label>
     <p id="inductive-help">The bot reuses your labels. It can propose up to ${codingLimits.newPerBatch} new labels per batch and stops adding them at ${codingLimits.inductiveLabels} distinct labels.</p>
-    <div id="codebook-controls" hidden>
-    <p id="approved-book"></p>
-    <label>Upload your codebook<input id="book-file" type="file" accept=".pdf,.docx,.txt,.xlsx,.csv,.tsv"></label>
-    <small>Use a Word document, a PDF with selectable text, a text file or a spreadsheet containing your codebook. The bot receives this document when you choose Extract labels.</small>
-    <div id="book-access" hidden><label>Workshop course code<input type="password" id="book-course" autocomplete="off"></label></div>
-    <div class="bar"><button type="button" id="extract-book">Extract labels</button><button type="button" id="edit-book" hidden>Review approved labels</button></div>
-    <p id="book-status" role="status"></p>
-    <section id="book-draft" hidden><h3>Review the codebook</h3><p>Check each label and its meaning. Add any missing labels and remove anything that is only an example.</p>
-    <details id="book-original"><summary>Read text from the upload</summary><pre class="book-source"></pre></details>
-    <div id="book-rows"></div><div class="bar"><button type="button" id="book-add">Add label</button><button type="button" id="use-book">Use these labels</button><button type="button" id="cancel-book">Discard draft</button></div></section>
-    </div><small>Review up to ten passages at a time. The bot can suggest up to two labels per passage, counting any already applied. A passage may receive none.</small><div class="bar"><button type="button" id="suggestpass">Suggest codes for selected passages</button></div></details>`;
+    ${edit}<small>Review up to ten passages at a time. The bot can suggest up to two labels per passage, counting any already applied. A passage may receive none.</small><div class="bar"><button type="button" id="suggestpass">Suggest codes for selected passages</button></div></details>`;
 }
 
-export function bindCodingControls(d, extract, onApprove) {
-  let pending = false,
-    editing = false;
-  const mode = get("coding-method"),
-    file = get("book-file"),
-    draft = get("book-draft"),
-    status = get("book-status"),
-    collection = get("apply-book-collection"),
-    rows = get("book-rows");
-  function update() {
-    const deductive = mode.value === "deductive";
-    get("codebook-controls").hidden = !deductive;
-    get("inductive-help").hidden = deductive;
-    const size = d.coding?.book?.length || 0;
-    if (collection)
-      collection.hidden = !size || pending || editing || !!file.files.length;
-    get("approved-book").textContent = size
-      ? size + " approved labels · " + d.coding.bookName
-      : "Upload your codebook and check the labels before coding.";
-    get("edit-book").hidden = !size || editing;
-    get("edit-book").disabled = pending;
-    get("book-access").hidden = !!sessionStorage.getItem("dv-session");
-    get("extract-book").disabled = !file.files.length || pending;
-    file.disabled = pending;
-    mode.disabled = pending;
-    draft.hidden = !editing;
-    get("suggestpass").disabled =
-      deductive && (!size || pending || editing || !!file.files.length);
+export function bindCodingControls(
+  d,
+  extract,
+  onApprove,
+  onDraftChange = () => {},
+) {
+  const controls = get("codebook-controls");
+  const form = controls.closest("form");
+  const dialog = form.closest("dialog");
+  const el = (id) => form.querySelector("#" + id);
+  const standalone = controls.dataset.standalone === "true";
+  const manual = controls.dataset.manual === "true";
+  const file = el("book-file"),
+    rows = el("book-rows"),
+    status = el("book-status"),
+    error = el("book-error");
+  let displayed, timer;
+  const isOpen = () => form.isConnected && dialog.open;
+  const notify = () => {
+    clearTimeout(timer);
+    timer = null;
+    onDraftChange();
+  };
+  const flush = () => {
+    if (timer) notify();
+  };
+  function updateDraft() {
+    if (!d.coding?.bookDraft || d.coding.bookDraft !== displayed) return;
+    d.coding.bookDraft.entries = [...rows.children].map((row) => ({
+      label: row.querySelector("[data-label]").value,
+      definition: row.querySelector("[data-definition]").value,
+    }));
+    if (error.textContent) {
+      error.textContent = "";
+      for (const field of rows.querySelectorAll("[aria-invalid]")) {
+        field.removeAttribute("aria-invalid");
+        field.removeAttribute("aria-describedby");
+      }
+      rows.querySelector(".book-row-error")?.remove();
+    }
+    clearTimeout(timer);
+    timer = setTimeout(notify, 350);
   }
-  function addRow(entry = { label: "", definition: "" }) {
+  function appendRow(entry) {
     const row = document.createElement("div");
     row.className = "book-row";
     row.innerHTML = `<label>Label<input data-label value="${esc(entry.label)}"></label><label>Meaning and rules<textarea data-definition>${esc(entry.definition)}</textarea></label><button type="button" class="plain">Remove label</button>`;
-    row.querySelector("button").onclick = () => row.remove();
+    row.querySelector("button").onclick = () => {
+      row.remove();
+      updateDraft();
+    };
     rows.append(row);
+    return row;
   }
-  function review(entries, original) {
-    editing = true;
-    rows.replaceChildren();
-    entries.forEach(addRow);
-    get("book-original").hidden = !original;
-    get("book-original").querySelector("pre").textContent = original;
-    update();
+  function show() {
+    if (!isOpen()) return;
+    const pending = requests.get(d),
+      draft = d.coding?.bookDraft;
+    const deductive = standalone || el("coding-method").value === "deductive";
+    controls.hidden = !deductive;
+    if (!standalone) {
+      el("inductive-help").hidden = deductive;
+      el("coding-method").disabled = !!pending;
+      el("suggestpass").disabled =
+        deductive &&
+        (!d.coding?.book?.length ||
+          !!pending ||
+          !!draft ||
+          !!file.files.length);
+    }
+    const book = d.coding?.book;
+    if (el("apply-book-collection"))
+      el("apply-book-collection").hidden =
+        !book?.length || !!pending || !!draft || !!file.files.length;
+    el("approved-book").textContent = book?.length
+      ? book.length +
+        " approved label" +
+        (book.length === 1 ? "" : "s") +
+        (d.coding.bookName ? " · " + d.coding.bookName : "")
+      : "";
+    el("approved-book").hidden = !book?.length;
+    el("book-upload").hidden = !!draft || manual;
+    el("book-manual").hidden = !!draft || !!pending || (standalone && !manual);
+    el("edit-book").hidden =
+      !book?.length || !!draft || !!pending || standalone;
+    el("book-access").hidden = !!sessionStorage.getItem("dv-session");
+    el("extract-book").disabled = !file.files.length || !!pending;
+    file.disabled = !!pending;
+    el("book-draft").hidden = !draft;
+    if (draft !== displayed) {
+      displayed = draft;
+      rows.replaceChildren();
+      error.textContent = "";
+      if (draft) {
+        draft.entries.forEach(appendRow);
+        el("book-original").hidden = !draft.sourceText;
+        el("book-original").querySelector("pre").textContent = draft.sourceText;
+      }
+    }
+    if (pending) status.innerHTML = busyIndicator(pending, false);
+    else status.textContent = messages.get(d) || "";
   }
+  function setDraft(draft, message = "") {
+    d.coding ||= {};
+    if (draft) d.coding.bookDraft = draft;
+    else delete d.coding.bookDraft;
+    messages.set(d, message);
+    notify();
+    editors.get(d)?.();
+  }
+  const empty = () => ({ label: "", definition: "" });
+  function startManual() {
+    setDraft({
+      method: "manual",
+      name: "Manual codebook",
+      entries: [empty()],
+      sourceText: "",
+    });
+    rows.querySelector("[data-label]")?.focus();
+  }
+  editors.set(d, show);
+  // The outer modal normally offers Done. Here approval and dismissal each have one action.
+  if (standalone) {
+    form.querySelector('button[type="submit"]')?.remove();
+    form.onsubmit = (event) => {
+      event.preventDefault();
+    };
+  }
+  dialog.addEventListener("close", function closed() {
+    if (isOpen()) return; // A previous modal's queued close event.
+    dialog.removeEventListener("close", closed);
+    flush();
+    if (editors.get(d) === show) editors.delete(d);
+  });
+  if (!standalone) el("coding-method").onchange = show;
   file.onchange = () => {
-    editing = false;
-    status.textContent = "";
-    update();
+    messages.delete(d);
+    show();
   };
-  mode.onchange = update;
-  get("book-add").onclick = () => addRow();
-  get("edit-book").onclick = () => review(d.coding.book, "");
-  get("cancel-book").onclick = () => {
-    editing = false;
+  rows.oninput = updateDraft;
+  el("book-manual").onclick = startManual;
+  el("book-add").onclick = () => {
+    const row = appendRow(empty());
+    updateDraft();
+    row.querySelector("[data-label]").focus();
+  };
+  el("edit-book").onclick = () =>
+    setDraft({
+      method: "manual",
+      name: d.coding.bookName || "Project codebook",
+      entries: approvedBook(d),
+      sourceText: "",
+    });
+  el("cancel-book").onclick = () => {
     file.value = "";
-    status.textContent = "";
-    update();
+    setDraft(null);
   };
-  get("extract-book").onclick = async () => {
+  el("extract-book").onclick = async () => {
     const source = file.files[0];
-    if (!source || pending) return;
-    pending = true;
-    editing = false;
-    const active = () => draft.isConnected && draft.closest("dialog")?.open;
-    status.innerHTML = busyIndicator("Reading the codebook…", false);
-    update();
+    if (!source || requests.has(d) || d.coding?.bookDraft) return;
+    const access = el("book-course").value;
+    const approved = d.coding?.book;
+    requests.set(d, "Reading the codebook…");
+    show();
     try {
-      const documentText = (await fileText(source)).trim();
-      if (!active()) return;
-      if (!documentText)
+      const sourceText = (await fileText(source)).trim();
+      if (!sourceText)
         throw Error(
           "This file has no selectable text. Use a text-based PDF, Word document or spreadsheet.",
         );
-      if (documentText.length > 65000)
+      if (sourceText.length > 65000)
         throw Error(
           "Upload the section containing your labels and definitions (up to 65,000 characters).",
         );
-      status.innerHTML = busyIndicator(
-        "Extracting labels from your codebook…",
-        false,
-      );
-      const entries = await extract(documentText, val("book-course"));
-      if (!active()) return;
+      requests.set(d, "Extracting labels from your codebook…");
+      editors.get(d)?.();
+      const response = await extract(sourceText, access);
       if (
-        !Array.isArray(entries) ||
-        entries.some(
+        !Array.isArray(response) ||
+        response.some(
           (row) =>
             typeof row?.label !== "string" ||
             typeof row.definition !== "string",
         )
       )
         throw Error("The bot returned an unreadable codebook. Try again.");
-      const grounded = labelsInCodebook(entries, documentText);
-      const omitted = entries.length - grounded.length;
-      status.textContent =
-        (grounded.length
-          ? grounded.length + " draft labels to check."
+      if (d.coding?.bookDraft || d.coding?.book !== approved)
+        throw Error(
+          "The project codebook changed while the bot was reading. Your newer work has been kept.",
+        );
+      const grounded = labelsInCodebook(response, sourceText);
+      const entries = new Map();
+      for (const row of grounded) {
+        const key = labelKey(row.label),
+          existing = entries.get(key);
+        if (!existing) entries.set(key, { ...row });
+        else if (
+          row.definition &&
+          !existing.definition.split("\n").includes(row.definition)
+        )
+          existing.definition = [existing.definition, row.definition]
+            .filter(Boolean)
+            .join("\n");
+      }
+      const count = entries.size;
+      setDraft(
+        {
+          method: "upload",
+          name: source.name,
+          entries: [...entries.values()],
+          sourceText,
+        },
+        (count
+          ? count + " draft label" + (count === 1 ? "" : "s") + " to check."
           : "Check the source text and add any missing labels.") +
-        (omitted
-          ? " Some suggested labels could not be found in the uploaded text and were left out."
-          : "");
-      review(grounded, documentText);
-    } catch (error) {
-      if (active()) status.textContent = error.message;
+          (response.length > grounded.length
+            ? " Some suggested labels could not be found in the uploaded text and were left out."
+            : ""),
+      );
+    } catch (err) {
+      messages.set(d, err.message);
     } finally {
-      pending = false;
-      if (active()) update();
+      requests.delete(d);
+      editors.get(d)?.();
     }
   };
-  get("use-book").onclick = () => {
-    if (!editing || pending) return;
+  el("use-book").onclick = async () => {
+    const draft = d.coding?.bookDraft;
+    if (!draft || requests.has(d)) return;
     try {
-      const book = bookEntries(
-        [...rows.children].map((row) => ({
-          label: row.querySelector("[data-label]").value,
-          definition: row.querySelector("[data-definition]").value,
-        })),
-      );
+      // Read current controls as well, including autofill or an edit still in focus.
+      updateDraft();
+      const book = bookEntries(draft.entries);
+      clearTimeout(timer);
+      timer = null;
       d.coding = {
         ...d.coding,
         mode: "deductive",
-        focus: val("coding-focus").trim(),
+        focus: el("coding-focus")?.value.trim() ?? d.coding?.focus ?? "",
         book,
-        bookName: file.files[0]?.name || d.coding?.bookName,
+        bookName: draft.name,
       };
-      editing = false;
+      delete d.coding.bookDraft;
+      messages.set(d, "Codebook approved.");
       file.value = "";
-      status.textContent = "Codebook approved.";
-      update();
-      onApprove();
-    } catch (error) {
-      status.textContent = error.message;
+      show();
+      await onApprove(book);
+    } catch (err) {
+      error.textContent = err.message;
+      const seen = new Set();
+      const invalid = [...rows.querySelectorAll("[data-label]")].find(
+        (field) => {
+          const key = labelKey(field.value);
+          if (!key || seen.has(key)) return true;
+          seen.add(key);
+          return false;
+        },
+      );
+      if (invalid) {
+        const hint = document.createElement("small");
+        hint.className = "book-row-error";
+        hint.id = "book-row-error";
+        hint.textContent = err.message;
+        invalid.closest("label").append(hint);
+        invalid.setAttribute("aria-invalid", "true");
+        invalid.setAttribute("aria-describedby", hint.id);
+        invalid.focus();
+      } else if (draft === d.coding?.bookDraft) {
+        el("book-add").focus();
+      } else {
+        status.textContent = err.message;
+      }
     }
   };
-  update();
+  if (manual && !d.coding?.bookDraft && !requests.has(d)) startManual();
+  else show();
 }

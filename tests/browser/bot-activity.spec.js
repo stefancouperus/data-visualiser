@@ -133,7 +133,9 @@ test("codebook and coding activity report the current task and stop on pause or 
       (_, i) => "Passenger " + (i + 1) + " waited at the station.",
     ).join("\n"),
   );
-  await page.getByRole("button", { name: /Use an uploaded codebook/ }).click();
+  await page
+    .getByRole("button", { name: "Extract labels from a codebook" })
+    .click();
   await page.locator("#book-file").setInputFiles({
     name: "book.txt",
     mimeType: "text/plain",
@@ -160,14 +162,12 @@ test("codebook and coding activity report the current task and stop on pause or 
   await button(page, "Use these labels").click();
   const scope = page.getByRole("dialog"),
     send = button(scope, "Send to bot for coding");
+  await expect(scope).not.toBeVisible();
+  await expect(button(page, "Code manually")).toBeEnabled();
+  expect(sent).toEqual(["codebook"]);
+  await button(page, "Code with the bot").click();
   await expect(send).toBeVisible();
   await expect(scope).toContainText("travel.txt");
-  expect(sent).toEqual(["codebook"]);
-  await button(scope, "Close").click();
-  const apply = button(page, "Apply codebook to interview");
-  await expect(apply).toBeVisible();
-  await apply.click();
-  await expect(send).toBeVisible();
   expect(sent).toEqual(["codebook"]);
   const first = await holdRequest(page, () => send.click());
   const coding = indicator(page.locator(".iv-review"));

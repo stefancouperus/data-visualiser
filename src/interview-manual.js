@@ -1,6 +1,6 @@
 import { esc } from "./chart.js";
 import { uid } from "./import.js";
-import { labelKey } from "./coding.js";
+import { approvedBook, labelKey } from "./coding.js";
 import {
   sharedBook,
   pruneEmptyQuotations,
@@ -357,7 +357,8 @@ export function manageLabels(d, api, refresh, initial = "") {
 
 export function editPassageLabels(d, s, ps, api, refresh, explicit) {
   const targets = selectedTargets(ps, s.passage, explicit);
-  const book = sharedBook(d),
+  const fixed = s.established && approvedBook(d).length > 0;
+  const book = fixed ? approvedBook(d) : sharedBook(d),
     originalSource = s.source;
   const selections = targets.map((t) => new Set(t.codes.map(labelKey)));
   modal(
@@ -366,7 +367,9 @@ export function editPassageLabels(d, s, ps, api, refresh, explicit) {
         ? "Label this passage"
         : "Label this quotation"
       : "Label selected text",
-    '<div class="iv-selection-preview">' +
+    "<p><strong>" +
+      esc(originalSource) +
+      '</strong></p><div class="iv-selection-preview">' +
       targets
         .map((t) => "<blockquote>" + esc(t.text) + "</blockquote>")
         .join("") +
@@ -382,7 +385,9 @@ export function editPassageLabels(d, s, ps, api, refresh, explicit) {
             `<label class="tick"><input type="checkbox" name="iv-label" value="${i}">${chip(e.label)}</label>`,
         )
         .join("") +
-      '<label>New label<input id="iv-new" maxlength="100"></label><label>What does this label mean? (optional)<input id="iv-definition" maxlength="500"></label>',
+      (fixed
+        ? "<small>Tick the approved labels that fit these words. To change the codebook, choose Manage labels.</small>"
+        : '<label>New label<input id="iv-new" maxlength="100"></label><label>What does this label mean? (optional)<input id="iv-definition" maxlength="500"></label>'),
     () => {
       if (api.current() !== d || s.source !== originalSource)
         throw Error("Open the intended interview and select the text again.");

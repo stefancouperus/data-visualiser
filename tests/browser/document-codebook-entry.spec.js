@@ -5,7 +5,7 @@ import { newView } from "../../src/analysis.js";
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 
-async function openDocuments(page, openAnswers = false) {
+async function openDocuments(page, openAnswers = false, withBook = true) {
   const data = corpus(
     "Documents",
     [
@@ -15,11 +15,12 @@ async function openDocuments(page, openAnswers = false) {
     ["First", "Second"],
   );
   data.textPurpose = "documents";
-  data.coding = {
-    mode: "deductive",
-    book: [{ label: "Travel", definition: "Making a journey" }],
-    bookName: "Codebook.txt",
-  };
+  if (withBook)
+    data.coding = {
+      mode: "deductive",
+      book: [{ label: "Travel", definition: "Making a journey" }],
+      bookName: "Codebook.txt",
+    };
   if (openAnswers) {
     data.unit = "respondent";
     data.openAnswers = {
@@ -104,4 +105,69 @@ test("written survey answers retain passage coding and have no interview action"
   await expect(
     button(page, "Suggest codes for selected passages"),
   ).toBeEnabled();
+});
+
+test("a document codebook stays visible outside the passage reader and survives a refresh before and after approval", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  const calls = [];
+  await page.route("https://tutor.example.test/ask", (route) => {
+    calls.push(route.request().postDataJSON().skill);
+    return route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          entries: [{ label: "Travel", definition: "Making a journey" }],
+        }),
+      },
+    });
+  });
+  await openDocuments(page, false, false);
+  const modal = page.getByRole("dialog");
+  await modal.getByText("Code with the Data bot", { exact: true }).click();
+  await modal.locator("#coding-method").selectOption("deductive");
+  await modal
+    .locator("#book-file")
+    .setInputFiles({
+      name: "Book.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Travel: Making a journey"),
+    });
+  await button(modal, "Extract labels").click();
+  await expect(modal.locator("[data-label]")).toHaveValue("Travel");
+  await modal.locator("[data-label]").fill("Travel decisions");
+  await button(modal, "Close").click();
+  const panel = page.locator("#document-codebook");
+  await expect(panel).toContainText("Draft labels to review");
+  await expect(panel).toContainText("Travel decisions");
+
+  async function recover() {
+    await page.reload();
+    await button(page, "Resume coding project").click();
+  }
+  await recover();
+  await expect(panel).toContainText("Travel decisions");
+  await button(page, "Read and code passages").click();
+  // A saved, unapproved document codebook reopens in the deductive editor.
+  if (!(await modal.locator("[data-label]").isVisible()))
+    await modal.getByText("Code with the Data bot", { exact: true }).click();
+  await expect(modal.locator("[data-label]")).toHaveValue("Travel decisions");
+  await button(modal, "Use these labels").click();
+  await expect(modal.locator("#applycode")).toHaveJSProperty(
+    "tagName",
+    "SELECT",
+  );
+  await expect(modal.locator("#applycode option")).toHaveText([
+    "Choose an approved label",
+    "Travel decisions",
+  ]);
+  await button(modal, "Close").click();
+  await expect(panel).toContainText("Approved labels");
+  await expect(panel).not.toContainText("Draft labels to review");
+  await recover();
+  await expect(panel).toContainText("Travel decisions");
+  await button(panel, "Use the interview coding workspace").click();
+  await expect(button(page, "Code manually")).toBeEnabled();
+  await expect(button(page, "Code with the bot")).toBeEnabled();
+  expect(calls).toEqual(["codebook"]);
 });

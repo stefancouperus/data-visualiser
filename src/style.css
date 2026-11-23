@@ -998,3 +998,39 @@ dialog h2 {
   gap: .45rem .75rem;
   margin: .75rem 0;
 }
+
+.iv-tools.iv-workflow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  margin-bottom: 1rem;
+}
+.iv-stage {
+  min-width: 0;
+  padding: .9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f7f9fa;
+  overflow-wrap: anywhere;
+}
+.iv-stage h2 { font-size: 1.12rem; margin: 0 0 .45rem; }
+.iv-stage h3 { font-size: .97rem; margin: .65rem 0 .25rem; }
+.iv-stage p { margin: .4rem 0 .55rem; }
+.iv-workflow button { width: auto; margin: .18rem 0; }
+.iv-stage-actions { display: flex; gap: .15rem .45rem; flex-wrap: wrap; align-items: center; }
+.iv-workflow .iv-legend { max-height: 8rem; overflow: auto; }
+.iv-workflow .iv-legend > div { display: flex; gap: .2rem .45rem; align-items: baseline; flex-wrap: wrap; }
+.iv-workflow .iv-legend > div + div { margin-top: .15rem; }
+.iv-workflow .iv-legend small { margin: 0; }
+.iv-book-draft { border-inline-start: 3px solid #b87920; padding-inline-start: .7rem; }
+.iv-reading-grid { grid-template-columns: minmax(155px, 1fr) minmax(0, 4fr); }
+.withbot .iv-reading-grid { grid-template-columns: minmax(130px, 1fr) minmax(0, 3fr); }
+@media (max-width: 950px) {
+  .iv-reading-grid, .withbot .iv-reading-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 740px) {
+  .iv-tools.iv-workflow { grid-template-columns: minmax(0, 1fr); gap: .55rem; }
+}

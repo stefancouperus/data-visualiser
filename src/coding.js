@@ -10,19 +10,63 @@ const key = (text) =>
 
 export { key as labelKey };
 
+// Early projects can store a label as a string; the first spelling and meaning
+// are the ones students recognise in an established codebook.
+export function labelVocabulary(entries = []) {
+  const vocabulary = new Map();
+  for (const entry of entries) {
+    const label = typeof entry === "string" ? entry : entry?.label;
+    if (typeof label !== "string" || !label.trim()) continue;
+    const id = key(label);
+    if (!vocabulary.has(id))
+      vocabulary.set(id, {
+        label: label.trim(),
+        definition:
+          typeof entry?.definition === "string" ? entry.definition : "",
+      });
+  }
+  return [...vocabulary.values()];
+}
+
+export const approvedBook = (d) => labelVocabulary(d.coding?.book);
+
+// Older annotations are retained on the transcript. Only active codes should
+// influence a new deductive pass, including the two-code limit.
+export function codingRequestContext(context) {
+  if (context.guide.mode !== "deductive") return context;
+  const active = new Map(
+    context.guide.vocabulary.map((e) => [key(e.label), e.label]),
+  );
+  return {
+    ...context,
+    passages: context.passages.map((p) => ({
+      ...p,
+      codes: [
+        ...new Set(
+          (p.codes || []).map((c) => active.get(key(c))).filter(Boolean),
+        ),
+      ],
+    })),
+  };
+}
+
 export function allCodes(d) {
   const approved = d.interviews?.established
-    ? (d.coding?.book || []).map((e) => e.label)
+    ? approvedBook(d).map((e) => e.label)
     : [];
   return [...new Set([...approved, ...d.passages.flatMap((p) => p.codes)])];
 }
 
-export function codingGuide(d) {
-  const mode = d.coding?.mode || "inductive";
+export function codingGuide(
+  d,
+  mode = d.interviews?.established
+    ? "deductive"
+    : d.coding?.mode || "inductive",
+) {
   const labels = [...new Set(d.passages.flatMap((p) => p.codes))];
   const vocabulary =
     mode === "deductive"
-      ? d.coding?.book || []
+      ? approvedBook(d)
       : labels.map((label) => ({
           label,
           definition:
@@ -38,7 +82,10 @@ export function codingGuide(d) {
     mode,
     focus: d.coding?.focus || "",
     vocabulary,
-    limits: codingLimits,
+    limits:
+      mode === "deductive"
+        ? { perPassage: codingLimits.perPassage, newPerBatch: 0 }
+        : codingLimits,
   };
 }
 
@@ -91,7 +138,16 @@ function validateSuggestions(raw, passages, guide, newLabelLimit, excluded) {
   );
   const withdrawn = new Set((guide.withdrawnLabels || []).map(key));
   const newLabels = new Map();
-  const used = new Map(passages.map((p) => [p.id, new Set(p.codes.map(key))]));
+  const used = new Map(
+    passages.map((p) => [
+      p.id,
+      new Set(
+        p.codes
+          .map(key)
+          .filter((code) => guide.mode !== "deductive" || known.has(code)),
+      ),
+    ]),
+  );
   const sources = new Map(passages.map((p) => [p.id, p.text]));
   const result = [];
   const skip = (reason) => {
@@ -236,12 +292,45 @@ export function requestsCoding(message) {
   );
 }
 
+export function requestsLabelDiscovery(message, established = false) {
+  const text = message.toLowerCase().replace(/’/g, "'");
+  const noAdditions =
+    /\b(?:no|without(?: any)?) (?:new|extra|additional|fresh) (?:labels?|codes?|themes?)\b|\b(?:never|avoid|without|don't|do not|must not|cannot|can't) (?:propos\w*|generat\w*|invent\w*|creat\w*|introduc\w*|add\w*|suggest\w*)\b[^.!?;]{0,35}\b(?:codes?|labels?|themes?)\b/;
+  const fixedBook =
+    /\b(?:deductiv\w*|pre[- ]?defined)\b|\b(?:no|avoid|without) label[- ]drift\w*\b|\b(?:only|just|stick to)\b[^.!?;]{0,45}\b(?:code\s?book|existing|approved|provided|supplied|current)\b|\b(?:existing|approved|supplied|codebook) (?:labels?|codes?) only\b/;
+  if (noAdditions.test(text) || fixedBook.test(text)) return false;
+  if (
+    /\binductiv\w*\b|\b(?:new|additional|fresh) (?:labels?|codes?|themes?)\b/.test(
+      text,
+    )
+  )
+    return true;
+  return (
+    !established &&
+    !/\b(?:code\s?book|approved|existing)\b/.test(text) &&
+    /\b(?:suggest|develop|come up with|propose|generate)\b.{0,35}\b(?:labels?|codes?|themes?)\b/.test(
+      text,
+    )
+  );
+}
+
 export function applyCodingBatch(d, pending, guide = codingGuide(d)) {
   const byId = new Map(d.passages.map((p) => [p.id, p]));
   const targetIds = [...new Set(pending.map((s) => s.id))];
   const targets = targetIds.map((id) => byId.get(id)).filter(Boolean);
-  const valid = checkedCollectedSuggestions(pending, targets, guide);
-  if (!pending.length || valid.length !== pending.length)
+  // Protect the commit if a book has been replaced since this review opened.
+  const activeGuide =
+    guide.mode === "deductive" ? codingGuide(d, "deductive") : guide;
+  const valid = checkedCollectedSuggestions(pending, targets, activeGuide);
+  const oldMeanings =
+    guide.mode === "deductive" &&
+    new Map(guide.vocabulary.map((e) => [key(e.label), e.definition]));
+  if (
+    !pending.length ||
+    valid.length !== pending.length ||
+    (oldMeanings &&
+      valid.some((s) => oldMeanings.get(key(s.code)) !== s.definition))
+  )
     throw Error(
       "These suggestions no longer match the current passages or codebook. Ask for fresh suggestions.",
     );

@@ -1,25 +1,21 @@
 import { uid } from "./import.js";
 import {
+  approvedBook,
   codingGuide,
   checkedSuggestions,
   discoveryLimit,
+  labelVocabulary,
   labelKey as normal,
 } from "./coding.js";
 
 export const isInterview = (d) =>
   d?.kind === "text" && !d.openAnswers && d.textPurpose !== "documents";
 export function sharedBook(d) {
-  const entries = new Map();
-  for (const e of [
+  return labelVocabulary([
     ...(d.coding?.book || []),
     ...(d.coding?.meanings || []),
     ...new Set(d.passages.flatMap((p) => p.codes)),
-  ]) {
-    const entry = typeof e === "string" ? { label: e, definition: "" } : e;
-    if (!entries.has(normal(entry.label)))
-      entries.set(normal(entry.label), entry);
-  }
-  return [...entries.values()];
+  ]);
 }
 // Some imported projects declare a label only by applying it to a passage.
 // Keep it in the vocabulary when a student removes its last assignment.
@@ -106,7 +102,7 @@ function prepareReadingPassages(d) {
 }
 export function interviews(d) {
   if (!d.interviews) prepareReadingPassages(d);
-  d.interviews ||= {
+  const state = (d.interviews ||= {
     source: d.sources[0],
     done: [],
     method: d.coding?.book?.length
@@ -114,11 +110,26 @@ export function interviews(d) {
       : d.passages.some((p) => p.codes.length)
         ? "imported"
         : "",
-    established: !!d.coding?.book?.length,
-  };
-  if (!d.sources.includes(d.interviews.source))
-    d.interviews.source = d.sources[0];
-  return d.interviews;
+    established: false,
+  });
+  // The earlier passage reader could save an approved book without updating
+  // the interview screen's flag. A pending import or draft has its own review.
+  if (
+    !state.established &&
+    d.coding?.book?.length &&
+    !state.draft &&
+    !d.coding.bookDraft &&
+    state.method !== "imported" &&
+    (!state.method || state.method === "book" || d.coding.mode === "deductive")
+  ) {
+    const book = approvedBook(d);
+    if (book.length) {
+      activateBook(d, state, book);
+      state.method = "book";
+    }
+  }
+  if (!d.sources.includes(state.source)) state.source = d.sources[0];
+  return state;
 }
 function useCanonicalLabels(d, book) {
   const labels = new Map(book.map((e) => [normal(e.label), e.label]));
@@ -130,9 +141,7 @@ function useCanonicalLabels(d, book) {
       e.code = labels.get(normal(e.code)) || e.code;
   }
 }
-export function establish(d) {
-  const book = sharedBook(d);
-  if (!book.length) throw Error("Create or approve at least one label first.");
+function activateBook(d, state, book) {
   d.coding = {
     ...d.coding,
     mode: "deductive",
@@ -140,7 +149,17 @@ export function establish(d) {
     bookName: d.coding?.bookName || "Shared interview codebook",
   };
   useCanonicalLabels(d, book);
-  interviews(d).established = true;
+  state.established = true;
+}
+export function establish(d, reviewedEntries) {
+  // An uploaded or typed codebook contains exactly the rows the student
+  // approved. Historical labels remain on their original passages.
+  const book =
+    reviewedEntries === undefined
+      ? sharedBook(d)
+      : labelVocabulary(reviewedEntries);
+  if (!book.length) throw Error("Create or approve at least one label first.");
+  activateBook(d, interviews(d), book);
 }
 export function appendInterviews(d, sets) {
   const names = new Set(d.sources);
@@ -164,12 +183,20 @@ export function appendInterviews(d, sets) {
     if (set.originals) d.originals = { ...d.originals, ...set.originals };
   }
   const state = interviews(d);
-  if (state.established && sharedBook(d).length !== d.coding.book.length) {
-    state.done = [];
-    state.established = false;
-    state.method = "imported";
+  if (state.established) {
+    const book = approvedBook(d);
+    const known = new Set(book.map((entry) => normal(entry.label)));
+    const newImportedLabels = sets.some((set) =>
+      set.passages.some((p) =>
+        p.codes.some((code) => !known.has(normal(code))),
+      ),
+    );
+    if (newImportedLabels && state.method !== "book") {
+      state.done = [];
+      state.established = false;
+      state.method = "imported";
+    } else useCanonicalLabels(d, book);
   }
-  if (state.established) useCanonicalLabels(d, d.coding.book);
   state.source = sets[0].sources[0];
   interviews(d).finished = false;
 }
@@ -326,12 +353,11 @@ export function draftGuide(
   priorMatches = [],
   withdrawnLabels = d.interviews?.draft?.withdrawnLabels || [],
 ) {
-  if (!sample) return codingGuide(d);
-  const base = codingGuide({
-    ...d,
-    coding: { ...d.coding, mode: "inductive" },
-  });
-  const vocabulary = sharedBook(d);
+  if (!sample) return codingGuide(d, "deductive");
+  const base = codingGuide(d, "inductive");
+  const vocabulary = d.interviews?.established
+    ? approvedBook(d)
+    : sharedBook(d);
   const existing = new Set(vocabulary.map((entry) => normal(entry.label)));
   const startingSize = existing.size;
   for (const match of priorMatches) {

@@ -128,12 +128,19 @@ test("code a repeated quotation without a bot, revise its labels, and reopen the
     ],
     /Upload uncoded transcripts/,
   );
-  await manage(page);
-  await saveLabel(page, "Queue", "Time waiting in line");
+  await btn(page, "Enter labels manually").click();
+  await page.locator("[data-label]").fill("Queue");
+  await page.locator("[data-definition]").fill("Time waiting in line");
+  await btn(page, "Add label").click();
+  await page.locator("[data-label]").nth(1).fill("Repeated wait");
+  await page.locator("[data-definition]").nth(1).fill("Returning to a queue");
+  await btn(page, "Use these labels").click();
+  await expect(btn(page, "Code manually")).toBeEnabled();
   await expect(page.locator(".iv-legend")).toContainText("Queue");
   const quote = "I waited",
     start = repeated.lastIndexOf(quote);
-  await selectRange(page, 0, start, 0, start + quote.length);
+  await markWords(page, 0, start, 0, start + quote.length);
+  await btn(page, "Code manually").click();
   await expect(dialog(page)).toContainText(quote);
   await dialog(page)
     .getByRole("checkbox", { name: "Queue", exact: true })
@@ -157,8 +164,10 @@ test("code a repeated quotation without a bot, revise its labels, and reopen the
   await dialog(page)
     .getByRole("checkbox", { name: "Queue", exact: true })
     .uncheck();
-  await page.locator("#iv-new").fill("Repeated wait");
-  await page.locator("#iv-definition").fill("Returning to a queue");
+  await expect(page.locator("#iv-new")).toHaveCount(0);
+  await dialog(page)
+    .getByRole("checkbox", { name: "Repeated wait", exact: true })
+    .check();
   await savePassage(page);
 
   await manage(page, "Repeated wait");

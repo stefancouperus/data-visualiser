@@ -63,7 +63,7 @@ test("interview recovery checkpoints a failed batch, reviewer decisions and manu
   });
   await page.goto("/");
   await openFile(page, seed());
-  await button(page, "Apply codebook to interview").click();
+  await button(page, "Code with the bot").click();
   await button(page, "Send to bot for coding").click();
   await expect(button(page, "Resume coding")).toBeVisible();
   await expect(page.locator(".iv-review")).toContainText("1 of 2");

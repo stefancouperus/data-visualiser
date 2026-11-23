@@ -37,10 +37,13 @@ import {
 } from "./indicator-ui.js";
 import {
   codingGuide,
+  approvedBook,
+  codingRequestContext,
   labelKey,
   checkedSuggestions,
   acceptsCodingBatch,
   requestsCoding,
+  requestsLabelDiscovery,
   applyCodingBatch,
 } from "./coding.js";
 import { codingControls, bindCodingControls } from "./codebook-ui.js";
@@ -460,7 +463,7 @@ async function checkpointInterview(p, d) {
   }
   showStatus();
   try {
-    await saveCodingCopy(p, interviews(d).source);
+    await saveCodingCopy(p, d.interviews?.source || d.name);
     state.needsSave = false;
     state.message = "Coding progress saved on this device.";
   } catch {
@@ -528,6 +531,22 @@ function readingSelection() {
     if (from && to) selection.setBaseAndExtent(...from, ...to);
   };
 }
+function documentCodebook(d) {
+  const draft = d.coding?.bookDraft;
+  const approved = approvedBook(d);
+  if (!draft && !approved.length)
+    return b("makeinterview", "Use the interview coding workspace");
+  const labels = (entries) =>
+    entries
+      .filter((e) => e.label.trim())
+      .map((e) => esc(e.label))
+      .join(" · ");
+  return `<section class="card document-codebook"><h2>Project codebook</h2>
+    ${draft ? `<p><strong>Draft labels to review</strong><br>${labels(draft.entries) || "Your draft is ready to edit."}</p>` : ""}
+    ${approved.length ? `<p><strong>Approved labels</strong><br>${labels(approved)}</p>` : ""}
+    ${b("makeinterview", "Use the interview coding workspace")}
+    <small>Review your labels, code a passage yourself or choose interviews for the bot.</small></section>`;
+}
 function render() {
   // A student may reopen a visual or change an existing question into an open one.
   const dataset = getData();
@@ -594,6 +613,13 @@ function render() {
   let content = step === 0 ? landing(hasDeviceCopy()) : "";
   if (step !== 0 && d) {
     content = `<div class="hero"><h1>${headers[step]}</h1></div>${datasetSelect(project)}${coverageNote}`;
+    if (
+      d.textPurpose === "documents" &&
+      !d.openAnswers &&
+      step <= 3 &&
+      (step === 1 || d.coding?.bookDraft || d.coding?.book?.length)
+    )
+      content += `<div id="document-codebook">${documentCodebook(d)}</div>`;
     if (step === 1 && interview) {
       content +=
         interviewScreen(d, codingSaveStatus.get(project)?.message) +
@@ -601,7 +627,7 @@ function render() {
         check(d) +
         "</details>";
     } else if (step === 1)
-      content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (d.kind === "text" ? "coded" : "table") + '"')}</div>${check(d)}${d.textPurpose === "documents" && !d.openAnswers ? b("makeinterview", "Use the interview coding workspace") : ""}${roleButton ? `<section class="card"><h2>Which questions help answer your research question?</h2><p>Identify the outcome, groups and possible explanations. Mark questions with written answers too.</p>${roleButton}</section>` : ""}${openRoute}<div class="bar">${b("confirm", "Confirm and explore", "primary")}</div>`;
+      content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (d.kind === "text" ? "coded" : "table") + '"')}</div>${check(d)}${roleButton ? `<section class="card"><h2>Which questions help answer your research question?</h2><p>Identify the outcome, groups and possible explanations. Mark questions with written answers too.</p>${roleButton}</section>` : ""}${openRoute}<div class="bar">${b("confirm", "Confirm and explore", "primary")}</div>`;
     else if (step === 2 || step === 3)
       content += `${step === 2 ? openRoute : ""}<div class="bar">${step === 2 ? b("compare", "Compare two views") : b("savecompare", "Save comparison", "primary")}${step === 3 ? b("askboth", icon("bot") + " Compare findings") : ""}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
         .slice(0, step === 3 ? 2 : 1)
@@ -1017,7 +1043,8 @@ function botContext(question = "") {
         ? {
             openInterview: interviews(d).source,
             checkedInterviews: interviews(d).done.length,
-            approvedLabels: d.coding?.book?.map((e) => e.label),
+            approvedLabels: approvedBook(d).map((entry) => entry.label),
+            hasCodebookDraft: !!d.coding?.bookDraft,
             hasCodingDraft: !!interviews(d).draft,
           }
         : {}),
@@ -1374,6 +1401,8 @@ async function unlockBot(code) {
 }
 
 async function requestTutor(payload) {
+  if (payload.skill === "coding")
+    payload = { ...payload, context: codingRequestContext(payload.context) };
   const res = await fetch(botURL + "/ask", {
     method: "POST",
     headers: {
@@ -2557,6 +2586,7 @@ function evidence(i, match, codingPrompt = "") {
     );
     return;
   }
+  const owner = project;
   const ps = d.passages.filter(
     (p) =>
       (!codingPrompt ||
@@ -2615,7 +2645,17 @@ function evidence(i, match, codingPrompt = "") {
       let code = val("applycode").trim();
       const transcript = isInterview(d);
       const affected = new Set();
-      if (transcript && code) {
+      if (
+        code &&
+        (d.interviews?.established || d.coding?.mode === "deductive")
+      ) {
+        const existing = approvedBook(d).find(
+          (entry) => labelKey(entry.label) === labelKey(code),
+        );
+        if (!existing)
+          throw Error("Choose a label from your approved codebook.");
+        code = existing.label;
+      } else if (transcript && code) {
         const existing = sharedBook(d).find(
           (entry) => labelKey(entry.label) === labelKey(code),
         );
@@ -2766,16 +2806,55 @@ function evidence(i, match, codingPrompt = "") {
     get("formerror").textContent =
       "Shorter passage selected. You can apply a code or request suggestions.";
   };
-  bindCodingControls(d, extractCodebook, () => {
-    suggestions = [];
-    render();
-    get("apply-book-interviews")?.focus();
-  });
+  function syncPassageLabels() {
+    const approved =
+      d.coding?.mode === "deductive" || d.interviews?.established
+        ? approvedBook(d)
+        : [];
+    const field = get("applycode");
+    if (!field) return;
+    if (approved?.length) {
+      const select = document.createElement("select");
+      select.id = field.id;
+      select.innerHTML = opts(
+        [["", "Choose an approved label"], ...approved.map((e) => e.label)],
+        field.value,
+      );
+      field.replaceWith(select);
+    } else {
+      get("knowncodes").innerHTML = opts(allCodes(d), "");
+    }
+  }
+  function refreshDocumentBook() {
+    if (!d.openAnswers) checkpointInterview(owner, d);
+    if (project !== owner || getData() !== d) return;
+    const panel = get("document-codebook");
+    if (panel) panel.innerHTML = documentCodebook(d);
+    else if (
+      d.textPurpose === "documents" &&
+      !d.openAnswers &&
+      (d.coding?.bookDraft || d.coding?.book?.length)
+    )
+      render();
+  }
+  bindCodingControls(
+    d,
+    extractCodebook,
+    () => {
+      refreshDocumentBook();
+      if (project !== owner || getData() !== d) return;
+      suggestions = [];
+      syncPassageLabels();
+      render();
+      get("apply-book-interviews")?.focus();
+    },
+    refreshDocumentBook,
+  );
+  syncPassageLabels();
   const applyBook = get("apply-book-interviews");
   if (applyBook) {
     applyBook.onclick = async () => {
       if (getData() !== d || !d.coding?.book?.length) return;
-      const owner = project;
       delete d.textPurpose;
       const state = interviews(d);
       get("dialog").close();
@@ -2802,11 +2881,6 @@ function evidence(i, match, codingPrompt = "") {
     get("coding-method").disabled = true;
     get("codebook-controls").hidden = true;
     get("inductive-help").hidden = true;
-    get("applycode").setAttribute("list", "knowncodes");
-    get("knowncodes").innerHTML = opts(
-      d.coding.book.map((e) => e.label),
-      "",
-    );
   }
   for (const id of ["discusspass", "suggestpass"])
     get(id).onclick = async () => {
@@ -3531,17 +3605,16 @@ async function action(act, el) {
           /\b(?:deductiv\w*|code\s?book|pre[- ]?defined|approved|existing)\b|\b(?:apply|use|assign)\b.{0,30}\b(?:codes?|labels?|them)\b/i.test(
             q,
           );
-        const discover =
-          /\b(?:new|additional|fresh) (?:labels?|codes?|themes?)\b/i.test(q) ||
-          (!useBook &&
-            /\binductiv\w*\b|\b(?:suggest|develop|come up with|propose|generate)\b.{0,35}\b(?:labels?|codes?|themes?)\b/i.test(
-              q,
-            ));
+        const discover = requestsLabelDiscovery(q, s.established);
         let command, reply;
         if (s.draft) {
           command = s.draft.next === s.draft.total ? "iv-review" : "iv-resume";
           reply =
             "Your existing draft is ready to review or continue. It keeps the interviews you chose when you started it.";
+        } else if (d.coding?.bookDraft && !discover) {
+          command = "iv-reviewbook";
+          reply =
+            "Review the draft labels in your codebook first. Once you approve them, choose Code manually or Code with the bot.";
         } else if (s.established && discover) {
           command = "iv-sample";
           reply =
@@ -3572,9 +3645,12 @@ async function action(act, el) {
             "Choose which interviews I should check for the labels you confirmed.";
         } else if (!discover && (s.method === "book" || useBook)) {
           s.method = "book";
-          command = "iv-book";
-          reply =
-            "Upload your codebook and check the extracted labels. Then choose the interviews you want me to code.";
+          command = /\b(?:upload|file|extract|document)\b/i.test(q)
+            ? "iv-book"
+            : null;
+          reply = command
+            ? "Upload your codebook and review the extracted labels. Once you approve them, choose Code with the bot."
+            : "Under Set up your codebook, choose Enter labels manually or Extract labels from a codebook. After approval, choose Code with the bot to select your interviews.";
         } else {
           s.method = "inductive";
           command = "iv-sample";
@@ -3936,7 +4012,8 @@ document.addEventListener("drop", async (event) => {
   }
 });
 document.addEventListener("mousedown", (e) => {
-  if (e.target.closest('[data-act="iv-manual"]')) e.preventDefault();
+  if (e.target.closest('[data-act="iv-manual"], [data-act="iv-apply-manual"]'))
+    e.preventDefault();
 });
 document.addEventListener("click", async (e) => {
   const text = e.target.closest("[data-iv-text]");

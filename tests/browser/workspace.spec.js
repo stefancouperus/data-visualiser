@@ -1930,7 +1930,7 @@ test("two interviews share an approved inductive codebook, resume a bot draft an
     ),
   });
   await expect(page.locator(".iv-progress")).toContainText("1 of 2");
-  await btn("Apply codebook to interviews").click();
+  await btn("Code with the bot").click();
   await btn("Send to bot for coding").click();
   await expect(btn("Resume coding")).toBeVisible();
   await expect(page.locator(".iv-passage .iv-chip")).toHaveCount(0);
@@ -2006,7 +2006,9 @@ test("deductive interview codebook upload, review, whole-transcript matching and
     "travel.txt",
     "The train fare is high.\nI walk in the sunshine.",
   );
-  await page.getByRole("button", { name: /Use an uploaded codebook/ }).click();
+  await page
+    .getByRole("button", { name: "Extract labels from a codebook" })
+    .click();
   await page.locator("#book-file").setInputFiles({
     name: "guide.txt",
     mimeType: "text/plain",
@@ -2015,19 +2017,10 @@ test("deductive interview codebook upload, review, whole-transcript matching and
   await btn("Extract labels").click();
   await page.locator("[data-label]").fill("Fare cost");
   await btn("Use these labels").click();
-  await expect(
-    page
-      .getByRole("dialog")
-      .getByRole("heading", { name: "Apply codebook to interview" }),
-  ).toBeVisible();
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Close", exact: true })
-    .click();
-  await expect(page.locator(".iv-tools button").first()).toHaveText(
-    "Apply codebook to interview",
-  );
-  await btn("Apply codebook to interview").click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await expect(page.locator(".iv-legend")).toContainText("Fare cost");
+  await expect(btn("Code manually")).toBeEnabled();
+  await btn("Code with the bot").click();
   await btn("Send to bot for coding").click();
   await btn("Review suggested coding").click();
   await expect(page.locator("[name=iv-match]")).toHaveCount(1);

@@ -225,3 +225,19 @@ test("removing the final imported assignment keeps the label available until exp
   retainInterviewVocabulary(d, previouslyAvailable);
   assert.equal(d.coding.meanings.length, 2);
 });
+
+test("renaming an older label keeps it outside the approved book and removing the last approved label leaves a recoverable project", () => {
+  const { p, d } = fixture();
+  d.coding.book = [label("Delay")];
+  editInterviewLabel(p, d, { oldLabel: "Cost", label: "Former fare code" });
+  assert.deepEqual(d.coding.book, [label("Delay")]);
+  assert.deepEqual(d.passages.at(-1).codes, ["Former fare code", "Delay"]);
+  editInterviewLabel(p, d, { oldLabel: "Delay", remove: true });
+  assert.equal(d.interviews.established, false);
+  assert.equal(d.coding.book.length, 0);
+  assert.deepEqual(d.passages.at(-1).codes, ["Former fare code"]);
+  assert.deepEqual(
+    verifyProject(structuredClone(p)).datasets[0].coding.meanings,
+    [label("Former fare code")],
+  );
+});

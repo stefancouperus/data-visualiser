@@ -137,7 +137,6 @@ test("pooled discovery includes and reviews one passage from each of eleven inte
     page,
     project(Object.fromEntries(sources.map((s) => [s, [fare, waits]])), false),
   );
-  await page.locator("[data-method=inductive]").click();
   await choose(page, "iv-sample", "all");
   await expect(page.locator("[name=iv-example]:checked")).toHaveCount(11);
   await submit(page);
@@ -263,7 +262,6 @@ test("inductive sampling combines chosen interviews, honours the passage choices
   const calls = await recordBot(page);
   const scenario = project(samples, false);
   await open(page, scenario);
-  await page.locator("[data-method=inductive]").click();
   await choose(page, "iv-sample", "selected", ["North", "East", "West"]);
   const passages = scenario.datasets[0].passages;
   const sample = passages.filter(
@@ -348,4 +346,69 @@ test("a reopened shared codebook can gain student-approved inductive labels", as
   ]);
   expect(updated.interviews.done).toEqual([]);
   expect(updated.passages.find((p) => p.text === quiet).codes).toEqual([]);
+});
+
+test("a chat request using existing codes sends only the approved book and saves no synonyms or translations", async ({
+  page,
+}) => {
+  const calls = [];
+  const dutch = "Ik moest een uur wachten.";
+  const saved = project({ North: [dutch], South: [quiet] });
+  const dataset = saved.datasets[0];
+  dataset.interviews = {
+    source: "North",
+    method: "book",
+    established: true,
+    done: [],
+  };
+  dataset.coding.mode = "inductive"; // Older project with stale mode.
+  dataset.passages[0].codes = ["Travel diary", "Earlier code"];
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  await page.route("https://tutor.example.test/ask", (route) => {
+    const { context } = route.request().postDataJSON();
+    calls.push(context);
+    const source = context.passages.find((p) => p.text === dutch);
+    return route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          suggestions: ["Vertraging", "Late bus", " DELAYS "].map((code) => ({
+            id: source.id,
+            code,
+            quote: dutch,
+            definition: "Model-supplied change",
+            reason: "The speaker describes waiting.",
+          })),
+        }),
+      },
+    });
+  });
+  await open(page, saved);
+  await button(page, "Data bot").click();
+  await page
+    .locator("#question")
+    .fill(
+      "Apply the existing codes to both interviews. Do not invent new labels.",
+    );
+  await button(page, "Send").click();
+  await expect(page.locator("#iv-scope")).toHaveValue("all");
+  await expect(page.locator("#iv-sample-pick")).toHaveCount(0);
+  await submit(page);
+  await button(page, "Check the suggested labels").click();
+  expect(calls).toHaveLength(1);
+  expect(calls[0].guide.mode).toBe("deductive");
+  expect(calls[0].guide.limits.newPerBatch).toBe(0);
+  expect(calls[0].guide.vocabulary).toEqual(dataset.coding.book);
+  expect(calls[0].passages.flatMap((p) => p.codes)).toEqual([]);
+  await expect(page.locator("[name=iv-match]")).toHaveCount(1);
+  await apply(page);
+  await page.locator("#data-bot [data-act=closebot]").click();
+  const result = (await save(page)).datasets[0];
+  expect(result.coding.book).toEqual(dataset.coding.book);
+  expect(result.passages.map((p) => p.codes)).toEqual([
+    ["Travel diary", "Earlier code", "Delays"],
+    [],
+  ]);
+  expect(result.passages[0].codingEvidence).toEqual([
+    { code: "Delays", quote: dutch },
+  ]);
 });
