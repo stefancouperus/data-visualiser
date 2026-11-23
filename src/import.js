@@ -127,7 +127,8 @@ export function wordDocument(bytes, name) {
     ranges = new Map(),
     active = new Set(),
     paragraphs = [],
-    paragraphStarts = [];
+    paragraphStarts = [],
+    paragraphScope = [];
   let position = 0;
   const add = (text, start, end, marker) => {
     if (!text.trim()) return;
@@ -141,10 +142,30 @@ export function wordDocument(bytes, name) {
   const paragraphsInFile = els(body, "p");
   // Our Word export has a printed legend and label notes alongside the transcript.
   // Its paragraph styles keep those notes separate when the file is imported again.
-  const transcript = paragraphsInFile.filter(
-    (p) => attr(els(p, "pStyle")[0], "val") === "DVCodedPassage",
-  );
-  for (const p of transcript.length ? transcript : paragraphsInFile) {
+  const transcript = new Map();
+  let precedingPassage;
+  for (const p of paragraphsInFile) {
+    const style = attr(els(p, "pStyle")[0], "val");
+    if (style === "DVCodedPassage") {
+      precedingPassage = p;
+      const bookmark = els(p, "bookmarkStart")
+        .map((e) => attr(e, "name"))
+        .find((name) => /^DV(?:Included|Excluded)_\d+$/.test(name));
+      transcript.set(
+        p,
+        bookmark ? bookmark.startsWith("DVIncluded_") : undefined,
+      );
+    } else if (style === "DVLabelNote") {
+      // Earlier exports recorded an explicit exclusion only in this printed note.
+      if (
+        precedingPassage &&
+        transcript.get(precedingPassage) === undefined &&
+        txt(p).trim() === "Outside the selected coding passages."
+      )
+        transcript.set(precedingPassage, false);
+    } else precedingPassage = undefined;
+  }
+  for (const p of transcript.size ? transcript.keys() : paragraphsInFile) {
     const paragraphStart = position;
     let colour = "",
       run = "",
@@ -187,6 +208,7 @@ export function wordDocument(bytes, name) {
     const raw = txt(p);
     if (raw.trim()) {
       paragraphs.push(raw.trim());
+      if (transcript.size) paragraphScope.push(transcript.get(p));
       paragraphStarts.push(
         paragraphStart + raw.length - raw.trimStart().length,
       );
@@ -200,7 +222,8 @@ export function wordDocument(bytes, name) {
     paragraphs,
     paragraphStarts,
     marked: all,
-    codedWordExport: transcript.length > 0,
+    paragraphScope,
+    codedWordExport: transcript.size > 0,
   };
 }
 export function texts(name, paragraphs) {
@@ -317,6 +340,7 @@ export function corpus(name, passages, sources) {
     passages,
     sources: unique(sources),
     metadata: {},
+    participantLinks: { tables: [] },
     unit: "source",
   };
 }

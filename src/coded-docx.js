@@ -4,6 +4,7 @@ import { labelKey } from "./coding.js";
 import { labelAppearance } from "./label-appearance.js";
 import { transcriptIndex } from "./transcript-index.js";
 import { quotationRanges } from "./interview-manual.js";
+import { codingSelection } from "./coding-passages.js";
 
 export function fileStem(value, fallback = "Interview") {
   return (
@@ -37,6 +38,7 @@ function labelRun(label, colours) {
 function codedDocument(dataset, source, colours) {
   const records = dataset.passages.filter((p) => p.source === source);
   const index = transcriptIndex(records);
+  const included = codingSelection(index.originals);
   const labels = [...new Set(records.flatMap((p) => p.codes || []))];
   const definitions = new Map(
     [...(dataset.coding?.meanings || []), ...(dataset.coding?.book || [])]
@@ -74,7 +76,7 @@ function codedDocument(dataset, source, colours) {
       "Heading1",
     ),
   ];
-  for (const p of index.originals) {
+  for (const [i, p] of index.originals.entries()) {
     const located = quotationRanges(index, p);
     const rangedCodes = [];
     for (const { start, end, labels: matched } of located)
@@ -149,7 +151,16 @@ function codedDocument(dataset, source, colours) {
         covering.length ? shade(colours.get(labelKey(covering[0])).colour) : "",
       );
     }
-    doc.push(paragraph(line, "DVCodedPassage"));
+    // A Word bookmark stays with its passage, including when two passages
+    // have identical words. Keep the printed note for people reading the file.
+    const inScope = included.has(p.id);
+    const bookmark = (inScope ? "DVIncluded_" : "DVExcluded_") + i;
+    doc.push(
+      paragraph(
+        `<w:bookmarkStart w:id="${i}" w:name="${bookmark}"/>${line}<w:bookmarkEnd w:id="${i}"/>`,
+        "DVCodedPassage",
+      ),
+    );
     const used = [...new Set([...p.codes, ...rangedCodes.map((r) => r.label)])];
     if (used.length)
       doc.push(
@@ -169,7 +180,7 @@ function codedDocument(dataset, source, colours) {
           "DVLabelNote",
         ),
       );
-    if (p.codingIncluded === false)
+    if (!inScope)
       doc.push(
         paragraph(run("Outside the selected coding passages."), "DVLabelNote"),
       );

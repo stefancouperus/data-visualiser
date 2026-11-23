@@ -1,6 +1,11 @@
 // Keep a chronological record of committed work. The observer is per in-memory
 // project; rereading a saved project starts with its already recorded state.
 import { kinds } from "./analysis.js";
+import {
+  figurePresentation,
+  figureScope,
+  modelDisplayTerm,
+} from "./figure-edits.js";
 import { pairedStatistics, categoricalPattern } from "./tutor-evidence.js";
 
 const observed = new WeakMap();
@@ -24,6 +29,13 @@ export function readWorkLog(log) {
       source: typeof e.source === "string" ? e.source : "",
       title: e.title,
       details: e.details.filter((line) => typeof line === "string"),
+      ...(Array.isArray(e.presentedPanels) && {
+        presentedPanels: [
+          ...new Set(
+            e.presentedPanels.filter((index) => index === 0 || index === 1),
+          ),
+        ],
+      }),
     }));
 }
 export function recordWork(p, d, title, details = []) {
@@ -33,6 +45,7 @@ export function recordWork(p, d, title, details = []) {
     source: d?.name || "",
     title,
     details: details.filter((s) => typeof s === "string" && s.trim()),
+    ...(title.startsWith("Saved comparison ") && { presentedPanels: [0, 1] }),
   });
 }
 function surveyState(d) {
@@ -179,7 +192,8 @@ function textChanges(p, d, old, next) {
     ]);
   }
 }
-export function startProjectLog(p) {
+export function startProjectLog(p, summarise) {
+  if (summarise && p.workLog?.length) refreshSavedFigureLogs(p, summarise);
   observed.set(p, {
     focus: p.researchFocus || "",
     confirmed: [...(p.confirmed || [])],
@@ -230,27 +244,37 @@ export function syncProjectLog(p) {
 }
 const number = (n) =>
   new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(n);
+// Use the same four significant figures as the on-screen coefficient table.
+const modelNumber = (n) => Number(n.toPrecision(4)).toString();
 // Record aggregate outputs exactly as calculated for this view. In particular
 // no chat, individual survey records, point coordinates or excerpts are copied.
-export function describeFigure(a, view = {}) {
+export function describeFigure(a, view = {}, legacy = false) {
   if (!a) return [];
   const lines = [];
-  const rows = a.records || [];
+  const {
+    records: rows,
+    named,
+    field,
+  } = figurePresentation(
+    a,
+    legacy ? { ...view, figureEdits: undefined } : view,
+  );
+  const coefficient = legacy ? number : modelNumber;
   if (a.largestDisplayedDifference) {
     const { pattern, high, low, percentagePoints } =
       a.largestDisplayedDifference;
     lines.push(
-      quote(pattern) +
+      quote(named("groups", pattern)) +
         " differed by " +
         number(percentagePoints) +
         " percentage points between " +
-        quote(high.group) +
+        quote(named("subgroups", high.group)) +
         " (" +
         high.n +
         " of " +
         high.den +
         ") and " +
-        quote(low.group) +
+        quote(named("subgroups", low.group)) +
         " (" +
         low.n +
         " of " +
@@ -260,7 +284,7 @@ export function describeFigure(a, view = {}) {
   } else if (a.themeCounts) {
     const t = a.themeCounts;
     lines.push(
-      quote(t.code) +
+      quote(named("codes", t.code)) +
         " occurred in " +
         count(t.matchingPassages, "original passage") +
         " across " +
@@ -276,13 +300,13 @@ export function describeFigure(a, view = {}) {
         "Fitted " +
           (a.method || "model").toLowerCase() +
           " coefficient for " +
-          quote(c.term) +
+          quote(legacy ? c.term : modelDisplayTerm(c.term, a, view)) +
           ": " +
-          number(c.estimate) +
+          coefficient(c.estimate) +
           " (95% interval " +
-          number(c.low) +
+          coefficient(c.low) +
           " to " +
-          number(c.high) +
+          coefficient(c.high) +
           ").",
       );
   } else if (a.points?.length) {
@@ -298,9 +322,9 @@ export function describeFigure(a, view = {}) {
         "Across " +
           paired.completePairs +
           " paired observations, the linear association between " +
-          quote(a.x) +
+          quote(field("axisX", a.x)) +
           " and " +
-          quote(a.y) +
+          quote(field("axisY", a.y)) +
           " had Pearson’s r = " +
           number(paired.pearsonR) +
           ".",
@@ -314,7 +338,7 @@ export function describeFigure(a, view = {}) {
       }
       lines.push(
         "Across the plotted observations, " +
-          quote(a.y) +
+          quote(field("axisY", a.y)) +
           " ranged from " +
           number(min) +
           " to " +
@@ -325,7 +349,7 @@ export function describeFigure(a, view = {}) {
   } else if (view.chart === "box") {
     for (const r of rows.filter((r) => Number.isFinite(r.median)).slice(0, 3))
       lines.push(
-        quote(r.label) +
+        quote(named("labels", r.label)) +
           " had a median of " +
           number(r.median) +
           " (" +
@@ -349,19 +373,19 @@ export function describeFigure(a, view = {}) {
     if (gap && gap.percentagePointGap > 0) {
       lines.push(
         "The largest observed gap between group shares was for " +
-          quote(gap.label) +
+          quote(named("labels", gap.label)) +
           ": " +
           gap.higher.n +
           " of " +
           gap.higher.den +
           " in " +
-          quote(gap.higher.group) +
+          quote(named("groups", gap.higher.group)) +
           " and " +
           gap.lower.n +
           " of " +
           gap.lower.den +
           " in " +
-          quote(gap.lower.group) +
+          quote(named("groups", gap.lower.group)) +
           " (" +
           number(gap.percentagePointGap) +
           " percentage points).",
@@ -372,7 +396,11 @@ export function describeFigure(a, view = {}) {
     for (const r of rows
       .filter((r) => Number.isFinite(r.n) && !r.undefinedShare)
       .slice(0, gap?.percentagePointGap > 0 ? 0 : 3)) {
-      const label = [r.label, r.group, r.groupValue]
+      const label = [
+        (legacy || !a.groupLabel) && named("labels", r.label),
+        named("groups", r.group),
+        named("subgroups", r.groupValue),
+      ]
         .filter(Boolean)
         .map(quote)
         .join(" · ");
@@ -394,15 +422,131 @@ export function describeFigure(a, view = {}) {
             " — " +
             number(r.value) +
             " " +
-            (a.unit || "observations") +
+            field("unit", a.unit || "observations") +
             ".",
         );
     }
   }
-  if (a.note) lines.push(a.note);
+  if (a.note) lines.push((legacy && a.legacyNote) || a.note);
   return lines;
 }
+const figureEvents = new Set([
+  "Edited a visual",
+  "Explored a visual",
+  "Created a visual with the Data bot",
+  "Confirmed the questions or themes for a visual",
+  "Changed the chart type",
+  "Explored a selection of questions or themes",
+]);
+
+// Older entries with changed counts have no underlying result snapshot. For
+// a matching figure, an exact quoted label can still be replaced while leaving
+// historical numbers intact. An ambiguous label is withheld.
+function repairQuotedLabels(details, start, view) {
+  const aliases = new Map();
+  for (const dim of Object.values(view.figureEdits?.dimensions || {})) {
+    for (const [key, label] of dim?.names || []) {
+      if (typeof key !== "string" || typeof label !== "string") continue;
+      aliases.set(
+        key,
+        aliases.has(key) && aliases.get(key) !== label
+          ? "Label withheld"
+          : label,
+      );
+    }
+  }
+  if (!aliases.size) return false;
+  let changed = false;
+  for (let i = start; i < details.length; i++) {
+    if (/^(Caption:|Student interpretation:|Left:|Right:)/.test(details[i]))
+      break;
+    const revised = details[i].replace(/“([^“”]+)”/g, (match, key) =>
+      aliases.has(key) ? quote(aliases.get(key)) : match,
+    );
+    if (revised !== details[i]) {
+      details[i] = revised;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+// Legacy entries stored prose only. Match the complete original calculation and
+// its owner before updating the generated lines. Never rewrite a student's text
+// or attribute a later calculation to an earlier set of observations.
+function updateFigureEntries(log, dataset, view, analysis, owner, index = 0) {
+  const aliases = view.figureEdits?.scope === figureScope(view);
+  if (!aliases && !analysis.coefficients) return;
+  const original = describeFigure(analysis, view, true);
+  const revised = describeFigure(analysis, view);
+  if (!original.length || (!aliases && equal(original, revised))) return;
+  if (!aliases && !original[0].endsWith(": 0 (95% interval 0 to 0).")) return;
+  for (const e of log) {
+    if (e.dataset !== dataset) continue;
+    let start;
+    if (
+      owner?.view &&
+      e.title === "Saved a visual" &&
+      e.details[0] === "Saved as " + quote(owner.name) + "."
+    )
+      start = 2;
+    else if (owner?.views && e.title === "Saved comparison " + owner.name) {
+      const panel = e.details.indexOf(
+        (index ? "Right: " : "Left: ") + analysis.title,
+      );
+      if (panel < 0) continue;
+      start = panel + 1;
+    } else if (
+      figureEvents.has(e.title) &&
+      e.details[0] ===
+        [kinds[view.chart], analysis.title].filter(Boolean).join(" · ")
+    )
+      start = 1;
+    else continue;
+    const panel = e.title.startsWith("Saved comparison ") ? index : 0;
+    if (e.presentedPanels?.includes(panel)) continue;
+    if (!original.every((line, i) => line === e.details[start + i])) {
+      if (aliases && repairQuotedLabels(e.details, start, view))
+        (e.presentedPanels ||= []).push(panel);
+      continue;
+    }
+    (e.presentedPanels ||= []).push(panel);
+    // A legacy coefficient was rounded to hundredths. Its exact historical
+    // value cannot be recovered from the logged text alone.
+    const details = revised.map((line, i) =>
+      analysis.coefficients && i === 0 && line !== original[0]
+        ? "This historical model estimate and its interval were saved to only two decimal places. Open the saved model for its current coefficient and interval."
+        : line,
+    );
+    e.details.splice(start, original.length, ...details);
+  }
+}
+
+function refreshSavedFigureLogs(p, summarise) {
+  const items = [
+    ...(p.savedVisuals || []),
+    ...(p.saved || []),
+    { dataset: p.active, views: p.views },
+  ];
+  for (const item of items) {
+    const dataset = p.datasets.find((d) => d.id === item.dataset);
+    if (!dataset) continue;
+    const views = item.views || [item.view];
+    for (const [index, view] of views.entries()) {
+      if (!view || (!view.figureEdits && view.task !== "model")) continue;
+      try {
+        const analysis = summarise(dataset, view, index, views);
+        updateFigureEntries(p.workLog, dataset.id, view, analysis, item, index);
+      } catch {
+        // A historic figure can refer to a removed field or an empty selection.
+      }
+    }
+  }
+}
+
 export function recordFigure(p, d, title, view, analysis, name = "") {
+  if (view.figureEdits && p.workLog?.length)
+    updateFigureEntries(p.workLog, d.id, view, analysis);
   recordWork(p, d, title, [
     name && "Saved as " + quote(name) + ".",
     analysis?.title &&
@@ -410,4 +554,6 @@ export function recordFigure(p, d, title, view, analysis, name = "") {
     ...describeFigure(analysis, view),
     view.annotation && "Caption: " + view.annotation,
   ]);
+  if (view.figureEdits || analysis?.coefficients)
+    p.workLog.at(-1).presentedPanels = [0];
 }

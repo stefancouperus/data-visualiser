@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fresh, verifyProject, settingsProject } from "../src/project.js";
 import { makeTable, corpus, texts } from "../src/import.js";
+import { figureScope } from "../src/figure-edits.js";
 import { analyse, newView } from "../src/analysis.js";
 import {
   startProjectLog,
@@ -145,4 +146,91 @@ test("figure log uses quantitative evidence without original answers or excerpts
     { chart: "scatter" },
   );
   assert.match(quantitative.join(" "), /Pearson’s r = 1/);
+});
+
+test("small signed model coefficients keep four significant figures in logged findings", () => {
+  for (const [estimate, low, high, text] of [
+    [
+      0.000942857,
+      0.000480305,
+      0.001405409,
+      "0.0009429 (95% interval 0.0004803 to 0.001405)",
+    ],
+    [-0.0000015, -0.000003, 0, "-0.0000015 (95% interval -0.000003 to 0)"],
+    [0, -2e-10, 2e-10, "0 (95% interval -2e-10 to 2e-10)"],
+  ]) {
+    const a = {
+      method: "Linear regression",
+      coefficients: [{ term: "Budget in euros", estimate, low, high }],
+    };
+    const p = fresh();
+    recordFigure(p, {}, "Saved a visual", { task: "model", chart: "model" }, a);
+    assert.ok(p.workLog[0].details.join(" ").includes(text));
+  }
+});
+
+test("an edited figure's labels carry through grouped patterns and matching historical entries without rewriting student notes", () => {
+  const d = makeTable(
+    [
+      ["Vote", "Campus"],
+      ["Yes", "East"],
+      ["Yes", "East"],
+      ["No", "West"],
+    ],
+    "Survey",
+  );
+  const p = project(d);
+  const v = {
+    task: "patterns",
+    chart: "grid",
+    items: ["c0"],
+    groupBy: "c1",
+    patternMode: "separate",
+  };
+  const a = analyse(d, v);
+  const raw = describeFigure(a, v);
+  const scope = figureScope(v);
+  const row = a.largestDisplayedDifference.pattern;
+  v.figureEdits = {
+    scope,
+    dimensions: {
+      groups: { names: [[row, "Selected answer"]] },
+      subgroups: {
+        names: [
+          ["East", "First site"],
+          ["West", "Second site"],
+        ],
+      },
+    },
+  };
+  const edited = describeFigure(a, v);
+  assert.match(edited[0], /Selected answer/);
+  assert.doesNotMatch(edited[0], /East|West/);
+  p.savedVisuals = [{ dataset: d.id, name: "Workshop figure", view: v }];
+  const old = {
+    at: new Date().toISOString(),
+    dataset: d.id,
+    source: d.name,
+    title: "Saved a visual",
+    details: ["Saved as “Workshop figure”.", "Grid · " + a.title, ...raw],
+  };
+  p.workLog = [
+    old,
+    { ...old, title: "Student finding or note", details: [...raw] },
+  ];
+  startProjectLog(p, (dataset, view) => analyse(dataset, view));
+  assert.deepEqual(old.details.slice(2), edited);
+  assert.deepEqual(p.workLog[1].details, raw);
+  const historical = {
+    ...old,
+    details: [
+      ...old.details.slice(0, 2),
+      ...raw.map((line) => line.replace("2 of 2", "18 of 19")),
+    ],
+  };
+  delete historical.presentedPanels;
+  p.workLog = [historical];
+  startProjectLog(p, (dataset, view) => analyse(dataset, view));
+  assert.match(historical.details.join(" "), /18 of 19/);
+  assert.doesNotMatch(historical.details.join(" "), /East|West/);
 });

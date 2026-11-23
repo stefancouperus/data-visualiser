@@ -9,6 +9,7 @@ import {
 } from "./project-method.js";
 import { includedInterview } from "./coding-passages.js";
 import { editFigure } from "./figure-editor.js";
+import { filterDisplayValue, modelDisplayTerm } from "./figure-edits.js";
 import {
   chooseHelpMode,
   helpSettings,
@@ -128,8 +129,11 @@ import {
   settingsProject,
   renameTheme,
   editInterviewLabel,
-  linkage,
 } from "./project.js";
+import {
+  reviewParticipantLinks,
+  applyParticipantLinks,
+} from "./participant-links.js";
 import { newView, analyse, allCodes, kinds } from "./analysis.js";
 import {
   patternChoices,
@@ -548,9 +552,7 @@ async function checkpointProject(p, verifyPresence = false) {
     const before = recoveryId(p);
     await saveRecovery(p, workspacePosition(p), verifyPresence);
     state.needsSave = false;
-    state.short = isDownloaded(p)
-      ? "Project downloaded"
-      : "Saved on this device";
+    state.short = "Saved on this device";
     state.message = isInterview(p.datasets.find((d) => d.id === p.active))
       ? "Coding progress saved on this device."
       : "Project saved on this device.";
@@ -585,25 +587,40 @@ function clearDownloadedShortcut(p, id) {
 async function afterProjectDownload(p, exported) {
   const id = recoveryId(p);
   const position = workspacePosition(p);
-  const archive = archiveDownload(p, position, exported);
-  if (isDownloaded(p)) clearDownloadedShortcut(p, id);
   try {
-    await archive;
+    // The browser owns the download dialog. Its anchor click does not tell
+    // us whether the user saved the ZIP, cancelled it, or blocked it.
+    await archiveDownload(p, position, exported);
   } catch {
-    // The completed download also works in browsers with restricted storage.
     protectDeparture(p, position);
+    if (p === project) {
+      const state = {
+        needsSave: true,
+        short: "Autosave unavailable · check your download",
+        message: "Check that the ZIP was saved before closing this project.",
+      };
+      codingSaveStatus.set(p, state);
+      saveMessage(p, state);
+      notice(state.message);
+    }
+    return;
   }
   const current = isDownloaded(p);
-  if (current && recoveryId(p) !== id)
-    clearDownloadedShortcut(p, recoveryId(p));
+  if (current) {
+    clearDownloadedShortcut(p, id);
+    if (recoveryId(p) !== id) clearDownloadedShortcut(p, recoveryId(p));
+  }
   if (p === project && current) {
     const state = {
       needsSave: false,
-      short: "Project downloaded",
-      message: "Project downloaded. New edits will be saved on this device.",
+      short: "Saved on this device",
+      message: "Your project is saved in this browser.",
     };
     codingSaveStatus.set(p, state);
     saveMessage(p, state);
+    notice(
+      "ZIP download requested. You can still resume this project on Home.",
+    );
     if (step === 0 && get("coding-copies"))
       showRecentProjects(get("coding-copies"));
   }
@@ -632,11 +649,14 @@ window.addEventListener("beforeunload", (event) => {
 window.addEventListener("pagehide", protectOpenProject);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden && project.datasets.length) checkpointProject(project);
+  if (!document.hidden && step === 0 && get("coding-copies"))
+    showRecentProjects(get("coding-copies"));
 });
 async function showRecentProjects(container) {
+  const method = currentMethod(project);
+  const list = container.querySelector("[data-project-list]");
   try {
-    let entries = await listRecoveries();
-    const method = currentMethod(project);
+    let entries = await listRecoveries({ includeBackups: !method });
     if (method) {
       const matches = await Promise.all(
         entries.map(async (entry) => {
@@ -656,12 +676,20 @@ async function showRecentProjects(container) {
     }
     if (!container.isConnected) return;
     if (!entries.length) {
-      container.replaceChildren();
-      container.hidden = true;
+      if (method) container.hidden = true;
+      else
+        list.innerHTML =
+          "<p>No projects saved here yet. When you add data, your progress will be saved automatically in this browser.</p>";
       return;
     }
-    container.innerHTML =
-      "<h2>Recent projects</h2><p>Saved automatically in this browser. Resume where you left off.</p>" +
+    const firstWithName = new Map();
+    const repeatedNames = new Set();
+    for (const entry of entries) {
+      if (firstWithName.has(entry.name)) repeatedNames.add(entry.name);
+      else firstWithName.set(entry.name, entry.id);
+    }
+    list.innerHTML =
+      "<p>Progress is saved automatically in this browser. Choose a project to pick up where you left off.</p>" +
       entries
         .map((entry) => {
           const attributes = 'data-copy="' + esc(entry.id) + '"';
@@ -672,15 +700,35 @@ async function showRecentProjects(container) {
             entry.source && entry.source !== entry.name
               ? esc(entry.source) + " · "
               : "";
+          const saved = new Date(entry.saved);
+          const timestamp = Number.isFinite(saved.getTime())
+            ? 'Last saved <time datetime="' +
+              saved.toISOString() +
+              '">' +
+              esc(
+                saved.toLocaleString(undefined, {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                }),
+              ) +
+              "</time>"
+            : "Save date unavailable";
           return (
-            '<div class="recent-project"><div><strong>' +
+            '<div class="recent-project"' +
+            (entry.hidden ? ' data-backup-requested="true"' : "") +
+            "><div><strong>" +
             esc(entry.name) +
             "</strong><small>" +
+            (repeatedNames.has(entry.name) &&
+            firstWithName.get(entry.name) === entry.id
+              ? "Most recently saved copy · "
+              : "") +
             (entry.methods?.length === 1
               ? methodLabels[entry.methods[0]] + " · "
               : "") +
             source +
-            esc(new Date(entry.saved).toLocaleString()) +
+            timestamp +
+            (entry.hidden ? " · Backup requested" : "") +
             '</small></div><div class="bar">' +
             b(
               "recoverCoding",
@@ -703,25 +751,21 @@ async function showRecentProjects(container) {
     container.hidden = false;
   } catch {
     if (container.isConnected) {
-      container.innerHTML =
-        "<h2>Recent projects</h2><p>Browser storage is unavailable. Download a project copy before leaving this device.</p>";
+      list.innerHTML =
+        "<p>Browser storage is unavailable. Download a project copy and check that the file was saved before leaving this device.</p>";
       container.hidden = false;
     }
   }
 }
 async function checkpointBeforeSwitch() {
   if (!project.datasets.length) return true;
-  if ((await checkpointProject(project, true)) || isDownloaded(project))
-    return true;
+  if (await checkpointProject(project, true)) return true;
   return !!(await askForm(
     "Keep a copy before leaving",
-    "<p>This browser could not autosave your latest changes. Download a copy to continue on another screen, or close this message to keep working here.</p>",
+    "<p>This browser could not autosave your latest changes. Download the ZIP and check that it is in your downloads before leaving this project.</p>" +
+      b("download", "Download project with data"),
     () => true,
-    "Download project and continue",
-    async () => {
-      await downloadProjectBackup(project);
-      return true;
-    },
+    "I have a saved copy — continue",
   ));
 }
 function home() {
@@ -1005,25 +1049,47 @@ function summary(
   if (v.filter) {
     const field = d.fields?.find((f) => f.id === v.filter);
     const label = field?.label || (v.filter === "source" ? "Source" : v.filter);
-    if (v.value === "")
-      result.note += " Filtered to blank answers for " + label + ".";
-    else if (field?.type === "multiple")
-      result.note +=
-        " Filtered to records that selected “" +
-        v.value +
-        "” for " +
-        label +
-        ".";
-    else result.note += " Filtered by " + label + " = “" + v.value + "”.";
+    const value = filterDisplayValue(d, v, result);
+    const filterNote = (display) =>
+      v.value === ""
+        ? " Filtered to blank answers for " + label + "."
+        : field?.type === "multiple"
+          ? " Filtered to records that selected “" +
+            display +
+            "” for " +
+            label +
+            "."
+          : " Filtered by " + label + " = “" + display + "”.";
+    if (result.legacyNote || value !== v.value)
+      result.legacyNote =
+        (result.legacyNote || result.note) + filterNote(v.value);
+    result.note += filterNote(value);
   } else if (comparedViews.some((view) => view.filter)) {
     result.note += " No subgroup filter on this view.";
+    if (result.legacyNote)
+      result.legacyNote += " No subgroup filter on this view.";
   }
-  if (d.rules?.length) result.note += " Project exclusions apply.";
+  if (d.rules?.length) {
+    result.note += " Project exclusions apply.";
+    if (result.legacyNote) result.legacyNote += " Project exclusions apply.";
+  }
   return result;
 }
 function modelSummary(d, v) {
   const rows = filteredRows(d, v),
     m = fitModel(d, rows, { ...v, predictors: v.predictors || [] });
+  const baseNote =
+    m.n +
+    " complete records · " +
+    m.excluded +
+    " excluded." +
+    (m.held ? " Held at " + m.held + "." : "");
+  let reference = m.reference;
+  if (!m.numericalPredictor && m.predictions.length && v.figureEdits) {
+    const first = m.predictor + " = " + m.predictions[0].label;
+    if (reference.startsWith(first))
+      reference = modelDisplayTerm(first, m, v) + reference.slice(first.length);
+  }
   return {
     ...m,
     title:
@@ -1032,13 +1098,10 @@ function modelSummary(d, v) {
     x: m.predictor,
     y: m.event ? "Probability of " + m.event : "Predicted outcome",
     unit: "95% confidence interval",
-    note:
-      m.n +
-      " complete records · " +
-      m.excluded +
-      " excluded." +
-      (m.held ? " Held at " + m.held + "." : "") +
-      (m.reference ? " Reference: " + m.reference + "." : ""),
+    note: baseNote + (reference ? " Reference: " + reference + "." : ""),
+    ...(reference !== m.reference && {
+      legacyNote: baseNote + " Reference: " + m.reference + ".",
+    }),
     records: [],
   };
 }
@@ -1053,7 +1116,7 @@ function draw(i, logTitle) {
       table(
         ["Term", "Estimate", "95% lower", "95% upper"],
         a.coefficients.map((c) => [
-          c.term,
+          modelDisplayTerm(c.term, a, v),
           ...[c.estimate, c.low, c.high].map((x) => x.toPrecision(4)),
         ]),
       ) +
@@ -1322,7 +1385,9 @@ function setProject(p, saved, target, selectedMethod) {
     activate(choices[0].id);
   if (getData() && project.views.length !== 2) activate(project.active);
   resetTutor();
-  startProjectLog(project);
+  startProjectLog(project, (dataset, view, index, views) =>
+    summary(index, view, dataset, views),
+  );
   if (saved) {
     lastPosition.set(project, saved.workspace);
     resumeRecovery(project, saved.entry, saved.workspace);
@@ -1357,7 +1422,7 @@ async function openProjectFile(file) {
     project.datasets.length &&
     !(await askForm(
       "Switch projects?",
-      "<p>Your current project will stay in Recent projects on Home.</p>",
+      "<p>Your current project will stay under Projects on this device on Home.</p>",
       () => true,
       "Open saved project",
     ))
@@ -2950,47 +3015,62 @@ async function reviewAction(act, d, el) {
     );
     if (!tid) return;
     const t = tables.find((x) => x.id === tid);
+    const savedLink = d.participantLinks?.tables.find(
+      (link) => link.id === t.id,
+    );
     const key = await askForm(
       "Choose a unique identifier",
       formselect(
         "key",
         "Identifier column",
         t.fields.map((f) => [f.id, f.label]),
+        savedLink?.key,
       ),
       () => val("key"),
     );
     if (!key) return;
+    const { identifiers, matches, previousValues } = reviewParticipantLinks(
+      d,
+      t,
+      key,
+    );
     modal(
       "Review source matches",
-      `<p>Leave a source unmatched to keep it available for separate exploration.</p>` +
+      `<p>Choose Unmatched to remove this table’s information from an interview. You can still explore its passages.</p>` +
         d.sources
           .map((s, i) =>
             formselect(
               "map" + i,
               s,
-              [
-                ["", "Unmatched"],
-                ...[
-                  ...new Set(
-                    filteredRows(t)
-                      .map((r) => r[key])
-                      .filter(Boolean),
-                  ),
-                ],
-              ],
-              s,
+              [["", "Unmatched"], ...identifiers],
+              matches[s],
             ),
           )
-          .join(""),
+          .join("") +
+        (previousValues.length
+          ? "<details open><summary>Check existing values from an older project</summary><p>Tick the values that came from this table. Matching values are ticked for you. Leave independently entered values unticked to keep them after unlinking.</p>" +
+            previousValues
+              .map(
+                ({ source, field, value, suggested }, i) =>
+                  `<label class="tick"><input type="checkbox" id="old-link-${i}" ${suggested ? "checked" : ""}> ${esc(source)} · ${esc(field)} · ${esc(value)}</label>`,
+              )
+              .join("") +
+            "</details>"
+          : ""),
       () => {
         const m = Object.fromEntries(
           d.sources.map((s, i) => [s, val("map" + i)]),
         );
-        const joined = linkage(d, t, key, m);
-        for (const [source, attributes] of Object.entries(joined))
-          d.metadata[source] = { ...d.metadata[source], ...attributes };
+        const count = applyParticipantLinks(
+          d,
+          t,
+          key,
+          m,
+          previousValues.filter((_, i) => get("old-link-" + i).checked),
+          tables.map((table) => table.id),
+        );
         render();
-        notice(Object.keys(joined).length + " sources linked.");
+        notice(count + " sources linked.");
       },
     );
     return;
@@ -3890,6 +3970,14 @@ async function action(act, el) {
             );
           if (route === "participant-information") {
             if (!isInterview(d) || getData() !== d) return;
+            // A newly imported table cannot have supplied an older project's
+            // existing values. Only tables already in that file can have done so.
+            d.participantLinks ??= {
+              tables: [],
+              legacyTables: project.datasets
+                .filter((d) => d.kind === "table")
+                .map((d) => d.id),
+            };
             for (const t of datasets) t.purpose = "participant-information";
             project.datasets.push(...datasets);
             goto(1);
@@ -4596,7 +4684,7 @@ async function action(act, el) {
       }
       notice(
         stored
-          ? "Saved in Recent projects on Home."
+          ? "Saved under Projects on this device on Home."
           : "A copy was saved in this browser.",
       );
       return;
@@ -4605,7 +4693,7 @@ async function action(act, el) {
       if (
         await askForm(
           "Remove this recovery copy?",
-          "<p>This removes the autosaved project from Recent projects in this browser. Downloaded projects and your open workspace are kept.</p>",
+          "<p>This deletes the saved copy from this browser. Any ZIP files you have downloaded stay on your device.</p>",
           () => true,
           "Remove copy",
         )
@@ -4628,7 +4716,7 @@ async function action(act, el) {
         project.datasets.length &&
         !(await askForm(
           "Switch projects?",
-          "<p>Your current project will stay in Recent projects.</p>",
+          "<p>Your current project will stay under Projects on this device on Home.</p>",
           () => true,
           method === "interview" ||
             (saved.entry.kind === "coding" && method !== "survey")
@@ -4646,7 +4734,7 @@ async function action(act, el) {
         project.datasets.length &&
         !(await askForm(
           "Switch projects?",
-          "<p>Your current project will stay in Recent projects.</p>",
+          "<p>Your current project will stay under Projects on this device on Home.</p>",
           () => true,
           "Resume saved copy",
         ))

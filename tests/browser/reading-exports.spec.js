@@ -2,7 +2,9 @@ import { backupContents } from "./backup-helpers.js";
 import { test, expect } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { unzipSync, strFromU8 } from "fflate";
+import { unzipSync, strFromU8, strToU8, zipSync } from "fflate";
+import { codedInterviewDownload } from "../../src/coded-docx.js";
+import { analyse } from "../../src/analysis.js";
 async function downloadBytes(download) {
   const parts = [];
   for await (const chunk of await download.createReadStream())
@@ -62,7 +64,6 @@ test("a transcript folder can be imported, expanded with another folder, and sha
 test("a shared coloured Word interview reopens with overlapping comment labels anchored to the same original", async ({
   page,
 }) => {
-  const { codedInterviewDownload } = await import("../../src/coded-docx.js");
   const data = {
     name: "Transport",
     kind: "text",
@@ -121,6 +122,80 @@ test("a shared coloured Word interview reopens with overlapping comment labels a
     ["the bus", "Bus use"],
   ]);
 });
+
+for (const legacy of [false, true]) {
+  test(
+    (legacy ? "older" : "new") +
+      " coded Word files keep an excluded passage out of theme counts",
+    async ({ page }) => {
+      const source = "Dee";
+      const passages = [
+        { text: "The fee rose.", codes: ["Cost"] },
+        { text: "The fee rose.", codes: ["Cost"], codingIncluded: false },
+        {
+          text: "Interviewer: Can you elaborate?",
+          codes: [],
+          codingIncluded: true,
+        },
+        { text: "Outside the selected coding passages.", codes: [] },
+      ].map((p, i) => ({ ...p, id: "p" + i, source }));
+      const data = {
+        name: "Travel costs",
+        kind: "text",
+        sources: [source],
+        passages,
+        interviews: {},
+      };
+      const view = {
+        task: "one",
+        chart: "bars",
+        x: "Cost",
+        measure: "passages",
+      };
+      expect(analyse(data, view).themeCounts.matchingPassages).toBe(1);
+      const { blob, name } = codedInterviewDownload(data, data.sources);
+      let bytes = new Uint8Array(await blob.arrayBuffer());
+      if (legacy) {
+        // Prior exports only retained the printed, styled exclusion note.
+        const files = unzipSync(bytes);
+        const document = strFromU8(files["word/document.xml"]).replace(
+          /<w:bookmark(?:Start|End)\b[^>]*\/>/g,
+          "",
+        );
+        files["word/document.xml"] = strToU8(document);
+        bytes = zipSync(files);
+      }
+      const button = (label) =>
+        page.getByRole("button", { name: label, exact: true });
+      await page.goto("/");
+      const files = page.waitForEvent("filechooser");
+      await button("Upload coded interviews").click();
+      await (
+        await files
+      ).setFiles({ name, mimeType: blob.type, buffer: Buffer.from(bytes) });
+      await button("Continue").click();
+      await button("Continue").click();
+      await expect(page.locator(".iv-paper")).toContainText(
+        (legacy ? 2 : 3) + " of 4 passages included for coding",
+      );
+      await button("Choose passages for coding").click();
+      const choices = page.getByRole("dialog");
+      await expect(choices.getByLabel(/Passage 1/)).toBeChecked();
+      await expect(choices.getByLabel(/Passage 2/)).not.toBeChecked();
+      // The same words as the legacy note can be part of a genuine answer.
+      await expect(choices.getByLabel(/Passage 4/)).toBeChecked();
+      if (!legacy) await expect(choices.getByLabel(/Passage 3/)).toBeChecked();
+      await button("Save passage selection").click();
+      const save = page.waitForEvent("download");
+      await button("Save coding project").click();
+      const restored = backupContents(await downloadBytes(await save))
+        .datasets[0];
+      expect(restored.passages[1].codes).toEqual(["Cost"]);
+      expect(restored.passages[1].codingIncluded).toBe(false);
+      expect(analyse(restored, view).themeCounts.matchingPassages).toBe(1);
+    },
+  );
+}
 
 test("a downloaded survey report opens as an offline document with its filtered chart", async ({
   page,

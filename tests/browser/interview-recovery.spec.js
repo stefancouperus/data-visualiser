@@ -116,15 +116,22 @@ test("interview recovery checkpoints a failed batch, reviewer decisions and manu
   await button(page, "Apply reviewed coding").click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.reload();
-  await button(page, "Resume coding project").click();
+  // Reopening the ZIP created a separate working copy. Home also retains the
+  // original pre-application draft.
+  const latest = page
+    .locator(".recent-project")
+    .filter({ hasText: "Most recently saved copy" });
+  await latest.getByRole("button", { name: "Resume coding project" }).click();
   await expect(button(page, "Review suggested coding")).toHaveCount(0);
   await expect(
     page.locator(".iv-passage").first().locator(":scope > div > .iv-chip"),
   ).toHaveText(["Fares", "Delays"]);
   await button(page, "Home").click();
-  await button(page, "Remove recovery copy").click();
+  await latest.getByRole("button", { name: "Remove recovery copy" }).click();
   await button(page, "Remove copy").click();
-  await expect(button(page, "Resume coding project")).toHaveCount(0);
+  await expect(button(page, "Resume coding project")).toHaveCount(1);
+  await button(page, "Resume coding project").click();
+  await expect(button(page, "Review suggested coding")).toBeVisible();
 });
 test("blocked browser recovery storage gives an actionable message and leaves portable coding available", async ({
   page,

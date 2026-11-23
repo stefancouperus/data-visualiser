@@ -4,7 +4,7 @@ import {
 } from "./survey-answers.js";
 import { readFocus } from "./research-focus.js";
 import { readTutorHistory } from "./tutor-history.js";
-import { filteredRows } from "./import.js";
+export { linkage } from "./participant-links.js";
 import { passageUnits } from "./transcript-index.js";
 import { applyAnswerLabels } from "./survey-labels.js";
 import { interviews, sharedBook, pruneEmptyQuotations } from "./interviews.js";
@@ -286,17 +286,20 @@ export function reattach(settings, actual) {
     throw Error(
       "Import all original datasets first, then reopen this settings file.",
     );
-  const seen = new Set();
+  const restoredIds = new Map();
   const datasets = settings.datasets.map((saved) => {
     const choices = actual.filter(
-      (d) => d.kind === saved.kind && d.name === saved.name && !seen.has(d.id),
+      (d) =>
+        d.kind === saved.kind &&
+        d.name === saved.name &&
+        !restoredIds.has(d.id),
     );
     if (choices.length !== 1)
       throw Error(
         "Import matching files first. Could not uniquely match " + saved.name,
       );
     const d = structuredClone(choices[0]);
-    seen.add(d.id);
+    restoredIds.set(d.id, saved.id);
     d.id = saved.id;
     d.unit = saved.unit;
     if (saved.purpose) d.purpose = saved.purpose;
@@ -352,27 +355,17 @@ export function reattach(settings, actual) {
     }
     return d;
   });
-  return { ...settings, settingsOnly: false, datasets };
-}
-export function linkage(d, t, key, mapping) {
-  if (d.kind !== "text" || t.kind !== "table")
-    throw Error("Choose a text collection and a table.");
-  const index = new Map();
-  for (const row of filteredRows(t)) {
-    const k = row[key];
-    if (!k) continue;
-    if (index.has(k)) throw Error("Repeated identifier in the table: " + k);
-    index.set(k, row);
-  }
-  const attrs = {};
-  for (const s of d.sources) {
-    const row = index.get(mapping[s]);
-    if (row)
-      attrs[s] = Object.fromEntries(
-        t.fields.filter((f) => f.id !== key).map((f) => [f.label, row[f.id]]),
+  for (const d of datasets) {
+    const state = d.participantLinks;
+    if (!state) continue;
+    for (const table of state.tables)
+      table.id = restoredIds.get(table.id) || table.id;
+    if (state.legacyTables)
+      state.legacyTables = state.legacyTables.map(
+        (id) => restoredIds.get(id) || id,
       );
   }
-  return attrs;
+  return { ...settings, settingsOnly: false, datasets };
 }
 export function renameTheme(project, d, old, name, undoViews) {
   if (!old || !name) throw Error("Choose an existing code and enter a label.");

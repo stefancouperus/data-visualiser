@@ -14,6 +14,7 @@ import {
   readIndicators,
 } from "./indicator-ui.js";
 export function taguette(doc) {
+  if (doc.codedWordExport) return [];
   const merged = doc.paragraphs.join("\n"),
     matches = [
       ...merged.matchAll(/(?:^|\n)Document:\s*([^\n]+?)\s*Tags:\s*([^\n]*)/gi),
@@ -117,7 +118,7 @@ async function documents(docs, route) {
   if (route === "text")
     return corpus(
       docs.length === 1 ? docs[0].name : "Written sources",
-      docs.flatMap((d) => texts(d.name, d.paragraphs)),
+      docs.flatMap(documentPassages),
       docs.map((d) => d.name),
     );
   const tagged = docs.map(taguette);
@@ -226,10 +227,9 @@ async function documents(docs, route) {
     if (doc.codedWordExport && !mapped.open) {
       // Word comments can overlap. Reattach them to the actual transcript
       // paragraph so importing a shared document counts that passage once.
-      const entries = doc.paragraphs.map((text, i) => {
-        const [original] = texts(doc.name, [text]);
+      const entries = documentPassages(doc).map((original, i) => {
         const start = doc.paragraphStarts[i];
-        return { original, start, end: start + text.length };
+        return { original, start, end: start + original.text.length };
       });
       for (const { original, start, end } of entries) {
         passages.push(original);
@@ -307,8 +307,16 @@ async function documents(docs, route) {
       }
       if (cursor < end) addText(text.slice(cursor - start), cursor);
     }
-    for (const part of parts.sort((a, b) => a.start - b.start))
+    let paragraphIndex = 0;
+    for (const part of parts.sort((a, b) => a.start - b.start)) {
+      if (doc.codedWordExport) {
+        while (doc.paragraphStarts[paragraphIndex + 1] <= part.start)
+          paragraphIndex++;
+        if (doc.paragraphScope[paragraphIndex] !== undefined)
+          part.codingIncluded = doc.paragraphScope[paragraphIndex];
+      }
       passages.push(part);
+    }
   }
   const result = corpus(
     docs.length === 1 ? docs[0].name : "Coded interviews",
@@ -319,6 +327,12 @@ async function documents(docs, route) {
     docs.map((d) => [d.name, d.paragraphs.join("\n\n")]),
   );
   return result;
+}
+function documentPassages(doc) {
+  const originals = texts(doc.name, doc.paragraphs);
+  for (const [i, included] of (doc.paragraphScope || []).entries())
+    if (included !== undefined) originals[i].codingIncluded = included;
+  return originals;
 }
 export async function importFiles(files, route) {
   const datasets = [],

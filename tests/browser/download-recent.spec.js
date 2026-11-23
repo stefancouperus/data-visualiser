@@ -37,10 +37,12 @@ async function fullDownload(page) {
 const recent = (page, name) =>
   page.locator(".recent-project").filter({ hasText: name });
 
-test("a full download clears only that recent project and its pinned shortcut, also after Back and refresh", async ({
+test("Home keeps a dated device copy after export while the workspace picker omits it", async ({
   page,
 }) => {
   await page.goto("/");
+  const devices = page.getByRole("region", { name: "Projects on this device" });
+  await expect(devices).toContainText("No projects saved here yet");
   await openSurvey(page, "Living costs");
   await button(page, "Home").click();
   await openSurvey(page, "Student travel");
@@ -49,13 +51,80 @@ test("a full download clears only that recent project and its pinned shortcut, a
   await button(page, "Save on this device").click();
   await fullDownload(page);
   await button(page, "Compare").click();
-  await button(page, "Home").click();
+  await button(page, "Upload").click();
   await expect(recent(page, "Living costs")).toBeVisible();
   await expect(recent(page, "Student travel")).toHaveCount(0);
+  await button(page, "Home").click();
+  await expect(recent(page, "Living costs")).toBeVisible();
+  await expect(recent(page, "Student travel")).toContainText("Last saved");
+  await expect(recent(page, "Student travel").locator("time")).toHaveAttribute(
+    "datetime",
+    /^\d{4}-\d\d-/,
+  );
   await expect(button(page, "Resume on this device")).toHaveCount(0);
   await page.reload();
   await expect(recent(page, "Living costs")).toBeVisible();
-  await expect(recent(page, "Student travel")).toHaveCount(0);
+  await expect(recent(page, "Student travel")).toBeVisible();
+});
+
+test("cancelling the browser download preserves the figure and recoverable project after a fresh tab", async ({
+  page,
+  context,
+  browserName,
+}) => {
+  test.skip(
+    browserName !== "chromium",
+    "The browser download refusal is triggered through Chrome DevTools.",
+  );
+  const name = "Cancelled student backup";
+  await page.goto("/");
+  await openSurvey(page, name);
+  await button(page, "Save visual").click();
+  await page.getByLabel("Visual name").fill("Figure before cancellation");
+  await button(page, "Save to project").click();
+  await button(page, "Save and export").click();
+  const client = await context.newCDPSession(page);
+  const { targetInfo } = await client.send("Target.getTargetInfo");
+  await client.send("Browser.setDownloadBehavior", {
+    behavior: "deny",
+    browserContextId: targetInfo.browserContextId,
+    eventsEnabled: true,
+  });
+  const started = page.waitForEvent("download");
+  await button(page, "Download project with data").click();
+  expect(await (await started).failure()).toMatch(/cancel|denied/i);
+  await button(page, "Home").click();
+  await expect(recent(page, name)).toContainText("Last saved");
+  await page.close();
+  const reopened = await context.newPage();
+  await reopened.goto("/");
+  await recent(reopened, name)
+    .getByRole("button", { name: "Resume project" })
+    .click();
+  await button(reopened, "Save and export").click();
+  await expect(
+    reopened.getByText("Figure before cancellation", { exact: true }),
+  ).toBeVisible();
+});
+
+test("a requested backup cannot bypass the warning when browser storage is unavailable", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "indexedDB", {
+      get() {
+        throw new Error("Storage unavailable");
+      },
+    });
+  });
+  await page.goto("/");
+  await openSurvey(page, "Restricted browser");
+  await fullDownload(page);
+  await button(page, "Home").click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("check that it is in your downloads");
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(button(page, "Download project with data")).toBeVisible();
 });
 
 test("a new edit after downloading is recoverable and its previous backup remains unchanged", async ({
@@ -91,7 +160,7 @@ test("a Word report alone leaves the working project in Recent projects", async 
   await expect(recent(page, "Study routes")).toBeVisible();
 });
 
-test("navigating an older open tab does not revive a downloaded project, while its next figure is recoverable", async ({
+test("older tabs keep the backup copy available while their next edit becomes separately recoverable", async ({
   page,
   context,
 }) => {
@@ -113,12 +182,13 @@ test("navigating an older open tab does not revive a downloaded project, while i
   );
   await fullDownload(page);
   await expect(page.locator("#autosave-status")).toHaveText(
-    "Project downloaded",
+    "Saved on this device",
   );
   await button(other, "Check").click();
   await button(other, "Home").click();
   await expect(recent(other, "Unrelated survey")).toBeVisible();
-  await expect(recent(other, name)).toHaveCount(0);
+  await expect(recent(other, name)).toHaveCount(1);
+  await expect(recent(other, name)).toContainText("Backup requested");
   await other.goBack();
   await button(other, "Explore").click();
   await button(other, "Save visual").click();
@@ -126,6 +196,7 @@ test("navigating an older open tab does not revive a downloaded project, while i
   await button(other, "Save to project").click();
   await button(other, "Home").click();
   await recent(other, name)
+    .and(other.locator(":not([data-backup-requested])"))
     .getByRole("button", { name: "Resume project", exact: true })
     .click();
   await button(other, "Save and export").click();

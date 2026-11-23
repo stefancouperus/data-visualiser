@@ -160,3 +160,47 @@ export function figurePresentation(a, v, editing = false) {
   }
   return { edits, dimensions, named, field, order, records };
 }
+
+// A filter can use a different question with the same answer text. Only use
+// aliases belonging to the filtered variable, never a global string replacement.
+export function filterDisplayValue(dataset, view, analysis) {
+  const value = view.value;
+  if (!view.figureEdits || !value) return value;
+  let dimension;
+  if (view.filter === view.groupBy) dimension = "subgroups";
+  else if (dataset.kind === "text" && view.filter === "source") {
+    if (view.chart === "excerpts") dimension = "sources";
+    else if (view.task === "group" || view.patternMode === "sources")
+      dimension = "groups";
+    else if (view.task === "one") dimension = "labels";
+  } else if (dataset.kind === "table") {
+    if (view.task === "model" && view.filter === view.predictors?.[0])
+      dimension = "predictions";
+    else if (view.filter === view.z) dimension = "series";
+    else if (view.filter === view.x) dimension = "labels";
+    else if (view.filter === view.y)
+      dimension = view.chart === "box" ? "labels" : "groups";
+  }
+  return dimension
+    ? figurePresentation(analysis, view).named(dimension, value)
+    : value;
+}
+
+// The model uses the first predictor for the editable horizontal categories.
+// Other predictors may contain identically named levels and retain their labels.
+export function modelDisplayTerm(term, model, view) {
+  const prefix = model.predictor + " = ";
+  if (!view.figureEdits || model.numericalPredictor || !term.startsWith(prefix))
+    return term;
+  const value = term.slice(prefix.length);
+  const { named } = figurePresentation(model, view);
+  const exact = named("predictions", value);
+  if (exact !== value) return prefix + exact;
+  const level = (model.predictions || [])
+    .map((prediction) => prediction.label)
+    .filter((label) => value.startsWith(label + " × "))
+    .sort((a, b) => b.length - a.length)[0];
+  return level
+    ? prefix + named("predictions", level) + value.slice(level.length)
+    : term;
+}

@@ -48,8 +48,8 @@ function tracker(project) {
   return copies.get(project);
 }
 export const recoveryId = (p) => tracker(p).id;
-// A completed download clears the project from Recent projects. Browser
-// navigation and the transcript reading position do not create new work.
+// Requesting a backup hides this version from the in-workspace project picker.
+// Home lists every device copy, including these and those from earlier releases.
 export function downloadedContent(p) {
   return JSON.stringify({
     ...p,
@@ -303,13 +303,13 @@ async function restoreJournals() {
     clearJournal(record);
   }
 }
-export async function listRecoveries() {
+export async function listRecoveries({ includeBackups = false } = {}) {
   const db = await openDatabase();
   await restoreJournals();
   return (
     await read(db.transaction("summaries").objectStore("summaries").getAll())
   )
-    .filter((entry) => !entry.hidden)
+    .filter((entry) => includeBackups || !entry.hidden)
     .sort((a, b) => b.saved - a.saved);
 }
 export async function loadRecovery(id) {

@@ -38,7 +38,7 @@ export function landing(local, method = "") {
     <section class="project-open" id="project-drop" aria-label="Open a saved project">
       <div class="action-row">${b("open", icon("project") + " Open a saved project")}${local ? b("deviceOpen", "Resume on this device", "plain") : ""}</div>
       <small>Choose your project ZIP or an earlier JSON file. You can also drop it here.</small></section>
-    <section class="card" id="coding-copies" hidden></section>
+    <section class="card" id="coding-copies" aria-labelledby="device-projects-heading"><h2 id="device-projects-heading">${method ? "Recent projects" : "Projects on this device"}</h2><div data-project-list><p>Checking this browser for saved projects…</p></div></section>
     <div class="choices">
       ${
         canImport(method, "survey")
