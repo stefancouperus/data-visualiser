@@ -6,7 +6,12 @@ import {
   saveHelpMode,
 } from "./bot-help.js";
 import { structuredAnswer } from "./bot-response.js";
-import { isInterview, interviews, appendInterviews } from "./interviews.js";
+import {
+  isInterview,
+  interviews,
+  appendInterviews,
+  sharedBook,
+} from "./interviews.js";
 import {
   listCodingCopies,
   loadCodingCopy,
@@ -335,6 +340,8 @@ function botChat() {
     panel: focusIndex(),
     both: step === 3 && botFocus === "both",
   };
+  const draft = step === 1 && dataset?.interviews?.draft;
+  const reviewReady = draft && draft.next === draft.total && draft.total > 0;
   const messages = history
     .map(
       (t) =>
@@ -347,7 +354,17 @@ function botChat() {
     ${captionDraft ? b("applycaption", "Add caption to figure") : ""}
     ${chosen.size || scope.length ? `<div class="bot-included"><small>Included with your message · ${chosen.size} selected passages · ${scope.length} whole sources</small>${b("clearevidence", "Clear included text", "plain")}</div>` : ""}
     <textarea id="question" rows="2" aria-label="Ask about your project" maxlength="4000" placeholder="Ask about your project…">${esc(lastQuestion)}</textarea><div class="bar">${b("send", "Send", "primary", requesting ? "disabled" : "")}</div></section>
-    ${requesting ? "" : helpSuggestion(project.mode, context)}
+    ${
+      reviewReady
+        ? '<div class="bot-hint" role="status"><span>Coding draft ready · ' +
+          draft.matches.length +
+          " new suggested matches</span>" +
+          b("iv-review", "Check the suggested labels", "primary") +
+          "</div>"
+        : requesting
+          ? ""
+          : helpSuggestion(project.mode, context)
+    }
     <details class="bot-extras" data-chart-options="bot-extras"><summary>Chat tools</summary>${botWorkspaceControls()}
     <div class="bar">${dataset?.kind === "table" ? b("variables", "Identify question roles") : ""}${project.researchFocus && [2, 3].includes(step) ? b("researchsuggest", "Suggest what to explore") : ""}${b("scope", "What the bot can see")}</div>
     ${
@@ -2670,7 +2687,7 @@ async function handleInterview(act, el, d) {
           question:
             context.guide.mode === "deductive"
               ? "Check every supplied passage against each approved code, including when the speaker expresses its meaning in different words. For each supported assignment give the exact passage ID, an exact verbatim quotation and a reason. Check for a separate second meaning within the per-passage limit. Leave unsupported passages uncoded."
-              : "Assign the best supported codes to the supplied passages for student review. Return exact quotations.",
+              : "Read to the end of every supplied passage. Consider later answers, exceptions and differences between speakers in light of the research focus. Reuse labels for the same meaning and propose a distinct label for a different, well-supported idea within the supplied limits. Quote the participant’s exact words for every proposed assignment.",
           context,
         }),
       ).suggestions,
@@ -3303,37 +3320,84 @@ async function action(act, el) {
       }
       if (
         isInterview(d) &&
-        (step === 1 ||
-          /(?:whole|entire|this|my|the) (?:transcript|interview)\b/i.test(q)) &&
-        (requestsCoding(q) ||
-          /\bcode (?:this |the |my |whole |entire )*(?:interview|transcript)\b/i.test(
-            q,
-          ))
+        (step === 1 || /\b(?:transcripts?|interviews?)\b/i.test(q)) &&
+        requestsCoding(q)
       ) {
         if (step !== 1) goto(1);
         const s = interviews(d);
         history.push({ role: "user", content: q });
         lastQuestion = "";
-        if (!s.established && !s.method) s.method = "inductive";
-        const command = s.draft
-          ? s.draft.next === s.draft.total
-            ? "iv-review"
-            : "iv-resume"
-          : s.established
-            ? "iv-auto"
-            : s.method === "book"
-              ? "iv-book"
-              : "iv-sample";
-        history.push({
-          role: "assistant",
-          content: s.draft
-            ? "Open your coding draft to continue."
-            : s.established
-              ? "Choose Send this interview to have me match passages to your shared codebook."
-              : "Choose the material you want me to use to establish the labels.",
-        });
+        const explicitAll =
+          /\b(?:all(?:\s+of)?|both|each|every)(?:\s+(?:my|our|the|these|those|loaded|uploaded|\d+|three|two))*\s+(?:interviews?|transcripts?)\b/i.test(
+            q,
+          );
+        const interviewScope = explicitAll
+          ? "all"
+          : /\b(?:interviews|transcripts)\b/i.test(q)
+            ? "selected"
+            : "current";
+        const useBook =
+          /\b(?:deductiv\w*|code\s?book|pre[- ]?defined|approved|existing)\b|\b(?:apply|use|assign)\b.{0,30}\b(?:codes?|labels?|them)\b/i.test(
+            q,
+          );
+        const discover =
+          /\b(?:new|additional|fresh) (?:labels?|codes?|themes?)\b/i.test(q) ||
+          (!useBook &&
+            /\binductiv\w*\b|\b(?:suggest|develop|come up with|propose|generate)\b.{0,35}\b(?:labels?|codes?|themes?)\b/i.test(
+              q,
+            ));
+        let command, reply;
+        if (s.draft) {
+          command = s.draft.next === s.draft.total ? "iv-review" : "iv-resume";
+          reply =
+            "Your existing draft is ready to review or continue. It keeps the interviews you chose when you started it.";
+        } else if (s.established && discover) {
+          command = "iv-sample";
+          reply =
+            "Choose passages to look for additional labels. I'll use your shared labels where they fit. You can review each proposal before changing the codebook.";
+        } else if (s.established) {
+          command = "iv-auto";
+          reply =
+            "Choose which interviews I should code with your shared labels. You can check each quotation before applying it.";
+        } else if (useBook && sharedBook(d).length) {
+          const labels = sharedBook(d)
+            .map((entry) => esc(entry.label))
+            .join(", ");
+          const confirmed = await askForm(
+            "Use these labels as your shared codebook?",
+            "<p>" +
+              labels +
+              "</p><p>Next you can choose which interviews to check for these labels.</p>",
+            () => true,
+            "Confirm shared codebook",
+          );
+          if (!confirmed || getData() !== d) {
+            render();
+            return;
+          }
+          await handleInterview("iv-establish", el, d);
+          command = "iv-auto";
+          reply =
+            "Choose which interviews I should check for the labels you confirmed.";
+        } else if (!discover && (s.method === "book" || useBook)) {
+          s.method = "book";
+          command = "iv-book";
+          reply =
+            "Upload your codebook and check the extracted labels. Then choose the interviews you want me to code.";
+        } else {
+          s.method = "inductive";
+          command = "iv-sample";
+          reply =
+            "Choose the interviews and passages I should read to suggest labels. You can review the labels and their supporting quotations together.";
+        }
+        history.push({ role: "assistant", content: reply });
         render();
-        await handleInterview(command, el, d);
+        if (command)
+          await handleInterview(
+            command,
+            { dataset: { scope: interviewScope } },
+            d,
+          );
         return;
       }
       if (d?.kind === "text") {

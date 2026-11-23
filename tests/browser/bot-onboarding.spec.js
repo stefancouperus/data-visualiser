@@ -182,3 +182,47 @@ test("an expired workshop session returns to the code prompt", async ({
   await expect(panel.locator("#course")).toBeFocused();
   await expect(panel.locator("#question")).toHaveCount(0);
 });
+
+test("interview coding requests in chat open the requested scope for confirmation", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  const requests = [];
+  await page.route(gateway + "/ask", (route) => {
+    requests.push(route.request().postDataJSON());
+    return route.fulfill({ json: { answer: '{"suggestions":[]}' } });
+  });
+  await page.goto("/");
+  const picker = page.waitForEvent("filechooser");
+  await page
+    .getByRole("button", { name: /Upload uncoded transcripts/ })
+    .click();
+  await (
+    await picker
+  ).setFiles(
+    ["River", "Forest", "Coast"].map((name) => ({
+      name: name + ".txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("We joined the public meeting at " + name + "."),
+    })),
+  );
+  await page.getByRole("button", { name: "Data bot", exact: true }).click();
+  const panel = page.locator("#data-bot");
+  for (const [request, scope] of [
+    ["Suggest inductive labels for all my interviews", "all"],
+    ["Suggest codes from several transcripts", "selected"],
+    ["Suggest labels for this interview", "current"],
+  ]) {
+    await panel.locator("#question").fill(request);
+    await panel.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.locator("#iv-scope")).toHaveValue(scope);
+    await expect(
+      page.getByRole("button", { name: "Send selected passages" }),
+    ).toBeVisible();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+  }
+  expect(requests).toHaveLength(0);
+});

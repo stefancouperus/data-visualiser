@@ -4,6 +4,7 @@ export const codingLimits = {
   newPerBatch: 2,
   inductiveLabels: 8,
 };
+export const discoveryLimit = 6;
 const key = (text) =>
   text.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 
@@ -39,7 +40,46 @@ export function codingGuide(d) {
   };
 }
 
-export function checkedSuggestions(raw, passages, guide) {
+// Return the original words, including their original punctuation and spacing.
+// Only typographical apostrophes and runs of whitespace are interchangeable.
+function supportingQuote(source, quote) {
+  if (typeof quote !== "string" || !quote.trim()) return;
+  const words = quote.trim();
+  if (source.includes(words)) return words;
+  const pattern = words
+    .split(/(['‘’]|\s+)/u)
+    .map((part) => {
+      if (/^['‘’]$/u.test(part)) return "['‘’]";
+      if (/^\s+$/u.test(part)) return "\\s+";
+      return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    })
+    .join("");
+  return source.match(new RegExp(pattern, "u"))?.[0];
+}
+
+export function checkedSuggestions(raw, passages, guide, excluded) {
+  return validateSuggestions(
+    raw,
+    passages,
+    guide,
+    guide.limits?.newPerBatch ?? codingLimits.newPerBatch,
+    excluded,
+  );
+}
+
+// Each model request has already had its new-label budget checked. The
+// combined review still enforces the project's vocabulary and passage limits.
+export function checkedCollectedSuggestions(raw, passages, guide, excluded) {
+  return validateSuggestions(
+    raw,
+    passages,
+    guide,
+    guide.limits?.newPerSample ?? codingLimits.inductiveLabels,
+    excluded,
+  );
+}
+
+function validateSuggestions(raw, passages, guide, newLabelLimit, excluded) {
   if (!Array.isArray(raw))
     throw Error(
       "The bot did not return a readable list of suggestions. Try again.",
@@ -51,28 +91,48 @@ export function checkedSuggestions(raw, passages, guide) {
   const used = new Map(passages.map((p) => [p.id, new Set(p.codes.map(key))]));
   const sources = new Map(passages.map((p) => [p.id, p.text]));
   const result = [];
+  const skip = (reason) => {
+    if (excluded) excluded[reason] = (excluded[reason] || 0) + 1;
+  };
   for (const entry of raw) {
-    if (
-      !entry ||
-      typeof entry.code !== "string" ||
-      typeof entry.quote !== "string" ||
-      !entry.quote.trim() ||
-      !sources.get(entry.id)?.includes(entry.quote)
-    )
+    const source = sources.get(entry?.id);
+    if (source === undefined) {
+      skip("passage");
       continue;
-    const label = entry.code.trim(),
-      id = key(label),
+    }
+    const quote = supportingQuote(source, entry.quote);
+    if (!quote) {
+      skip("quote");
+      continue;
+    }
+    const label = typeof entry.code === "string" ? entry.code.trim() : "";
+    if (!label) {
+      skip("label");
+      continue;
+    }
+    const id = key(label),
       taken = used.get(entry.id);
-    if (!label || taken.has(id) || taken.size >= codingLimits.perPassage)
+    if (taken.has(id)) {
+      skip("duplicate");
       continue;
+    }
+    if (taken.size >= codingLimits.perPassage) {
+      skip("capacity");
+      continue;
+    }
     let canonical = known.get(id) || newLabels.get(id);
     if (!canonical) {
-      if (
-        guide.mode === "deductive" ||
-        newLabels.size >= codingLimits.newPerBatch ||
-        known.size + newLabels.size >= codingLimits.inductiveLabels
-      )
+      if (guide.mode === "deductive") {
+        skip("label");
         continue;
+      }
+      if (
+        newLabels.size >= newLabelLimit ||
+        known.size + newLabels.size >= codingLimits.inductiveLabels
+      ) {
+        skip("capacity");
+        continue;
+      }
       canonical = {
         label,
         definition:
@@ -85,7 +145,7 @@ export function checkedSuggestions(raw, passages, guide) {
       id: entry.id,
       code: canonical.label,
       definition: canonical.definition,
-      quote: entry.quote,
+      quote,
       reason: typeof entry.reason === "string" ? entry.reason : "",
     });
   }
@@ -162,19 +222,18 @@ export function requestsCoding(message) {
     /\b(?:come up with|suggest|propose|generate|recommend|identify|assign|apply|adopt|create|give me|develop|find)\b.{0,65}\b(?:labels?|codes?|themes?)\b/i.test(
       message,
     ) ||
-    /\b(?:code|label|tag) (?:these|those|the|my|this|selected)\b/i.test(
+    /\b(?:code|label|tag) (?:these|those|the|my|this|selected|both|every|each|all|one|two|three|\d+|interviews?|transcripts?|passages?)\b/i.test(
       message,
     ) ||
     /\b(?:inductiv\w*|deductiv\w*|thematic) cod(?:e|ing)\b/i.test(message)
   );
 }
 
-export function applyCodingBatch(d, pending) {
-  const guide = codingGuide(d);
+export function applyCodingBatch(d, pending, guide = codingGuide(d)) {
   const byId = new Map(d.passages.map((p) => [p.id, p]));
   const targetIds = [...new Set(pending.map((s) => s.id))];
   const targets = targetIds.map((id) => byId.get(id)).filter(Boolean);
-  const valid = checkedSuggestions(pending, targets, guide);
+  const valid = checkedCollectedSuggestions(pending, targets, guide);
   if (!pending.length || valid.length !== pending.length)
     throw Error(
       "These suggestions no longer match the current passages or codebook. Ask for fresh suggestions.",

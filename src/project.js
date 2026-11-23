@@ -117,24 +117,34 @@ export function verifyProject(p) {
     );
   if (!p.settingsOnly)
     for (const d of p.datasets) {
+      const draft = d.interviews?.draft;
       if (
         d.interviews &&
         (!Array.isArray(d.sources) ||
           !Array.isArray(d.interviews.done) ||
           (d.interviews.established &&
             (!Array.isArray(d.coding?.book) || !d.coding.book.length)) ||
-          (d.interviews.draft &&
-            (!d.sources.includes(d.interviews.draft.source) ||
-              !Array.isArray(d.interviews.draft.matches) ||
-              [d.interviews.draft.rejected, d.interviews.draft.manual].some(
+          (draft &&
+            (!d.sources.includes(draft.source) ||
+              (draft.sources !== undefined &&
+                (!Array.isArray(draft.sources) ||
+                  !draft.sources.length ||
+                  new Set(draft.sources).size !== draft.sources.length ||
+                  draft.sources.some((name) => !d.sources.includes(name)))) ||
+              (draft.ids != null &&
+                (!Array.isArray(draft.ids) ||
+                  draft.ids.some((id) => !safeID(id)))) ||
+              !Array.isArray(draft.matches) ||
+              [draft.rejected, draft.manual].some(
                 (choices) =>
                   choices !== undefined &&
                   (!Array.isArray(choices) ||
                     choices.some((x) => typeof x !== "string")),
               ) ||
-              !Number.isInteger(d.interviews.draft.next) ||
-              d.interviews.draft.next < 0 ||
-              d.interviews.draft.next > d.interviews.draft.total)))
+              !Number.isInteger(draft.total) ||
+              !Number.isInteger(draft.next) ||
+              draft.next < 0 ||
+              draft.next > draft.total)))
       ) {
         throw Error(
           "The interview review progress in this file is incomplete. Open another project download.",

@@ -1930,7 +1930,7 @@ test("two interviews share an approved inductive codebook, resume a bot draft an
     ),
   });
   await expect(page.locator(".iv-progress")).toContainText("1 of 2");
-  await btn("Code this interview with the bot").click();
+  await btn("Code interviews with the bot").click();
   await btn("Send this interview").click();
   await expect(btn("Resume coding")).toBeVisible();
   await expect(page.locator(".iv-passage .iv-chip")).toHaveCount(0);

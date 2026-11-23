@@ -114,6 +114,8 @@ test("chat acceptance applies only valid reviewed matches atomically", async () 
   ])
     assert.equal(acceptsCodingBatch(q), false, q);
   assert.ok(requestsCoding("come up with labels for these passages"));
+  assert.ok(requestsCoding("Could you code all interviews?"));
+  assert.ok(requestsCoding("Please code both transcripts"));
   assert.equal(requestsCoding("plot a chart of the suggested codes"), false);
   const data = {
     passages: [structuredClone(p), { ...structuredClone(p), id: "b" }],
@@ -139,4 +141,168 @@ test("chat acceptance applies only valid reviewed matches atomically", async () 
     data.passages.map((x) => x.codes),
     [["Hours"], []],
   );
+});
+
+test("evidence validation recovers original punctuation and spacing without accepting paraphrases, wildcards or another passage", () => {
+  const text = "I couldn’t\n\tswap (my shift). Her words were: don't go.";
+  const passage = { ...p, text };
+  const entries = [
+    { ...suggest("Rota"), quote: "couldn't swap (my shift)." },
+    { ...suggest("Wrong case"), quote: "Couldn't swap" },
+    { ...suggest("Spliced"), quote: "couldn’t ... shift" },
+    { ...suggest("Wildcard"), quote: "swap (.*)" },
+    { ...suggest("Fabricated"), id: "other", quote: "swap" },
+    { ...suggest("Advice"), quote: "don’t go" },
+  ];
+  const excluded = {};
+  const valid = checkedSuggestions(
+    entries,
+    [passage],
+    codingGuide({ passages: [passage] }),
+    excluded,
+  );
+  assert.deepEqual(
+    valid.map((s) => s.quote),
+    ["couldn’t\n\tswap (my shift).", "don't go"],
+  );
+  assert.deepEqual(excluded, { quote: 3, passage: 1 });
+  assert.ok(valid.every((s) => text.includes(s.quote)));
+});
+
+test("an interview sample shares tentative labels across batches; every reviewed label can be accepted without committing other proposals", async () => {
+  const { draftGuide, interviewBatches, reviewedMatches } =
+    await import("../src/interviews.js");
+  const { applyCodingBatch, checkedCollectedSuggestions } =
+    await import("../src/coding.js");
+  const d = {
+    passages: Array.from({ length: 10 }, (_, i) => ({
+      id: "real" + i,
+      source: i < 5 ? "One" : "Two",
+      text: "My example " + i,
+      codes: [],
+    })),
+  };
+  const ids = d.passages.map((p) => p.id);
+  const batches = interviewBatches(d, ["One", "Two"], ids, true);
+  assert.deepEqual(
+    batches.map((batch) => batch.length),
+    [6, 4],
+  );
+  const reply = (row, code) => ({
+    id: row.id,
+    code,
+    quote: row.text,
+    definition: code + " meaning",
+  });
+  const first = reviewedMatches(
+    batches[0].map((row, i) => reply(row, "Theme " + (i % 4))),
+    batches[0],
+    draftGuide(d, true),
+  );
+  assert.equal(first.length, 6);
+  const nextGuide = draftGuide(d, true, first);
+  assert.equal(nextGuide.limits.newPerBatch, 2);
+  assert.equal(nextGuide.vocabulary[2].definition, "Theme 2 meaning");
+  const second = reviewedMatches(
+    batches[1].map((row, i) =>
+      reply(row, ["Theme 4", "Theme 5", "Excess", "THEME 2"][i]),
+    ),
+    batches[1],
+    nextGuide,
+  );
+  assert.deepEqual(
+    second.map((s) => s.code),
+    ["Theme 4", "Theme 5", "Theme 2"],
+  );
+  const collected = [...first, ...second];
+  const reviewGuide = draftGuide(d, true);
+  assert.deepEqual(
+    checkedCollectedSuggestions(collected, d.passages, reviewGuide),
+    collected,
+  );
+  assert.ok(d.passages.every((item) => item.codes.length === 0));
+  const approved = collected.filter((entry) => entry.code !== "Theme 1");
+  assert.equal(
+    applyCodingBatch(d, approved, reviewGuide).assignments,
+    approved.length,
+  );
+  assert.equal(d.coding.meanings.length, 5);
+  assert.equal(
+    d.coding.meanings.some(({ label }) => label === "Theme 1"),
+    false,
+  );
+  assert.deepEqual(d.passages.at(-1).codes, ["Theme 2"]);
+  assert.deepEqual(d.passages[8].codes, []);
+  assert.equal(draftGuide(d, true).limits.newPerBatch, 3); // up to eight project-wide
+});
+
+test("balanced sample spreads original replies across interviews and keeps legacy resume ordering intact", async () => {
+  const { balancedSample, interviewBatches } =
+    await import("../src/interviews.js");
+  const replies = (source, count) =>
+    Array.from({ length: count }, (_, i) => ({
+      source,
+      id: source + i,
+      text: "What choice did I have?",
+      codes: [],
+    }));
+  const d = {
+    passages: [
+      { source: "A", id: "header", text: "Interview transcript", codes: [] },
+      { source: "A", id: "q", text: "Interviewer: When was that?", codes: [] },
+      ...replies("A", 9),
+      ...replies("B", 3),
+      {
+        source: "C",
+        id: "mixed",
+        text: "Interviewer: Why? Noor: I was out of town.",
+        codes: [],
+      },
+      {
+        source: "C",
+        id: "excerpt",
+        parent: "mixed",
+        text: "out of town",
+        codes: [],
+      },
+    ],
+  };
+  const sample = balancedSample(d, ["A", "B", "C"], 7);
+  assert.deepEqual(sample, ["A0", "B0", "mixed", "A4", "B1", "A8", "B2"]);
+  assert.deepEqual(
+    interviewBatches(d, ["A", "B", "C"], sample, true)
+      .flat()
+      .map((p) => p.passageId),
+    sample,
+  );
+  assert.deepEqual(
+    interviewBatches(d, "A", ["A8", "A0"], true)
+      .flat()
+      .map((p) => p.passageId),
+    ["A0", "A8"],
+  );
+  // Students can still choose the interviewer's own words explicitly.
+  assert.equal(
+    interviewBatches(d, ["A"], ["q"], true)[0][0].text,
+    "Interviewer: When was that?",
+  );
+});
+
+test("in a transcript with speaker turns, six default places include six replies", async () => {
+  const { balancedSample } = await import("../src/interviews.js");
+  const passages = [
+    "Short profile of the interviewee.",
+    ...Array.from({ length: 6 }, (_, i) => [
+      "Interviewer: “What happened next?”",
+      "Speaker 01: “Here is my experience " + i + ".”",
+    ]).flat(),
+  ].map((text, i) => ({ id: i + "", text, source: "Interview", codes: [] }));
+  assert.deepEqual(balancedSample({ passages }, ["Interview"], 6), [
+    "2",
+    "4",
+    "6",
+    "8",
+    "10",
+    "12",
+  ]);
 });

@@ -1,9 +1,10 @@
 import { uid } from "./import.js";
-import { codingGuide, checkedSuggestions } from "./coding.js";
+import { codingGuide, checkedSuggestions, discoveryLimit } from "./coding.js";
 
 export const isInterview = (d) =>
   d?.kind === "text" && !d.openAnswers && d.textPurpose !== "documents";
-const normal = (s) => s.trim().normalize("NFKC").toLowerCase();
+const normal = (s) =>
+  s.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 export function sharedBook(d) {
   const entries = new Map();
   for (const e of [
@@ -125,17 +126,101 @@ export function appendInterviews(d, sets) {
   state.source = sets[0].sources[0];
   interviews(d).finished = false;
 }
-// Work units keep each request small even for transcripts exported as a single paragraph.
-export function interviewBatches(d, source, sampleIds, originalOnly = false) {
+function samplePool(originals) {
+  const interviewer =
+    /^(?:interviewer|researcher|moderator|onderzoeker|question|vraag|Q)\s*:\s*/iu;
+  const header =
+    /^(?:(?:interview\s+)?transcript(?:ion)?|transcriptie|transcription|interview)\s*[:#–—-]?\s*\d*$/iu;
+  const speaker = /^([\p{L}][\p{L}\p{N} .()'’-]{0,48}):\s*\S/u;
+  const candidates = [],
+    credited = [],
+    counts = new Map();
+  let hasInterviewer = false;
+  for (const p of originals) {
+    const text = p.text.trim();
+    if (!text || header.test(text)) continue;
+    const prompt = interviewer.exec(text);
+    if (prompt) {
+      hasInterviewer = true;
+      // Mixed turns pasted together can still contain the interviewee's words.
+      if (
+        /(?:^|\s)[\p{L}][\p{L}\p{N} .'-]{0,48}:\s*\S/u.test(
+          text.slice(prompt[0].length),
+        )
+      ) {
+        candidates.push(p);
+        credited.push(p);
+      }
+      continue;
+    }
+    candidates.push(p);
+    const name = speaker.exec(text)?.[1];
+    if (name) {
+      credited.push(p);
+      counts.set(name, (counts.get(name) || 0) + 1);
+    }
+  }
+  // Repeated speaker cues and a labelled interviewer distinguish dialogue
+  // from introductory notes. The student can still tick any original passage.
+  if (hasInterviewer && [...counts.values()].some((count) => count >= 2))
+    return credited;
+  return candidates;
+}
+
+// Distribute the available places across interviews. Within each interview,
+// spread those places through the text, then interleave the people selected.
+export function balancedSample(d, sources, limit = 10) {
+  const groups = [...new Set(sources)].map((source) =>
+    samplePool(d.passages.filter((p) => p.source === source && !p.parent)),
+  );
+  const counts = groups.map(() => 0);
+  let remaining = Math.min(
+    limit,
+    groups.reduce((n, ps) => n + ps.length, 0),
+  );
+  while (remaining > 0) {
+    for (let i = 0; i < groups.length && remaining > 0; i++) {
+      if (counts[i] >= groups[i].length) continue;
+      counts[i]++;
+      remaining--;
+    }
+  }
+  const ids = [];
+  for (let place = 0; place < Math.max(0, ...counts); place++) {
+    groups.forEach((ps, i) => {
+      if (place >= counts[i]) return;
+      const fraction = counts[i] === 1 ? 0.5 : place / (counts[i] - 1);
+      ids.push(ps[Math.round(fraction * (ps.length - 1))].id);
+    });
+  }
+  return ids;
+}
+
+// Single-source strings retain the original ordering for saved, paused jobs.
+export function interviewBatches(
+  d,
+  sourceOrSources,
+  sampleIds,
+  originalOnly = false,
+) {
+  const sources = new Set(
+    Array.isArray(sourceOrSources) ? sourceOrSources : [sourceOrSources],
+  );
+  const chosen = sampleIds && new Set(sampleIds);
+  let passages = d.passages.filter(
+    (p) =>
+      sources.has(p.source) &&
+      (!originalOnly || !p.parent) &&
+      (!chosen || chosen.has(p.id)),
+  );
+  if (chosen && Array.isArray(sourceOrSources)) {
+    const byId = new Map(passages.map((p) => [p.id, p]));
+    passages = [...chosen].map((id) => byId.get(id)).filter(Boolean);
+  }
   const batches = [];
   let batch = [],
     size = 0;
-  for (const p of d.passages.filter(
-    (p) =>
-      p.source === source &&
-      (!originalOnly || !p.parent) &&
-      (!sampleIds || sampleIds.includes(p.id)),
-  )) {
+  for (const p of passages) {
     let start = 0;
     while (start < p.text.length) {
       let end = Math.min(start + 3200, p.text.length);
@@ -152,7 +237,7 @@ export function interviewBatches(d, source, sampleIds, originalOnly = false) {
       batch.push({
         id: "p" + (batch.length + 1),
         passageId: p.id,
-        source,
+        source: p.source,
         text,
         codes: p.codes,
       });
@@ -163,8 +248,8 @@ export function interviewBatches(d, source, sampleIds, originalOnly = false) {
   if (batch.length) batches.push(batch);
   return batches;
 }
-export function reviewedMatches(raw, batch, guide) {
-  return checkedSuggestions(raw, batch, guide).map((s) => ({
+export function reviewedMatches(raw, batch, guide, excluded) {
+  return checkedSuggestions(raw, batch, guide, excluded).map((s) => ({
     ...s,
     id: batch.find((p) => p.id === s.id).passageId,
   }));
@@ -188,11 +273,40 @@ export function coveredByQuotation(match, parent, excerpts) {
   }
   return true;
 }
-export function draftGuide(d, sample) {
+export function draftGuide(d, sample, priorMatches = []) {
   if (!sample) return codingGuide(d);
+  const base = codingGuide({
+    ...d,
+    coding: { ...d.coding, mode: "inductive" },
+  });
+  const vocabulary = sharedBook(d);
+  const existing = new Set(vocabulary.map((entry) => normal(entry.label)));
+  const startingSize = existing.size;
+  for (const match of priorMatches) {
+    const label = normal(match.code);
+    if (!existing.has(label)) {
+      existing.add(label);
+      vocabulary.push({
+        label: match.code,
+        definition: match.definition || "",
+      });
+    }
+  }
+  const proposed = existing.size - startingSize;
   return {
-    ...codingGuide({ ...d, coding: { ...d.coding, mode: "inductive" } }),
-    vocabulary: sharedBook(d),
+    ...base,
+    vocabulary,
+    limits: {
+      ...base.limits,
+      newPerBatch: Math.max(
+        0,
+        Math.min(
+          discoveryLimit - proposed,
+          base.limits.inductiveLabels - existing.size,
+        ),
+      ),
+      newPerSample: discoveryLimit,
+    },
   };
 }
 export function finishInterview(d) {
