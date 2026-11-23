@@ -37,13 +37,13 @@ export function reviewVocabulary(book, rows) {
   return bookEntries([...book, ...additions]);
 }
 
-export function sampleLabelEditor(rows, includeExamples) {
+export function sampleLabelEditor(rows, includeExamples, styles) {
   return `<section class="iv-proposed-labels"><h3>Labels for your codebook</h3>
   <p>Choose the labels to keep. You can edit a new label and its meaning once for all its quotations.</p>
   ${rows
     .map((row, index) =>
       row.existing
-        ? `<div>${chip(row.label)} <small>Already in your project.</small></div>`
+        ? `<div>${chip(row.label, styles)} <small>Already in your project.</small></div>`
         : `<fieldset data-draft-code="${esc(row.original)}" data-draft-index="${index}" aria-label="Review suggested label ${esc(row.original)}">
       <label class="tick"><input type="checkbox" name="iv-keep-label" ${row.keep ? "checked" : ""}>Keep this label</label>
       <label>Label<input name="iv-draft-label" value="${esc(row.label)}"></label>
@@ -62,6 +62,7 @@ export function bindSampleLabelEditor(
   matches,
   persist,
   onClose,
+  styles,
 ) {
   const byOriginal = new Map(rows.map((row) => [labelKey(row.original), row]));
   const examples = form.elements.namedItem("iv-code-examples");
@@ -76,6 +77,8 @@ export function bindSampleLabelEditor(
       item.classList.toggle("iv-omitted", !row.keep);
       item.querySelector("[data-preview-code]").innerHTML = chip(
         row.label.trim() || "Unnamed label",
+        styles,
+        row.original,
       );
       item.querySelector("[data-preview-meaning]").textContent = row.definition;
     }

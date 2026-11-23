@@ -22,6 +22,7 @@ export function drawWordTable({
   theme,
   interactive,
   sourcesLabel,
+  named,
 }) {
   const countsX = [w * 0.59, w * 0.76, w - margin];
   function row(values, y, bold) {
@@ -45,7 +46,13 @@ export function drawWordTable({
     }
     return line;
   }
-  row(["Word", "Occurrences", "Passages", sourcesLabel], pos, true);
+  row(
+    ["Word", "Occurrences", "Passages", sourcesLabel].map((k) =>
+      named("headers", k),
+    ),
+    pos,
+    true,
+  );
   pos += theme.row;
   for (const r of records) {
     const group = row(

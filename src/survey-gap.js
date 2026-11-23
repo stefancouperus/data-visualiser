@@ -41,7 +41,19 @@ export function gapGroups(table, view, selectedRows) {
 // in greyscale exports and when both marks fall on exactly the same percentage.
 export function drawGap(
   root,
-  { records, groups, width, margin, pos, palette, paper, scale, wrap, line },
+  {
+    records,
+    groups,
+    named,
+    width,
+    margin,
+    pos,
+    palette,
+    paper,
+    scale,
+    wrap,
+    line,
+  },
 ) {
   const byGroup = groups.map((group) => new Map());
   const indices = new Map(groups.map((group, i) => [group, i]));
@@ -78,7 +90,7 @@ export function drawGap(
     const denominator = byGroup[i].get(labels[0]).den;
     mark(i, margin + 7 * scale, pos - 4 * scale);
     for (const text of wrap(
-      group + " (n = " + denominator + ")",
+      named("groups", group) + " (n = " + denominator + ")",
       Math.floor((width - 75) / (8 * scale)),
     )) {
       line(text, margin + 22 * scale, pos, 14, true);
@@ -98,7 +110,7 @@ export function drawGap(
         : difference +
           (difference === 1 ? " percentage point" : " percentage points");
     for (const text of wrap(
-      label + " · gap of " + gap,
+      named("labels", label) + " · gap of " + gap,
       Math.floor((width - 2 * margin) / (8 * scale)),
     )) {
       line(text, margin, pos, 14, true);
@@ -127,9 +139,9 @@ export function drawGap(
       mark(i, x, y)
         .append("title")
         .text(
-          r.group +
+          named("groups", r.group) +
             " · " +
-            r.label +
+            named("labels", r.label) +
             " · " +
             percent +
             " (" +

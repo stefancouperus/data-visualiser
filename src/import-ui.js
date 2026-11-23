@@ -223,6 +223,43 @@ async function documents(docs, route) {
       (a, b) => a.start - b.start || a.end - b.end,
     );
     for (const p of ordered) p.reviewed = true;
+    if (doc.codedWordExport && !mapped.open) {
+      // Word comments can overlap. Reattach them to the actual transcript
+      // paragraph so importing a shared document counts that passage once.
+      const entries = doc.paragraphs.map((text, i) => {
+        const [original] = texts(doc.name, [text]);
+        const start = doc.paragraphStarts[i];
+        return { original, start, end: start + text.length };
+      });
+      for (const { original, start, end } of entries) {
+        passages.push(original);
+        for (const mark of ordered) {
+          const a = Math.max(start, mark.start),
+            b = Math.min(end, mark.end);
+          if (a >= b) continue;
+          if (a === start && b === end) {
+            original.codes = [...new Set([...original.codes, ...mark.codes])];
+            original.reviewed = true;
+          } else {
+            const [quote] = texts(doc.name, [
+              original.text.slice(a - start, b - start),
+            ]);
+            if (quote)
+              passages.push({
+                ...quote,
+                parent: original.id,
+                start:
+                  a -
+                  start +
+                  original.text.slice(a - start, b - start).indexOf(quote.text),
+                codes: [...mark.codes],
+                reviewed: true,
+              });
+          }
+        }
+      }
+      continue;
+    }
     const parts = [...ordered];
     let nextRange = 0;
     for (const [index, text] of doc.paragraphs.entries()) {

@@ -937,7 +937,7 @@ label.tick, label.iv-match { cursor: pointer; }
 .iv-passage p {white-space:pre-wrap;line-height:1.65;margin:.3rem 0;cursor:text;}
 .iv-passage button {font-size:.77rem;padding:.16rem .42rem;}
 .iv-selected {background:#f5f8ff;border-color:var(--choice-border);}
-.iv-chip {display:inline-block;border-radius:4px;padding:.06rem .42rem;margin:.12rem;background:color-mix(in srgb,var(--chip) 9%,white);color:var(--chip);border-left:3px solid var(--chip);font-size:.83rem;font-weight:650;}
+.iv-chip {display:inline-block;border-radius:4px;padding:.06rem .42rem;margin:.12rem;background:color-mix(in srgb,var(--chip) 9%,white);color:var(--ink, #28323c);border-left:3px solid var(--chip);font-size:.83rem;font-weight:650;}
 .iv-legend,.iv-pick {max-height:32vh;overflow:auto;}
 .iv-review,.iv-import {margin-top:1rem;}
 .iv-review-passage {margin:1rem 0;padding:.75rem;border:1px solid var(--line);border-radius:.45rem;}
@@ -1138,3 +1138,18 @@ label.tick, label.iv-match { cursor: pointer; }
 @media (min-width: 620px) {
   .iv-proposed-labels fieldset { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); align-items: start; }
 }
+
+.project-path, .recent-project {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+}
+.project-path { flex-wrap: wrap; }
+.top #autosave-status { text-align: right; }
+.recent-project {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding: .6rem 0;
+  border-top: 1px solid var(--line);
+}
+.recent-project small { display: block; }

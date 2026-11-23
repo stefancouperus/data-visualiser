@@ -1,3 +1,4 @@
+import { includedInterview } from "./coding-passages.js";
 import { optionLevels, isSingleAnswerField } from "./survey-answers.js";
 import { roleChoices } from "./variable-roles.js";
 import { passageUnits } from "./transcript-index.js";
@@ -9,6 +10,7 @@ import { kinds, allCodes } from "./analysis.js";
 import { gapGroups } from "./survey-gap.js";
 import { supportsBoxPlot } from "./box-plot.js";
 import { dataCount } from "./project.js";
+import { isInterview } from "./interviews.js";
 import {
   groupChoices,
   patternChoices,
@@ -27,7 +29,7 @@ export function landing(local) {
         <div class="action-row">${b("upload", "Upload Qualtrics export", "", 'data-route="survey"')}</div></section>
       <section class="choice" aria-labelledby="interview-upload-heading">${pict("text")}<h2 id="interview-upload-heading">Interview data</h2>
         <p>Build a shared codebook or check labels you already applied.</p>
-        <div class="action-row">${b("upload", "Upload uncoded transcripts", "", 'data-route="interview"')}${b("upload", "Upload coded interviews", "", 'data-route="coded"')}</div></section>
+        <div class="action-row">${b("upload", "Upload uncoded transcripts", "", 'data-route="interview"')}${b("upload", "Upload coded interviews", "", 'data-route="coded"')}${b("upload", "Choose a transcript folder", "plain", 'data-route="interview-folder"')}</div></section>
     </div><details class="other-files"><summary>Other file types</summary><div class="list">${[
       ["table", "table", "Table or spreadsheet", "CSV, TSV or Excel"],
       [
@@ -66,6 +68,7 @@ export function datasetSelect(p) {
   )}</select></label>`;
 }
 export function check(d) {
+  d = includedInterview(d);
   if (d.kind === "text") {
     const originals = passageUnits(d.passages);
     return `<section class="card"><h2>Have we matched your codes to the right passages?</h2><p>${d.sources.length} listed sources · ${originals.length} passages · ${allCodes(d).length} codes</p>${table(
@@ -410,7 +413,7 @@ export function panel(
   return `<section class="plotcard ${comparing ? "comparison-card" : "explore-card"}" data-panel="${i}">${comparing ? `<div class="view-heading"><h2>${side} view</h2><span>${esc(kinds[v.chart])}</span></div><details data-chart-options="edit-${i}"><summary>Change ${side.toLowerCase()} view</summary>` : ""}
   ${confirmedName ? `<div class="topline"><p><strong>Confirmed selection</strong><br>${esc(confirmedName)}</p>${b("editselection", "Change selection", "", "data-i=" + i)}</div>` : `<div class="selection-editor">${selectionControls(d, draft || v, i, !!draft)}</div>`}
   ${comparing ? "</details>" : ""}
-  <div class="live-figure"><div class="figure-toolbar"><strong tabindex="-1" id="figure-heading${i}">Current visual</strong><div class="figure-actions">${options.length > 1 ? `<details class="chart-picker"><summary aria-label="Chart type · ${esc(kinds[v.chart])}">${icon(v.chart)} Chart type · ${esc(chartLabels[v.chart])}</summary>${chartTools(options, v.chart, i)}</details>` : ""}${b("savevisual", icon("save") + " Save visual", "", 'data-i="' + i + '"')}</div>
+  <div class="live-figure"><div class="figure-toolbar"><strong tabindex="-1" id="figure-heading${i}">Current visual</strong><div class="figure-actions">${options.length > 1 ? `<details class="chart-picker"><summary aria-label="Chart type · ${esc(kinds[v.chart])}">${icon(v.chart)} Chart type · ${esc(chartLabels[v.chart])}</summary>${chartTools(options, v.chart, i)}</details>` : ""}${b("editfigure", icon("edit") + " Edit visual", "", 'data-i="' + i + '"')}${b("savevisual", icon("save") + " Save visual", "", 'data-i="' + i + '"')}</div>
   </div><div class="figure-stage"><div class="graphic" id="graphic${i}"></div></div>${readingHint ? "<small>" + readingHint + "</small>" : ""}<div id="modeldetails${i}"></div><div class="figure-evidence action-row">${b("describechart", icon("bot") + " Ask about this visual", "", 'data-i="' + i + '"')}${text ? b("passages", d.openAnswers ? "Read and code written answers" : "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></div>
   <details data-chart-options="${i}"><summary>Chart settings</summary><div class="selection-mode"><label class="tick"><input type="checkbox" data-stage-selection="${i}" ${draft ? "" : "checked"}>Update the visual as I select</label></div>${b("figurestyle", "Figure style · " + figureStyles[styleFor(v.style)].label, "", 'data-i="' + i + '"')}${!text ? b("variables", d.fields.some((f) => f.roles?.length) ? "Review question roles" : "Choose question roles") : ""}${termHelp("percent", d, v)}<div class="formgrid">
  ${
@@ -484,7 +487,7 @@ export function panel(
          v.value,
        )
      : ""
- }${input("title", "Figure title", v.title)}${input("annotation", "Caption or annotation", v.annotation)}${select(
+ }${select(
    "palette",
    "Colour palette",
    paletteOptions,
@@ -493,8 +496,11 @@ export function panel(
  </details>
  </section>`;
 }
+export function readingDownloads(interview) {
+  return '<div class="action-row">'+b("report","Download readable report")+(interview ? b("codedword","Download coded interviews (.docx)") : "")+'</div><small>The report opens in a browser and can be printed. It includes your research question, data overview and figures.</small>';
+}
 export function saveScreen(p) {
-  const saveProject = `<section class="card save-task" aria-labelledby="save-project-heading"><h2 id="save-project-heading">Save your project</h2><p>Download your data and work together. Choose <strong>Open a saved project</strong> to continue later.</p><details data-chart-options="save-options"><summary>Other save options</summary><label class="tick"><input id="includeBotChat" type="checkbox" ${p.includeBotChat ? "checked" : ""}>Include full Data bot conversations</label><small>Includes your questions, replies and any text quoted in them.</small><div class="bar">${b("device", "Save on this device")}${b("settings", "Download settings only")}</div><small>A settings-only file requires matching datasets to be imported first.</small></details><div class="action-row step-actions">${b("download", "Download project with data", "primary")}</div></section>`;
+  const saveProject = `<section class="card save-task" aria-labelledby="save-project-heading"><h2 id="save-project-heading">Save your project</h2><p>Download your data and work together. Choose <strong>Open a saved project</strong> to continue later.</p><details data-chart-options="save-options"><summary>Other save options</summary><label class="tick"><input id="includeBotChat" type="checkbox" ${p.includeBotChat ? "checked" : ""}>Include full Data bot conversations</label><small>Chat is saved in this browser. Tick this box to include it in the downloaded project too.</small><div class="bar">${b("device", "Save on this device")}${b("settings", "Download settings only")}</div><small>A settings-only file requires matching datasets to be imported first.</small></details><div class="action-row step-actions">${b("download", "Download project with data", "primary")}</div>${readingDownloads(isInterview(p.datasets.find(d => d.id === p.active)))}</section>`;
   const exportFigure = `<section class="card save-task" aria-labelledby="export-figure-heading"><h2 id="export-figure-heading">Export a figure</h2><div class="export-main">${form(
     "figure-format",
     "Image format",

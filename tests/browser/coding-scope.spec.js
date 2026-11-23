@@ -414,3 +414,100 @@ test("a chat request using existing codes sends only the approved book and saves
     { code: "Delays", quote: dutch },
   ]);
 });
+
+test("the coding check and the bot see only the included answers; the saved source stays complete", async ({
+  page,
+}) => {
+  const calls = await recordBot(page);
+  const consent = "Interviewer: Can I record this interview?";
+  const assent = "Speaker: Yes.";
+  const question = "Interviewer: Which journeys changed?";
+  await open(
+    page,
+    project({ Case: [consent, assent, question, fare, waits, quiet] }),
+  );
+  await expect(page.locator(".iv-text .iv-passage")).toHaveCount(3);
+  await expect(page.locator(".iv-paper")).toContainText(
+    "3 of 6 passages included for coding",
+  );
+  await button(page, "Choose passages for coding").click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel(/Passage 1/)).not.toBeChecked();
+  await dialog.getByLabel(/Passage 6/).uncheck();
+  await button(page, "Save passage selection").click();
+  await expect(page.locator(".iv-paper")).toContainText(
+    "2 of 6 passages included for coding",
+  );
+  await expect(page.locator(".iv-text")).not.toContainText(quiet);
+  await button(page, "Code with the bot").click();
+  await dialog.getByText("Choose passages for this coding run").click();
+  await expect(dialog.locator("[name=iv-example]")).toHaveCount(2);
+  await dialog.getByLabel(/Passage 5/).uncheck();
+  await button(page, "Send to bot for coding").click();
+  await button(page, "Review suggested coding").click();
+  await expect(dialog.locator(".iv-review-passage")).toHaveCount(1);
+  await expect(dialog).toContainText(fare);
+  await expect(dialog).not.toContainText(waits);
+  await button(page, "Apply reviewed coding").click();
+  expect(calls.flatMap((c) => c.passages.map((p) => p.text))).toEqual([fare]);
+  await button(page, "Mark this interview as checked").click();
+  await button(page, "Mark as checked").click();
+  const d = (await save(page)).datasets[0];
+  expect(d.passages.map((p) => p.text)).toEqual([
+    consent,
+    assent,
+    question,
+    fare,
+    waits,
+    quiet,
+  ]);
+  expect(d.passages.filter((p) => p.reviewed).map((p) => p.text)).toEqual([
+    fare,
+    waits,
+  ]);
+  expect(d.passages[5].codingIncluded).toBe(false);
+});
+
+test("students can customise label colours and organise labels into named categories", async ({
+  page,
+}) => {
+  await open(page, project({ Case: [fare, waits] }));
+  const colours = () =>
+    page
+      .locator(".iv-project-vocabulary .iv-chip")
+      .evaluateAll((nodes) =>
+        nodes.map((n) => n.style.getPropertyValue("--chip")),
+      );
+  expect(new Set(await colours()).size).toBe(2);
+  await button(page, "Manage categories").click();
+  await page.getByLabel("Category name").fill("Experience");
+  await button(page, "Save category").click();
+  await button(page, "Manage labels").click();
+  await page.getByLabel("Choose a label").selectOption({ label: "Fares" });
+  await page.getByLabel("Label colour").fill("#734caa");
+  await page.getByLabel("Category (optional)").fill("Experience");
+  await button(page, "Save label").click();
+  const fareChip = page
+    .locator(".iv-project-vocabulary .iv-chip")
+    .filter({ hasText: "Fares" });
+  await expect(fareChip).toHaveAttribute("title", "Category: Experience");
+  expect(await colours()).toContain("#734caa");
+  await button(page, "Manage categories").click();
+  await page
+    .getByRole("combobox", { name: "Category", exact: true })
+    .selectOption("Experience");
+  await page.getByLabel("Category name").fill("Travel experiences");
+  await button(page, "Save category").click();
+  await expect(fareChip).toHaveAttribute(
+    "title",
+    "Category: Travel experiences",
+  );
+  const style = (await save(page)).datasets[0].coding.labelStyles.find(
+    (row) => row.label === "Fares",
+  );
+  expect(style).toEqual({
+    label: "Fares",
+    colour: "#734caa",
+    category: "Travel experiences",
+  });
+});

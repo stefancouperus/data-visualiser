@@ -1,5 +1,6 @@
 import { esc } from "./chart.js";
 const paths = {
+  edit: "m4 16-1 5 5-1L20 8l-4-4zM14 6l4 4",
   box: "M3 12h5m8 0h5M3 9v6m18-6v6M8 7h8v10H8zM12 7v10",
   gap: "M8 7h9m-12 9h9M4 7a2 2 0 1 0 4 0 2 2 0 1 0-4 0m13 0a2 2 0 1 0 4 0 2 2 0 1 0-4 0M1 16a2 2 0 1 0 4 0 2 2 0 1 0-4 0m13 0a2 2 0 1 0 4 0 2 2 0 1 0-4 0",
   bars: "M3 4v16h18M6 7h12M6 12h8M6 17h15",

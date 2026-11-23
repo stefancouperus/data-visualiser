@@ -1,3 +1,5 @@
+import { codingSelection } from "./coding-passages.js";
+import { transcriptIndex } from "./transcript-index.js";
 import { uid } from "./import.js";
 import {
   approvedBook,
@@ -244,8 +246,12 @@ function samplePool(originals) {
 // Distribute the available places across interviews. Within each interview,
 // spread those places through the text, then interleave the people selected.
 export function balancedSample(d, sources, limit = 10) {
+  const originals = d.passages.filter((p) => !p.parent);
+  const eligible = codingSelection(originals);
   const groups = [...new Set(sources)].map((source) =>
-    samplePool(d.passages.filter((p) => p.source === source && !p.parent)),
+    samplePool(originals.filter((p) => p.source === source)).filter((p) =>
+      eligible.has(p.id),
+    ),
   );
   const counts = groups.map(() => 0);
   let remaining = Math.min(
@@ -393,5 +399,14 @@ export function finishInterview(d) {
   if (state.draft) throw Error("Review or discard the bot draft first.");
   if (!state.established) establish(d);
   if (!state.done.includes(state.source)) state.done.push(state.source);
-  for (const p of d.passages) if (p.source === state.source) p.reviewed = true;
+  const index = transcriptIndex(
+    d.passages.filter((p) => p.source === state.source),
+  );
+  const included = codingSelection(index.originals);
+  for (const p of d.passages)
+    if (
+      p.source === state.source &&
+      included.has(index.positions.get(p.id)?.original.id)
+    )
+      p.reviewed = true;
 }

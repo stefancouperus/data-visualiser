@@ -1,3 +1,9 @@
+import { codingSelection } from "./coding-passages.js";
+import { transcriptIndex } from "./transcript-index.js";
+import {
+  labelAppearance,
+  rememberLabelAppearance,
+} from "./label-appearance.js";
 import { esc } from "./chart.js";
 import { botSession } from "./bot-access.js";
 import {
@@ -20,6 +26,7 @@ import {
   transcriptRows,
   transcriptOrdinals,
   manageLabels,
+  manageCategories,
   editPassageLabels,
 } from "./interview-manual.js";
 import {
@@ -56,7 +63,8 @@ export function interviewActivity(d) {
   return action + " · batch " + (draft.next + 1) + " of " + draft.total;
 }
 
-function labelList(entries, className = "iv-legend") {
+function labelList(d, entries, className = "iv-legend") {
+  const styles = labelAppearance(d, entries);
   return (
     '<div class="' +
     className +
@@ -65,7 +73,12 @@ function labelList(entries, className = "iv-legend") {
       .map(
         (entry) =>
           "<div>" +
-          chip(entry.label) +
+          chip(entry.label, styles) +
+          (styles.get(labelKey(entry.label))?.category
+            ? "<small>" +
+              esc(styles.get(labelKey(entry.label)).category) +
+              "</small>"
+            : "") +
           (entry.definition
             ? "<small>" + esc(entry.definition) + "</small>"
             : "") +
@@ -88,7 +101,7 @@ function codebookSetup(d, state, labels, sampleReview) {
       '<section class="iv-book-draft"><h3>Draft labels to review</h3>' +
       (draft.name ? "<small>" + esc(draft.name) + "</small>" : "") +
       (named.length
-        ? labelList(named, "iv-legend iv-draft-legend")
+        ? labelList(d, named, "iv-legend iv-draft-legend")
         : "<p>Add a label or check the source in the editor.</p>") +
       b("iv-reviewbook", "Review draft labels", "primary", disabled) +
       "</section>";
@@ -96,7 +109,8 @@ function codebookSetup(d, state, labels, sampleReview) {
     setup =
       '<div class="iv-stage-actions">' +
       (approved.length
-        ? b("iv-editbook", "Manage labels")
+        ? b("iv-editbook", "Manage labels") +
+          b("iv-categories", "Manage categories", "plain")
         : b("iv-enterbook", "Enter labels manually", "", disabled)) +
       b("iv-book", "Extract labels from a codebook", "", disabled) +
       (!approved.length && !state.draft
@@ -116,10 +130,10 @@ function codebookSetup(d, state, labels, sampleReview) {
         ? "Approved project labels"
         : "Project labels to confirm") +
       "</h3>" +
-      labelList(approved.length ? approved : labels) +
+      labelList(d, approved.length ? approved : labels) +
       (earlier.length
         ? "<details><summary>Other labels already in this project</summary>" +
-          labelList(earlier) +
+          labelList(d, earlier) +
           "</details>"
         : "") +
       (approved.length ? "" : b("iv-editbook", "Manage labels", "plain")) +
@@ -153,14 +167,26 @@ function codebookSetup(d, state, labels, sampleReview) {
   );
 }
 
+function eligibleTranscript(ps) {
+  const index = transcriptIndex(ps);
+  const included = codingSelection(index.originals);
+  return ps.filter((p) => included.has(index.positions.get(p.id).original.id));
+}
+
 function applyCodebookTitle(d) {
   return d.sources.length === 1
     ? "Apply codebook to interview"
     : "Apply codebook to interviews";
 }
 export function interviewScreen(d, storageStatus = "") {
+  rememberLabelAppearance(d);
   const s = interviews(d),
-    ps = d.passages.filter((p) => p.source === s.source),
+    sourcePassages = d.passages.filter((p) => p.source === s.source),
+    index = transcriptIndex(sourcePassages),
+    included = codingSelection(index.originals),
+    ps = sourcePassages.filter((p) =>
+      included.has(index.positions.get(p.id).original.id),
+    ),
     book = sharedBook(d);
   const done = s.done.includes(s.source),
     selected = ps.find((p) => p.id === s.passage) || ps[0];
@@ -191,7 +217,7 @@ export function interviewScreen(d, storageStatus = "") {
       ${activity ? busyIndicator(activity, false) : ""}
       <p>${draft.next} of ${draft.total} batches processed · ${draft.matches.length} new suggested matches</p>
       <small>Interviews in this draft: ${draftSources.map(esc).join(", ")}</small>
-      ${preview.length ? labelList(preview, "iv-legend iv-draft-legend") : ""}
+      ${preview.length ? labelList(d, preview, "iv-legend iv-draft-legend") : ""}
       ${draft.error ? "<p>" + esc(draft.error) + "</p>" : ""}
       ${job ? b("iv-stop", "Pause after this batch", "", job.stop || draft.next >= draft.total ? "disabled" : "") : ready ? b("iv-review", reviewLabel, "primary") : b("iv-resume", "Resume coding")}
       ${job ? "" : b("iv-discard", "Discard draft", "plain")}</section>`;
@@ -206,9 +232,9 @@ export function interviewScreen(d, storageStatus = "") {
   return `<div class="iv-progress"><div><strong>${d.sources.length - remaining} of ${d.sources.length} interviews checked</strong><progress value="${d.sources.length - remaining}" max="${d.sources.length}"></progress></div>${b("iv-finish", "Coding complete · explore themes", "primary", canFinish ? "" : "disabled")}</div>
   <div class="iv-workflow iv-tools">${codebookSetup(d, s, book, draft?.sample ? reviewPanel : "")}${applyStage}</div>
   <div class="iv-grid iv-reading-grid"><aside class="iv-side"><h2>Interviews</h2>${d.sources.map((source, i) => b("iv-source", esc(source) + "<small>" + (draftSources.includes(source) ? "Draft in progress" : s.done.includes(source) ? "✓ Checked" : "To check") + "</small>", "iv-source", `data-index="${i}" aria-pressed="${source === s.source}"`)).join("")}
-  ${b("iv-add", "+ Add interview", "", locked ? "disabled" : "")} ${b("download", "Save coding project", "plain")}<small data-iv-storage role="status">${esc(storageStatus || "Coding changes create a recovery copy in this browser. Reopen or remove it from Upload.")}</small></aside>
-  <section class="iv-paper"><header><small>${d.excerptSources?.includes(s.source) ? "Imported passages" : "Transcript"}</small><h2>${esc(s.source)}</h2><p>Choose a passage or highlight the words you want to label. Click a saved quotation to change its labels.</p>${selected ? '<div class="iv-manual-tools">' + b("iv-manual", "Edit labels on selected text") + (book.length ? '<a class="iv-label-jump" href="#iv-project-labels">Project labels</a>' : "") + "</div>" : ""}${d.excerptSources?.includes(s.source) ? "<small>Check the coverage of your export. Only the imported passages can be coded or compared.</small>" : ""}</header>
-  <div class="iv-text">${transcriptRows(ps, selected)}</div>
+  ${b("iv-add", "+ Add interview", "", locked ? "disabled" : "")} ${b("download", "Save coding project", "plain")} ${b("codedword", "Download coded interviews (.docx)", "plain")}<small data-iv-storage role="status">${esc(storageStatus || "Coding changes create a recovery copy in this browser. Reopen or remove it from Upload.")}</small></aside>
+  <section class="iv-paper"><header><small>${d.excerptSources?.includes(s.source) ? "Imported passages" : "Transcript"}</small><h2>${esc(s.source)}</h2><p>${included.size} of ${index.originals.length} passages included for coding. ${b("iv-inclusion", "Choose passages for coding", "plain", locked ? "disabled" : "")}</p><p>${included.size ? "Choose a passage or highlight the words you want to label." : "Choose passages above to include text in coding."}</p>${selected ? '<div class="iv-manual-tools">' + b("iv-manual", "Edit labels on selected text") + (book.length ? '<a class="iv-label-jump" href="#iv-project-labels">Project labels</a>' : "") + "</div>" : ""}${d.excerptSources?.includes(s.source) ? "<small>Check the coverage of your export. Only the imported passages can be coded or compared.</small>" : ""}</header>
+  <div class="iv-text">${transcriptRows(ps, selected, labelAppearance(d), index.numbers)}</div>
   ${done ? "<p>✓ You have checked this interview.</p>" : b("iv-done", "Mark this interview as checked", "", locked || !book.length || (!shared && d.coding?.bookDraft) ? "disabled" : "")}</section>
 </div>`;
 }
@@ -223,11 +249,13 @@ function codingScope(d, state, sample, resuming, request, api, title) {
   const initialSources = new Set(request?.sources ?? [source]);
   const lists = new Map(d.sources.map((name) => [name, []]));
   const ordinals = transcriptOrdinals(d.passages);
+  const included = codingSelection(d.passages.filter((p) => !p.parent));
   for (const p of d.passages) {
     const list = lists.get(p.source);
     if (!list) continue;
     const position = ordinals.get(p.id);
-    if (!p.parent && p.text.trim()) list.push({ p, position });
+    if (!p.parent && included.has(p.id) && p.text.trim())
+      list.push({ p, position });
   }
   const activeLabels = approvedBook(d);
   const labelAllowance = sample
@@ -260,14 +288,16 @@ function codingScope(d, state, sample, resuming, request, api, title) {
         (n) => n.value,
       ),
     );
+    if (!sample) return groups.flat();
     const ids = [];
     for (let i = 0; groups.some((group) => i < group.length); i++)
       for (const group of groups) if (i < group.length) ids.push(group[i]);
     return ids;
   };
+  const pickerId = sample ? "iv-sample-pick" : "iv-run-pick";
   const choice = askForm(
     title,
-    `<p>The university Data bot will receive ${sample ? "the passages you select and your existing labels" : "all original passages in the selected interviews and your shared codebook"}. You will review its suggestions before any coding is applied.</p>` +
+    `<p>The university Data bot will receive ${sample ? "the passages you select and your existing labels" : "the included passages you select and your shared codebook"}. You will review its suggestions before any coding is applied.</p>` +
       (sample
         ? `<p>${labelAllowance ? "The bot can suggest up to " + labelAllowance + " new labels in this sample." : "Your codebook has reached the bot’s limit for discovering new labels. It can still suggest matches for existing labels."} One label can fit several passages.</p>` +
           (state.established
@@ -277,7 +307,7 @@ function codingScope(d, state, sample, resuming, request, api, title) {
           activeLabels.length +
           (activeLabels.length === 1 ? " approved label" : " approved labels") +
           "</summary>" +
-          labelList(activeLabels) +
+          labelList(d, activeLabels) +
           "</details>") +
       (!resuming && d.sources.length > 1
         ? formselect(
@@ -300,8 +330,11 @@ function codingScope(d, state, sample, resuming, request, api, title) {
           "</fieldset>"
         : "") +
       '<div id="iv-scope-summary"></div>' +
-      (sample && !resuming
-        ? '<small>The starting sample draws from different parts of the interviews. Tick or untick passages to choose what to send.</small><div class="iv-pick" id="iv-sample-pick"></div><small id="iv-sample-count" role="status"></small>'
+      (!resuming
+        ? (sample
+            ? '<small>The starting sample draws from different parts of the interviews. Tick or untick passages to choose what to send.</small><div class="iv-pick" id="iv-sample-pick"></div>'
+            : '<details><summary>Choose passages for this coding run</summary><div class="iv-pick" id="iv-run-pick"></div></details>') +
+          '<small id="iv-sample-count" role="status"></small>'
         : "") +
       (!resuming
         ? '<label>What should the bot look for? (optional)<input id="iv-focus" maxlength="600" value="' +
@@ -311,7 +344,9 @@ function codingScope(d, state, sample, resuming, request, api, title) {
     () => {
       const sources = currentSources();
       if (!sources.length) throw Error("Choose at least one interview.");
-      const ids = draft ? draft.ids : sample ? selectedIds() : null;
+      const ids = draft ? draft.ids : selectedIds();
+      if (!draft && !ids.length)
+        throw Error("Select at least one passage to code.");
       if (
         sample &&
         !draft &&
@@ -353,9 +388,7 @@ function codingScope(d, state, sample, resuming, request, api, title) {
     },
   );
   function countSample() {
-    const groups = [
-      ...get("iv-sample-pick").querySelectorAll("[data-sample-source]"),
-    ];
+    const groups = [...get(pickerId).querySelectorAll("[data-sample-source]")];
     const count = groups.reduce(
       (sum, group) => sum + group.querySelectorAll(":checked").length,
       0,
@@ -364,7 +397,7 @@ function codingScope(d, state, sample, resuming, request, api, title) {
       group.querySelector(":checked"),
     ).length;
     get("iv-sample-count").textContent =
-      `${count} passages selected from ${represented} of ${groups.length} interviews (up to ${sampleLimit(currentSources())} passages).`;
+      `${count} passages selected from ${represented} of ${groups.length} interviews${sample ? " (up to " + sampleLimit(currentSources()) + " passages)" : ""}.`;
   }
   function redraw() {
     const picker = get("iv-pick-sources");
@@ -377,7 +410,7 @@ function codingScope(d, state, sample, resuming, request, api, title) {
     );
     get("iv-scope-summary").innerHTML = draft
       ? `<p>Resume the saved ${sample ? "sample" : "coding"} for <strong>${names}</strong>. ${draft.next} of ${draft.total} batches are complete.</p>`
-      : `<p>${sources.length ? "<strong>" + names + "</strong> · " + items + " original passages" : "Select the interviews to include."}</p>`;
+      : `<p>${sources.length ? "<strong>" + names + "</strong> · " + items + " original passages available for coding" : "Select the interviews to include."}</p>`;
 
     if (
       request?.prompt &&
@@ -388,11 +421,17 @@ function codingScope(d, state, sample, resuming, request, api, title) {
       prompt.textContent = request.prompt;
       get("iv-scope-summary").append(prompt);
     }
-    if (!get("iv-sample-pick")) return;
+    if (!get(pickerId)) return;
     const defaults = new Set(
-      balancedSample(d, sources, sources.length > 1 ? sampleLimit(sources) : 6),
+      sample
+        ? balancedSample(
+            d,
+            sources,
+            sources.length > 1 ? sampleLimit(sources) : 6,
+          )
+        : sources.flatMap((name) => lists.get(name).map(({ p }) => p.id)),
     );
-    get("iv-sample-pick").innerHTML = sources
+    get(pickerId).innerHTML = sources
       .map(
         (name) =>
           `<fieldset data-sample-source="${esc(name)}"><legend>${esc(name)}</legend>` +
@@ -446,6 +485,7 @@ export async function interviewAction(act, el, d, api) {
       "iv-apply-manual",
       "iv-excerpt",
       "iv-editbook",
+      "iv-categories",
       "iv-stop",
       "iv-resume",
       "iv-review",
@@ -462,8 +502,52 @@ export async function interviewAction(act, el, d, api) {
     s.passage = null;
   }
   if (act === "iv-select") s.passage = el.dataset.id;
+  if (act === "iv-inclusion") {
+    const originals = transcriptIndex(ps).originals;
+    const included = codingSelection(originals);
+    const picks = await askForm(
+      "Choose passages for coding",
+      "<p>Tick the passages you want to code and review in " +
+        esc(s.source) +
+        ". Clearly marked interviewer turns and consent exchanges start unticked. Your selection also applies to future bot runs.</p>" +
+        '<div class="iv-pick">' +
+        originals
+          .map(
+            (p, i) =>
+              '<label class="tick"><input name="iv-include" type="checkbox" value="' +
+              esc(p.id) +
+              '" ' +
+              (included.has(p.id) ? "checked" : "") +
+              ">Passage " +
+              (i + 1) +
+              " · " +
+              esc(p.text) +
+              "</label>",
+          )
+          .join("") +
+        "</div>",
+      () =>
+        new Set(
+          [
+            ...get("modalform").querySelectorAll("[name=iv-include]:checked"),
+          ].map((n) => n.value),
+        ),
+      "Save passage selection",
+    );
+    if (!picks || api.current() !== d) return;
+    if (originals.some((p) => included.has(p.id) !== picks.has(p.id))) {
+      for (const p of originals)
+        if (included.has(p.id) !== picks.has(p.id))
+          p.codingIncluded = picks.has(p.id);
+      if (!picks.has(s.passage)) s.passage = null;
+      changed();
+      refresh();
+    }
+    return;
+  }
   if (act === "iv-add") return api.add();
   if (act === "iv-establish") establish(d);
+  if (act === "iv-categories") return manageCategories(d, refresh);
   if (act === "iv-editbook") return manageLabels(d, api, refresh);
   if (["iv-book", "iv-enterbook", "iv-reviewbook"].includes(act)) {
     const manual = d.coding?.bookDraft
@@ -506,7 +590,7 @@ export async function interviewAction(act, el, d, api) {
     return editPassageLabels(
       d,
       s,
-      ps,
+      eligibleTranscript(ps),
       api,
       refresh,
       act === "iv-excerpt" ? el.dataset : null,
@@ -514,7 +598,7 @@ export async function interviewAction(act, el, d, api) {
   if (act === "iv-done") {
     const ok = await askForm(
       "Finish checking this interview?",
-      "<p>Confirm that you have checked the available text in <strong>" +
+      "<p>Confirm that you have checked the included passages in <strong>" +
         esc(s.source) +
         "</strong>. Passages without a suitable label can remain uncoded." +
         (!s.established
@@ -597,7 +681,7 @@ export async function interviewAction(act, el, d, api) {
         sample,
         ...(sample ? { codeExamples: false } : {}),
         originalOnly: true,
-        ids: sample ? selection.ids : null,
+        ids: selection.ids,
         next: 0,
         matches: [],
         total: 0,
@@ -703,6 +787,10 @@ export async function interviewAction(act, el, d, api) {
       reviewExcluded.duplicate = (reviewExcluded.duplicate || 0) + 1;
       return false;
     });
+    const styles = labelAppearance(
+      d,
+      matches.map((m) => m.code),
+    );
     const byPassage = new Map();
     matches.forEach((m, index) => {
       if (!byPassage.has(m.id)) byPassage.set(m.id, []);
@@ -741,7 +829,7 @@ export async function interviewAction(act, el, d, api) {
             items
               .map(
                 ({ m, index }) =>
-                  `<label class="iv-match"><input type="checkbox" name="iv-match" value="${index}" ${rejected.has(key(m.id, m.code)) ? "" : "checked"}><span><small>Passage ${positions.get(m.id)}</small>${draft.sample ? "<span data-preview-code>" + chip(m.code) + "</span><small data-preview-meaning>" + esc(m.definition) + "</small>" : chip(m.code)}<q>${esc(m.quote)}</q><small>${esc(m.reason)}</small></span></label>`,
+                  `<label class="iv-match"><input type="checkbox" name="iv-match" value="${index}" ${rejected.has(key(m.id, m.code)) ? "" : "checked"}><span><small>Passage ${positions.get(m.id)}</small>${draft.sample ? "<span data-preview-code>" + chip(m.code, styles) + "</span><small data-preview-meaning>" + esc(m.definition) + "</small>" : chip(m.code, styles)}<q>${esc(m.quote)}</q><small>${esc(m.reason)}</small></span></label>`,
               )
               .join("") +
             (items.length ? "" : "<p>No suggested label.</p>") +
@@ -753,7 +841,9 @@ export async function interviewAction(act, el, d, api) {
             esc(p.text) +
             "</blockquote>" +
             (p.codes.length
-              ? "<p>Already applied: " + p.codes.map(chip).join(" ") + "</p>"
+              ? "<p>Already applied: " +
+                p.codes.map((label) => chip(label, styles)).join(" ") +
+                "</p>"
               : "") +
             "<div data-missed-labels></div></details></section>",
         );
@@ -762,7 +852,7 @@ export async function interviewAction(act, el, d, api) {
       draft.sample ? "Review draft labels" : "Review the suggested coding",
       `<p>${matches.length} proposed assignments across ${byPassage.size} of ${targets.length} passages in ${sources.length === 1 ? "<strong>" + esc(sources[0]) + "</strong>" : sources.length + " interviews"}.</p>` +
         (draft.sample
-          ? sampleLabelEditor(rows, codeExamples())
+          ? sampleLabelEditor(rows, codeExamples(), styles)
           : "<p>Read the full passage to check the meaning. Untick unsuitable suggestions and check for missed labels.</p>") +
         (repeats
           ? `<p>${repeats} repeated label suggestions were left out because the coding already exists or the same assignment was suggested twice.</p>`
@@ -900,6 +990,7 @@ export async function interviewAction(act, el, d, api) {
         () => {
           if (s.draft === draft) refresh(false);
         },
+        styles,
       );
     for (const details of form.querySelectorAll("[data-review-passage]")) {
       details.ontoggle = () => {
@@ -909,7 +1000,7 @@ export async function interviewAction(act, el, d, api) {
         const choices = book
           .map(({ label }, i) =>
             canAdd(p, label)
-              ? `<label class="tick"><input type="checkbox" name="iv-missed" value="${i}" ${manual.has(key(p.id, label)) ? "checked" : ""}>${chip(label)}</label>`
+              ? `<label class="tick"><input type="checkbox" name="iv-missed" value="${i}" ${manual.has(key(p.id, label)) ? "checked" : ""}>${chip(label, styles)}</label>`
               : "",
           )
           .join("");

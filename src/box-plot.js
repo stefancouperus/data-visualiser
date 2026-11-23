@@ -77,6 +77,7 @@ const numberLabel = format(".5~g");
 
 export function drawBoxPlot({
   root,
+  named,
   records,
   width,
   margin,
@@ -109,7 +110,7 @@ export function drawBoxPlot({
   }
   for (const [i, r] of records.entries()) {
     const label =
-      r.label +
+      named("labels", r.label) +
       (r.n
         ? "  ·  n = " + r.n + "  ·  median " + numberLabel(r.median)
         : "  ·  no numerical answers");
@@ -126,7 +127,7 @@ export function drawBoxPlot({
       ink = markInk(i, r.label);
     const g = root.append("g").attr("class", "box-plot-mark");
     g.append("title").text(
-      r.label +
+      named("labels", r.label) +
         " (" +
         r.n +
         "): minimum " +

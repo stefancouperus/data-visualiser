@@ -1,3 +1,4 @@
+import { includedInterview } from "./coding-passages.js";
 // Counts are computed locally from the records selected in the workspace.
 import { hasAnswer, choicesIn, optionLevels } from "./survey-answers.js";
 import { allCodes } from "./coding.js";
@@ -64,6 +65,7 @@ export function groupValue(d, key, record) {
     : "";
 }
 export function patternSummary(d, v) {
+  d = includedInterview(d);
   if (d.kind === "text") d = { ...d, passages: passageUnits(d.passages) };
   if (v.groupBy) return groupedSummary(d, v);
   return summarise(d, v);

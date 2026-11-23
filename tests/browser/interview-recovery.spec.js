@@ -120,7 +120,7 @@ test("interview recovery checkpoints a failed batch, reviewer decisions and manu
   await expect(
     page.locator(".iv-passage").first().locator(":scope > div > .iv-chip"),
   ).toHaveText(["Fares", "Delays"]);
-  await button(page, "Upload").click();
+  await button(page, "Home").click();
   await button(page, "Remove recovery copy").click();
   await button(page, "Remove copy").click();
   await expect(button(page, "Resume coding project")).toHaveCount(0);

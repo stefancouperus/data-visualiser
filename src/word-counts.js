@@ -1,3 +1,4 @@
+import { includedInterview } from "./coding-passages.js";
 import { transcriptIndex } from "./transcript-index.js";
 import { allCodes } from "./coding.js";
 
@@ -80,6 +81,7 @@ function selectedRanges(index, passage, theme) {
 }
 
 function scan(d, v, findWord) {
+  d = includedInterview(d);
   if (v.x && !allCodes(d).includes(v.x))
     throw Error(
       "The theme “" +
@@ -231,7 +233,9 @@ export function wordCounts(d, v) {
           " omitted because the exact location was unclear."
         : "") +
       (!d.openAnswers && d.textPurpose !== "documents"
-        ? " Interviewer questions are included where present."
+        ? d.interviews
+          ? " Uses passages included for coding."
+          : " Interviewer questions are included where present."
         : ""),
   };
 }

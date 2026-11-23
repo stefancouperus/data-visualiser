@@ -1,3 +1,4 @@
+import { includedInterview } from "./coding-passages.js";
 import { filteredRows } from "./import.js";
 import { passageUnits } from "./transcript-index.js";
 
@@ -16,6 +17,7 @@ function mentions(request, label) {
 // These are summaries of the selection used by this panel, including records
 // beyond the preview limit. No original free-text answer is included here.
 export function analyticalEvidence(d, v, question) {
+  d = includedInterview(d);
   if (d.kind === "text") {
     const sources = new Set(
       d.sources.filter(

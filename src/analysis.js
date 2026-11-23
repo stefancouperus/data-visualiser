@@ -1,3 +1,4 @@
+import { includedInterview } from "./coding-passages.js";
 import {
   hasAnswer,
   choicesIn,
@@ -237,6 +238,7 @@ export function analyse(d, v) {
   return base;
 }
 function qualitative(d, v) {
+  d = includedInterview(d);
   let sources = d.sources.filter(
     (s) =>
       !v.filter ||

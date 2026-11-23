@@ -103,9 +103,12 @@ const ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const els = (el, n) => Array.from(el.getElementsByTagNameNS(ns, n));
 const attr = (el, n) => el?.getAttributeNS(ns, n);
 const txt = (el) =>
-  els(el, "t")
-    .map((v) => v.textContent)
-    .join("");
+  Array.from(el.getElementsByTagNameNS(ns, "*"), (v) => {
+    if (v.localName === "t") return v.textContent;
+    if (v.localName === "tab") return "\t";
+    if (v.localName === "br" || v.localName === "cr") return "\n";
+    return "";
+  }).join("");
 function segment(source, text, markers = []) {
   return { id: uid(), source, text, codes: [], markers, reviewed: false };
 }
@@ -135,7 +138,13 @@ export function wordDocument(bytes, name) {
     }
     all.push({ ...segment(name, text, [marker]), start, end });
   };
-  for (const p of els(body, "p")) {
+  const paragraphsInFile = els(body, "p");
+  // Our Word export has a printed legend and label notes alongside the transcript.
+  // Its paragraph styles keep those notes separate when the file is imported again.
+  const transcript = paragraphsInFile.filter(
+    (p) => attr(els(p, "pStyle")[0], "val") === "DVCodedPassage",
+  );
+  for (const p of transcript.length ? transcript : paragraphsInFile) {
     const paragraphStart = position;
     let colour = "",
       run = "",
@@ -186,7 +195,13 @@ export function wordDocument(bytes, name) {
   for (const [k, r] of ranges)
     if (comments.has(k))
       add(r.text, r.start, r.end, "comment: " + comments.get(k));
-  return { name, paragraphs, paragraphStarts, marked: all };
+  return {
+    name,
+    paragraphs,
+    paragraphStarts,
+    marked: all,
+    codedWordExport: transcript.length > 0,
+  };
 }
 export function texts(name, paragraphs) {
   return paragraphs.filter((s) => s.trim()).map((t) => segment(name, t.trim()));

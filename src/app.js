@@ -1,3 +1,5 @@
+import { includedInterview } from "./coding-passages.js";
+import { editFigure } from "./figure-editor.js";
 import {
   chooseHelpMode,
   helpSettings,
@@ -16,12 +18,14 @@ import {
   sharedBook,
 } from "./interviews.js";
 import {
-  listCodingCopies,
-  loadCodingCopy,
-  removeCodingCopy,
-  saveCodingCopy,
-  useCodingCopy,
-} from "./interview-recovery.js";
+  listRecoveries,
+  loadRecovery,
+  removeRecovery,
+  saveRecovery,
+  recoveryId,
+  resumeRecovery,
+  protectDeparture,
+} from "./project-recovery.js";
 import {
   interviewScreen,
   interviewAction,
@@ -82,6 +86,9 @@ import {
 } from "./survey-answers.js";
 import { uid, filteredRows } from "./import.js";
 import { importFiles } from "./import-ui.js";
+import { transcriptFolder } from "./transcript-folder.js";
+import { codedInterviewDownload, fileStem } from "./coded-docx.js";
+import { projectReport } from "./project-report.js";
 import {
   fresh,
   verifyProject,
@@ -147,6 +154,7 @@ import {
   panel,
   datasetSelect,
   saveScreen,
+  readingDownloads,
   available,
   adaptChart,
 } from "./screens.js";
@@ -442,72 +450,212 @@ function analysisReady(d) {
 }
 function hasDeviceCopy() {
   try {
-    return localStorage.getItem("dv-project") !== null;
+    return !!(
+      localStorage.getItem("dv-device-project-id") ||
+      localStorage.getItem("dv-project")
+    );
   } catch {
     return false;
   }
 }
 const codingSaveStatus = new WeakMap();
+const lastPosition = new WeakMap();
+const saveTimers = new WeakMap();
+let restoringHistory = false;
+let navigationNumber = 0;
+function workspacePosition(p) {
+  const previous = lastPosition.get(p) || {};
+  if (p !== project || step === 0) return previous;
+  const selections = [...pendingSelections].filter(
+    ([, draft]) => JSON.stringify(draft.base) !== JSON.stringify(draft.view),
+  );
+  const position = {
+    step,
+    ...(selections.length ? { selections } : {}),
+    ...(selectionConfirmed ? { selectionConfirmed: true } : {}),
+  };
+  lastPosition.set(p, position);
+  return position;
+}
+function historyEntry() {
+  return {
+    visualiser: true,
+    id: project.datasets.length ? recoveryId(project) : "",
+    step,
+  };
+}
+function markLocation(replace = false) {
+  if (restoringHistory) return;
+  const next = historyEntry(),
+    browser = window.history,
+    old = browser.state;
+  if (old?.visualiser && old.id === next.id && old.step === next.step) return;
+  browser[replace || !old?.visualiser ? "replaceState" : "pushState"](next, "");
+}
+function saveMessage(p, state) {
+  if (project !== p || codingSaveStatus.get(p) !== state) return;
+  document.querySelectorAll("[data-iv-storage]").forEach((el) => {
+    el.textContent = state.message;
+  });
+  const status = get("autosave-status");
+  if (status) status.textContent = state.short;
+}
+async function checkpointProject(p, verifyPresence = false) {
+  if (!p.datasets.length) return true;
+  clearTimeout(saveTimers.get(p));
+  const state = {
+    needsSave: true,
+    short: "Saving…",
+    message: "Saving project on this device…",
+  };
+  codingSaveStatus.set(p, state);
+  saveMessage(p, state);
+  try {
+    const before = recoveryId(p);
+    await saveRecovery(p, workspacePosition(p), verifyPresence);
+    state.needsSave = false;
+    state.short = "Saved on this device";
+    state.message = isInterview(p.datasets.find((d) => d.id === p.active))
+      ? "Coding progress saved on this device."
+      : "Project saved on this device.";
+    if (p === project && before !== recoveryId(p)) markLocation(true);
+  } catch {
+    state.short = "Autosave unavailable · download your project";
+    state.message = isInterview(p.datasets.find((d) => d.id === p.active))
+      ? "This browser could not save your latest changes. Download your coding project before closing or refreshing."
+      : "This browser could not save your latest changes. Download your project before leaving.";
+  }
+  saveMessage(p, state);
+  return !state.needsSave;
+}
+const checkpointInterview = (p) => checkpointProject(p);
+function scheduleSave() {
+  if (!project.datasets.length || !step) return;
+  const p = project;
+  clearTimeout(saveTimers.get(p));
+  saveTimers.set(
+    p,
+    setTimeout(() => checkpointProject(p), 180),
+  );
+}
+function protectOpenProject() {
+  if (!project.datasets.length) return true;
+  return protectDeparture(project, workspacePosition(project));
+}
 window.addEventListener("beforeunload", (event) => {
-  if (codingSaveStatus.get(project)?.needsSave) {
+  if (!protectOpenProject()) {
     event.preventDefault();
     event.returnValue = "";
   }
 });
-async function checkpointInterview(p, d) {
-  const state = {
-    needsSave: true,
-    message: "Saving coding progress on this device…",
-  };
-  codingSaveStatus.set(p, state);
-  function showStatus() {
-    if (project !== p || codingSaveStatus.get(p) !== state) return;
-    document.querySelectorAll("[data-iv-storage]").forEach((el) => {
-      el.textContent = state.message;
-    });
-  }
-  showStatus();
+window.addEventListener("pagehide", protectOpenProject);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && project.datasets.length) checkpointProject(project);
+});
+async function showRecentProjects(container) {
   try {
-    await saveCodingCopy(p, d.interviews?.source || d.name);
-    state.needsSave = false;
-    state.message = "Coding progress saved on this device.";
-  } catch {
-    state.message =
-      "This browser could not save your latest changes. Download your coding project before closing or refreshing.";
-    if (project === p && codingSaveStatus.get(p) === state)
-      notice(state.message);
-  }
-  showStatus();
-}
-async function showCodingCopies(container) {
-  try {
-    const entries = await listCodingCopies();
+    const entries = await listRecoveries();
     if (!container.isConnected || !entries.length) return;
     container.innerHTML =
-      "<h2>Recover interview coding</h2>" +
+      "<h2>Recent projects</h2><p>Saved automatically in this browser. Resume where you left off.</p>" +
       entries
         .map((entry) => {
           const attributes = 'data-copy="' + esc(entry.id) + '"';
-          const when = esc(new Date(entry.saved).toLocaleString());
+          const coding =
+            !entry.kind || ["interview", "coding"].includes(entry.kind);
+          const source =
+            entry.source && entry.source !== entry.name
+              ? esc(entry.source) + " · "
+              : "";
           return (
-            '<div class="bar"><span>' +
+            '<div class="recent-project"><div><strong>' +
             esc(entry.name) +
-            " · " +
-            esc(entry.source) +
-            " · " +
-            when +
-            "</span>" +
-            b("recoverCoding", "Resume coding project", "", attributes) +
-            b("removeCodingCopy", "Remove recovery copy", "plain", attributes) +
-            "</div>"
+            "</strong><small>" +
+            source +
+            esc(new Date(entry.saved).toLocaleString()) +
+            '</small></div><div class="bar">' +
+            b(
+              "recoverCoding",
+              coding ? "Resume coding project" : "Resume project",
+              "",
+              attributes,
+            ) +
+            (project.datasets.length && recoveryId(project) === entry.id
+              ? ""
+              : b(
+                  "removeCodingCopy",
+                  "Remove recovery copy",
+                  "plain",
+                  attributes,
+                )) +
+            "</div></div>"
           );
         })
         .join("");
     container.hidden = false;
   } catch {
-    // Upload and downloaded projects still work when browser storage is blocked.
+    if (container.isConnected) {
+      container.innerHTML =
+        "<h2>Recent projects</h2><p>Browser storage is unavailable. Download a project copy before leaving this device.</p>";
+      container.hidden = false;
+    }
   }
 }
+async function checkpointBeforeSwitch() {
+  if (!project.datasets.length) return true;
+  if (await checkpointProject(project, true)) return true;
+  return !!(await askForm(
+    "Keep a copy before leaving",
+    "<p>This browser could not autosave your latest changes. Download a copy to continue on another screen, or close this message to keep working here.</p>",
+    () => {
+      download(projectPackage(project), projectFilename(project));
+      return true;
+    },
+    "Download project and continue",
+  ));
+}
+function home() {
+  bot = false;
+  setProject(fresh());
+}
+async function restoreLocation(route) {
+  const sequence = ++navigationNumber;
+  if (!(await checkpointBeforeSwitch()) || sequence !== navigationNumber) {
+    if (sequence === navigationNumber) markLocation(true);
+    return;
+  }
+  let saved;
+  try {
+    if (
+      route?.id &&
+      (!project.datasets.length || route.id !== recoveryId(project))
+    )
+      saved = await loadRecovery(route.id);
+    if (sequence !== navigationNumber) return;
+    restoringHistory = true;
+    if (get("dialog").open) get("dialog").close();
+    if (!route?.id) home();
+    else if (saved) setProject(saved.project, saved, route.step);
+    else goto(route.step);
+  } catch (err) {
+    notice(err.message);
+  } finally {
+    if (sequence === navigationNumber) {
+      restoringHistory = false;
+      markLocation(true);
+    }
+  }
+}
+window.addEventListener("popstate", (e) => {
+  if (get("dialog").open) {
+    markLocation();
+    notice(
+      "Your form is still open. Apply your changes or close it before going back.",
+    );
+    return;
+  }
+  restoreLocation(e.state);
+});
 // Rendering a completed bot batch replaces the transcript's text nodes. Retain
 // a student's unfinished native text selection by its original passage offsets.
 function readingSelection() {
@@ -654,7 +802,9 @@ function render() {
         '<section class="card"><h2>Save your coding progress</h2><p>Reopen the project to continue with your shared codebook, interviews and any coding draft.</p><div class="bar action-row">' +
         b("download", "Download project with data", "primary") +
         b("device", "Save on this device") +
-        "</div></section>";
+        "</div>" +
+        readingDownloads(true) +
+        "</section>";
     else content += saveScreen(project);
   }
   const previousBody = document.querySelector(".botbody");
@@ -669,7 +819,7 @@ function render() {
     "Save",
   ];
   get("app").innerHTML =
-    `<div class="shell ${compact ? "compact" : ""}"><aside class="rail"><div class="brand">${mark}<span>Data<br>visualiser</span></div><nav class="nav" aria-label="Workflow">${labels.map((s, i) => `<button title="${s}" aria-label="${s}" data-short="${shortSteps[i]}" data-act="nav" data-i="${i}" ${step === i ? 'aria-current="step"' : ""} ${(i > 0 && !d) || (i > 1 && !confirmed && !(interview && i === 4)) ? "disabled" : ""}>${icon(icons[i])}<span>${s}</span></button>`).join("")}${b("bot", icon("bot") + "<span>Data bot</span>", "botnav", 'aria-label="Data bot" title="Data bot" data-short="Data bot" aria-expanded="' + bot + '"')}</nav><div class="rail-bottom">${b("compact", icon("menu") + "<span>Collapse sidebar</span>", "plain", 'aria-label="Toggle sidebar"')}<small class="app-version">0.1 beta</small></div></aside><main class="main" id="workspace"><header class="top"><span>${esc(project.name)} &nbsp; / &nbsp; ${labels[step]}</span></header><div class="content"><div class="${asideBot ? "withbot" : ""}"><div>${content}</div>${asideBot ? botBox() : ""}</div>${bot && !asideBot ? botBox() : ""}</div></main></div>`;
+    `<div class="shell ${compact ? "compact" : ""}"><aside class="rail"><div class="brand">${mark}<span>Data<br>visualiser</span></div><nav class="nav" aria-label="Workflow">${labels.map((s, i) => `<button title="${s}" aria-label="${s}" data-short="${shortSteps[i]}" data-act="nav" data-i="${i}" ${step === i ? 'aria-current="step"' : ""} ${(i > 0 && !d) || (i > 1 && !confirmed && !(interview && i === 4)) ? "disabled" : ""}>${icon(icons[i])}<span>${s}</span></button>`).join("")}${b("bot", icon("bot") + "<span>Data bot</span>", "botnav", 'aria-label="Data bot" title="Data bot" data-short="Data bot" aria-expanded="' + bot + '"')}</nav><div class="rail-bottom">${b("compact", icon("menu") + "<span>Collapse sidebar</span>", "plain", 'aria-label="Toggle sidebar"')}<small class="app-version">0.1 beta</small></div></aside><main class="main" id="workspace"><header class="top"><div class="project-path">${d ? b("home", "Home", "plain") + " / " : ""}<span>${esc(project.name)} &nbsp; / &nbsp; ${labels[step]}</span></div>${d ? '<small id="autosave-status" role="status">' + esc(codingSaveStatus.get(project)?.short || "Saving…") + "</small>" : ""}</header><div class="content"><div class="${asideBot ? "withbot" : ""}"><div>${content}</div>${asideBot ? botBox() : ""}</div>${bot && !asideBot ? botBox() : ""}</div></main></div>`;
   if (
     previousSource &&
     previousSource === document.querySelector(".iv-paper h2")?.textContent
@@ -678,7 +828,8 @@ function render() {
     document.querySelector(".iv-text").scrollTop = transcriptScroll;
   }
   refreshBotActivity();
-  if (step === 0) showCodingCopies(get("coding-copies"));
+  if (step === 0) showRecentProjects(get("coding-copies"));
+  else scheduleSave();
   bindTermHelp(get("app"));
   if (bot) {
     layoutBot();
@@ -711,7 +862,7 @@ function render() {
         ? "Check what each figure counts and how many responses or interviews each percentage is based on."
         : project.mode === "hints" &&
             d.kind === "text" &&
-            d.passages.some((p) => !p.reviewed)
+            includedInterview(d).passages.some((p) => !p.reviewed)
           ? "Some passages are unreviewed. Check coding coverage before interpreting a frequency."
           : project.mode === "hints" &&
               d.kind === "table" &&
@@ -721,8 +872,12 @@ function render() {
     if (hint) get("hint").innerHTML = `<p class="review">${esc(hint)}</p>`;
   }
 }
-function summary(i, v = project.views[i]) {
-  const d = getData();
+function summary(
+  i,
+  v = project.views[i],
+  d = getData(),
+  comparedViews = step === 3 || step === 4 ? project.views : [],
+) {
   if (
     d.kind === "table" &&
     [v.filter, v.groupBy].some(
@@ -746,10 +901,7 @@ function summary(i, v = project.views[i]) {
         label +
         ".";
     else result.note += " Filtered by " + label + " = “" + v.value + "”.";
-  } else if (
-    (step === 3 || step === 4) &&
-    project.views.some((view) => view.filter)
-  ) {
+  } else if (comparedViews.some((view) => view.filter)) {
     result.note += " No subgroup filter on this view.";
   }
   if (d.rules?.length) result.note += " Project exclusions apply.";
@@ -951,7 +1103,7 @@ function tidy(v, key) {
     v.y =
       d.kind === "text" ? allCodes(d).find((c) => c !== v.x) : nextGrouping();
 }
-function goto(i) {
+function goto(i, restorePosition) {
   const d = getData();
   if (i > 0 && !d) return;
   if (i > 1 && !analysisReady(d) && !(isInterview(d) && i === 4)) i = 1;
@@ -974,6 +1126,13 @@ function goto(i) {
     const { filter, value } = project.views[0];
     Object.assign(project.views[1], { filter, value });
   }
+  if (step && !i && d) {
+    workspacePosition(project);
+    checkpointProject(project).then(() => {
+      if (step === 0 && get("coding-copies"))
+        showRecentProjects(get("coding-copies"));
+    });
+  }
   if (step !== i) {
     pendingSelections.clear();
     selectionConfirmed = false;
@@ -983,10 +1142,16 @@ function goto(i) {
     queuedShortcut = null;
   }
   step = i;
+  if (restorePosition && restorePosition.step === i) {
+    for (const [index, draft] of restorePosition.selections || [])
+      pendingSelections.set(index, draft);
+    selectionConfirmed = !!restorePosition.selectionConfirmed;
+  }
+  markLocation();
   render();
   window.scrollTo(0, 0);
 }
-function setProject(p) {
+function setProject(p, saved, target) {
   pendingSelections.clear();
   selectionConfirmed = false;
   project = verifyProject(p);
@@ -999,14 +1164,21 @@ function setProject(p) {
   if (!getData() && project.datasets.length) activate(project.datasets[0].id);
   if (getData() && project.views.length !== 2) activate(project.active);
   resetTutor();
+  if (saved) {
+    lastPosition.set(project, saved.workspace);
+    resumeRecovery(project, saved.entry, saved.workspace);
+  }
   goto(
-    getData()
-      ? project.confirmed.includes(project.active)
-        ? project.figurePanels === "both"
-          ? 3
-          : 2
-        : 1
-      : 0,
+    target ??
+      saved?.workspace?.step ??
+      (getData()
+        ? project.confirmed.includes(project.active)
+          ? project.figurePanels === "both"
+            ? 3
+            : 2
+          : 1
+        : 0),
+    saved?.workspace,
   );
 }
 async function openProjectFile(file) {
@@ -1027,19 +1199,21 @@ async function openProjectFile(file) {
     project.datasets.length &&
     !(await askForm(
       "Switch projects?",
-      "<p>Opening this file will replace the current workspace. Save any changes you want to keep first.</p>",
+      "<p>Your current project will stay in Recent projects on Home.</p>",
       () => true,
       "Open saved project",
     ))
   )
     return;
+  if (!(await checkpointBeforeSwitch())) return;
   setProject(restored);
   notice("Opened " + restored.name + ".");
 }
-function chooseFiles(accept, multiple, handler) {
+function chooseFiles(accept, multiple, handler, folder = false) {
   const p = get("picker");
   p.value = "";
   p.accept = accept;
+  p.toggleAttribute("webkitdirectory", folder);
   p.multiple = multiple;
   p.onchange = async () => {
     try {
@@ -1049,6 +1223,43 @@ function chooseFiles(accept, multiple, handler) {
     }
   };
   p.click();
+}
+async function confirmTranscriptFolder(files, chooseFormat) {
+  const folder = transcriptFolder(files);
+  const format = await askForm(
+    "Import a transcript folder",
+    "<p>" +
+      folder.files.length +
+      (folder.files.length === 1
+        ? " transcript file in “"
+        : " transcript files in “") +
+      esc(folder.name) +
+      "”. Each filename identifies an interview.</p>" +
+      (folder.skipped
+        ? "<p>" +
+          folder.skipped +
+          (folder.skipped === 1
+            ? " other file will be skipped.</p>"
+            : " other files will be skipped.</p>")
+        : "") +
+      "<details><summary>Files to import</summary><ul>" +
+      folder.files.map((f) => "<li>" + esc(f.name) + "</li>").join("") +
+      "</ul></details>" +
+      (chooseFormat
+        ? formselect(
+            "folder-format",
+            "How are these interviews coded?",
+            [
+              ["text", "They are uncoded"],
+              ["coded", "They already have labels"],
+            ],
+            "text",
+          )
+        : ""),
+    () => (chooseFormat ? val("folder-format") : "confirmed"),
+    "Import transcripts",
+  );
+  return format ? { ...folder, format } : null;
 }
 function snapshotViews() {
   undoViews.push(structuredClone(project.views));
@@ -1061,7 +1272,7 @@ function openBot(question = "") {
   (get("course") || get("question"))?.focus({ preventScroll: true });
 }
 function selectedPassages() {
-  const d = getData();
+  const d = includedInterview(getData());
   if (d?.kind !== "text" || (!chosen.size && !scope.length)) return [];
   const named = d.passages.filter(
     (p) => chosen.has(p.id) && !scope.includes(p.source),
@@ -1597,11 +1808,12 @@ async function checkGroupSuggestion() {
             "I couldn’t check group comparisons. Try a smaller selection.",
           ),
         );
+      const included = includedInterview(d);
       const dataset =
         d.kind === "text"
           ? {
               kind: d.kind,
-              sources: d.sources,
+              sources: included.sources,
               metadata: d.metadata,
               openAnswers: !!d.openAnswers,
               ...(d.interviews?.established
@@ -1612,7 +1824,7 @@ async function checkGroupSuggestion() {
                     },
                   }
                 : {}),
-              passages: passageUnits(d.passages).map(
+              passages: passageUnits(included.passages).map(
                 ({ source, codes, reviewed }) => ({
                   source,
                   codes,
@@ -2348,6 +2560,13 @@ async function ask(question, skill, intent = "") {
     render();
   }
 }
+function projectFilename(p) {
+  const name = p.name
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
+    .trim()
+    .slice(0, 100);
+  return (name || "Data visualiser") + " - project.json";
+}
 function download(p, name) {
   blobSave(new Blob([JSON.stringify(p)], { type: "application/json" }), name);
 }
@@ -2606,7 +2825,7 @@ async function reviewAction(act, d, el) {
   }
 }
 function patternEvidence(i, index) {
-  const d = getData(),
+  const d = includedInterview(getData()),
     v = project.views[i],
     cell = summary(i).records[index];
   if (!cell) return;
@@ -2750,7 +2969,7 @@ function evidence(i, match, codingPrompt = "") {
   const candidates =
     codingPrompt && (chosen.size || scope.length)
       ? selectedPassages()
-      : passageUnits(d.passages);
+      : passageUnits(includedInterview(d).passages);
   const ps = candidates.filter(
     (p) =>
       (!v.filter ||
@@ -3148,6 +3367,8 @@ async function handleInterview(act, el, d) {
           [
             ["text", "An uncoded transcript"],
             ["coded", "An interview with existing labels"],
+            ["folder-text", "A folder of uncoded transcripts"],
+            ["folder-coded", "A folder of transcripts with existing labels"],
           ],
           "text",
         ),
@@ -3155,14 +3376,27 @@ async function handleInterview(act, el, d) {
         "Choose files",
       );
       if (!route) return;
-      chooseFiles(".txt,.docx,.csv,.tsv,.xlsx", true, async (files) => {
-        const sets = await importFiles(files, route);
-        if (!sets || getData() !== d) return;
-        appendInterviews(d, sets);
-        checkpoint();
-        resetTutor();
-        goto(1);
-      });
+      chooseFiles(
+        ".txt,.docx,.csv,.tsv,.xlsx",
+        true,
+        async (files) => {
+          const folder = route.startsWith("folder-")
+            ? await confirmTranscriptFolder(files, false)
+            : null;
+          if (getData() !== d || (route.startsWith("folder-") && !folder))
+            return;
+          const sets = await importFiles(
+            folder?.files || files,
+            route.replace(/^folder-/, ""),
+          );
+          if (!sets || getData() !== d) return;
+          appendInterviews(d, sets);
+          checkpoint();
+          resetTutor();
+          goto(1);
+        },
+        route.startsWith("folder-"),
+      );
     },
   });
 }
@@ -3256,7 +3490,7 @@ async function action(act, el) {
       const result = summary(i, view);
       modal(
         "Save visual",
-        `<label>Visual name<input id="visual-name" required maxlength="180" value="${esc((view.title || viewName(d, view)).slice(0, 180))}"></label><p>Open this visual again under Save and export. Download your project to keep it for another session.</p><label class="tick"><input id="visual-svg" type="checkbox">Also download this visual as an SVG image</label>`,
+        `<label>Visual name<input id="visual-name" required maxlength="180" value="${esc((view.title || viewName(d, view)).slice(0, 180))}"></label><p>Open this visual again under Save and export. Project changes are saved automatically in this browser.</p><label class="tick"><input id="visual-svg" type="checkbox">Also download this visual as an SVG image</label>`,
         () => {
           const name = val("visual-name").trim();
           if (!name) throw Error("Give the visual a name.");
@@ -3326,6 +3560,9 @@ async function action(act, el) {
       show();
       return;
     }
+    case "home":
+      if (await checkpointBeforeSwitch()) home();
+      return;
     case "nav":
       goto(i);
       return;
@@ -3383,6 +3620,18 @@ async function action(act, el) {
       openBot();
       get("question")?.focus();
       return;
+    case "editfigure": {
+      const view = project.views[i];
+      editFigure(summary(i, { ...view, title: "" }), view, (draft) => {
+        snapshotViews();
+        Object.assign(view, draft);
+        render();
+        document
+          .querySelector(`[data-panel="${i}"] [data-act="editfigure"]`)
+          ?.focus();
+      });
+      return;
+    }
     case "figurestyle":
       chooseFigureStyle(i);
       return;
@@ -3417,31 +3666,44 @@ async function action(act, el) {
       compact = !compact;
       break;
     case "upload": {
-      const route = el.dataset.route;
+      const uploadProject = project;
+      let route = el.dataset.route;
+      const folderMode = route === "interview-folder";
       chooseFiles(
         route === "survey" || route === "table"
           ? ".csv,.tsv,.xlsx"
           : ".docx,.txt,.csv,.tsv,.xlsx",
         true,
         async (files) => {
+          const folder = folderMode
+            ? await confirmTranscriptFolder(files, true)
+            : null;
+          if (project !== uploadProject || (folderMode && !folder)) return;
+          if (folder) {
+            files = folder.files;
+            route = folder.format === "coded" ? "coded" : "interview";
+          }
           let datasets = await importFiles(
             files,
             route === "interview" ? "text" : route,
           );
-          if (!datasets?.length) return;
+          if (!datasets?.length || project !== uploadProject) return;
           if (["interview", "coded"].includes(route)) {
             if (datasets.length > 1)
               appendInterviews(datasets[0], datasets.slice(1));
             datasets = [datasets[0]];
+            if (folder) datasets[0].name = folder.name;
             interviews(datasets[0]).source = datasets[0].sources[0];
           } else if (route === "text")
             for (const set of datasets) set.textPurpose = "documents";
           project.datasets.push(...datasets);
           if (project.name === "Untitled project")
-            project.name = files[0].name.replace(/\.[^.]+$/, "");
+            project.name =
+              folder?.name || files[0].name.replace(/\.[^.]+$/, "");
           activate(datasets[0].id);
           goto(1);
         },
+        folderMode,
       );
       return;
     }
@@ -4066,31 +4328,55 @@ async function action(act, el) {
       project.saved.push(s);
       break;
     }
-    case "device":
+    case "device": {
+      // Point the explicit device shortcut at the live autosave so it cannot
+      // silently reopen an older snapshot after subsequent edits.
       try {
-        localStorage.setItem(
-          "dv-project",
-          JSON.stringify(projectPackage(project)),
-        );
+        // A refresh can follow the click before the IndexedDB transaction finishes.
+        localStorage.setItem("dv-device-project-id", recoveryId(project));
       } catch {
-        throw Error(
-          "This browser could not store the project. Choose Download project with data to keep your work.",
-        );
+        /* Recent projects also works without the shortcut. */
+      }
+      const stored = await checkpointProject(project);
+      try {
+        if (stored)
+          localStorage.setItem("dv-device-project-id", recoveryId(project));
+        else {
+          localStorage.setItem(
+            "dv-project",
+            JSON.stringify(projectPackage(project)),
+          );
+          localStorage.removeItem("dv-device-project-id");
+        }
+      } catch {
+        if (!stored)
+          throw Error(
+            "This browser could not store the project. Download your project to keep your work.",
+          );
       }
       notice(
-        "Saved. Choose Resume on this device in the same browser to reopen this project.",
+        stored
+          ? "Saved in Recent projects on Home."
+          : "A copy was saved in this browser.",
       );
       return;
+    }
     case "removeCodingCopy":
       if (
         await askForm(
           "Remove this recovery copy?",
-          "<p>This removes the interview recovery copy from this browser. Downloaded projects and your open workspace are kept.</p>",
+          "<p>This removes the autosaved project from Recent projects in this browser. Downloaded projects and your open workspace are kept.</p>",
           () => true,
           "Remove copy",
         )
       ) {
-        await removeCodingCopy(el.dataset.copy);
+        await removeRecovery(el.dataset.copy);
+        try {
+          if (localStorage.getItem("dv-device-project-id") === el.dataset.copy)
+            localStorage.removeItem("dv-device-project-id");
+        } catch {
+          /* Recent projects still works without this shortcut. */
+        }
         render();
       }
       return;
@@ -4099,17 +4385,15 @@ async function action(act, el) {
         project.datasets.length &&
         !(await askForm(
           "Switch projects?",
-          "<p>Download the current project first if you want to keep its changes.</p>",
+          "<p>Your current project will stay in Recent projects.</p>",
           () => true,
           "Resume coding project",
         ))
       )
         return;
-      const { project: restored, summary } = await loadCodingCopy(
-        el.dataset.copy,
-      );
-      setProject(restored);
-      useCodingCopy(project, summary);
+      if (!(await checkpointBeforeSwitch())) return;
+      const saved = await loadRecovery(el.dataset.copy);
+      setProject(saved.project, saved);
       return;
     }
     case "deviceOpen":
@@ -4117,13 +4401,26 @@ async function action(act, el) {
         project.datasets.length &&
         !(await askForm(
           "Switch projects?",
-          "<p>Resuming the device copy replaces the open workspace. Download your current project first if you want to keep these edits.</p>",
+          "<p>Your current project will stay in Recent projects.</p>",
           () => true,
           "Resume saved copy",
         ))
       )
         return;
-      setProject(JSON.parse(localStorage.getItem("dv-project")));
+      if (!(await checkpointBeforeSwitch())) return;
+      {
+        const id = localStorage.getItem("dv-device-project-id");
+        if (id) {
+          const saved = await loadRecovery(id);
+          const p = saved.project;
+          const target = p.confirmed.includes(p.active)
+            ? p.figurePanels === "both"
+              ? 3
+              : 2
+            : 1;
+          setProject(p, saved, target);
+        } else setProject(JSON.parse(localStorage.getItem("dv-project")));
+      }
       return;
     case "download":
     case "settings":
@@ -4131,10 +4428,7 @@ async function action(act, el) {
         act === "settings" ? settingsProject(project) : projectPackage(project),
         act === "settings"
           ? "visualiser-settings.json"
-          : (project.name
-              .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
-              .trim()
-              .slice(0, 100) || "Data visualiser") + " - project.json",
+          : projectFilename(project),
       );
       if (act === "download" && codingSaveStatus.has(project))
         codingSaveStatus.get(project).needsSave = false;
@@ -4142,6 +4436,48 @@ async function action(act, el) {
     case "open":
       chooseFiles(".json", false, ([file]) => openProjectFile(file));
       return;
+    case "report": {
+      const html = projectReport(project, (dataset, v, i, views) =>
+        new XMLSerializer().serializeToString(
+          figure(summary(i, v, dataset, views), v, { width: 760 }),
+        ),
+      );
+      blobSave(
+        new Blob([html], { type: "text/html;charset=utf-8" }),
+        fileStem(project.name) + " - report.html",
+      );
+      return;
+    }
+    case "codedword": {
+      if (!isInterview(d)) return;
+      const one = d.sources.length === 1;
+      const choice = await askForm(
+        "Download coded interviews",
+        "<p>Each Word document contains the transcript, its coloured labels and a legend. Share the project download to continue coding together on another device.</p>" +
+          (one
+            ? "<p>" + esc(d.sources[0]) + "</p>"
+            : formselect(
+                "word-interviews",
+                "Which interviews?",
+                [
+                  ["all", "All interviews together (.zip)"],
+                  ...d.sources.map((source, i) => [String(i), source]),
+                ],
+                String(Math.max(0, d.sources.indexOf(d.interviews?.source))),
+              )),
+        () =>
+          one
+            ? [d.sources[0]]
+            : val("word-interviews") === "all"
+              ? [...d.sources]
+              : [d.sources[Number(val("word-interviews"))]],
+        "Download",
+      );
+      if (!choice || getData() !== d) return;
+      const { name, blob } = codedInterviewDownload(d, choice);
+      blobSave(blob, name);
+      return;
+    }
     case "downloadfigure":
       return action(val("figure-format") === "svg" ? "svg" : "png", el);
     case "previewexport":
@@ -4319,6 +4655,7 @@ document.addEventListener("change", (e) => {
   const t = e.target;
   if (t.id === "includeBotChat") {
     project.includeBotChat = t.checked;
+    scheduleSave();
     return;
   }
   if (t.id === "dataset") {
@@ -4409,4 +4746,14 @@ document.addEventListener("change", (e) => {
       ?.focus({ preventScroll: true });
 });
 resetTutor();
-render();
+const initialRoute = window.history.state;
+if (
+  initialRoute?.id &&
+  performance.getEntriesByType("navigation")[0]?.type === "back_forward"
+) {
+  render();
+  restoreLocation(initialRoute);
+} else {
+  markLocation(true);
+  render();
+}

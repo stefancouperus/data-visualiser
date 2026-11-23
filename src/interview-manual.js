@@ -1,3 +1,9 @@
+import {
+  labelAppearance,
+  availableLabelColour,
+  editCategory,
+  setLabelAppearance,
+} from "./label-appearance.js";
 import { transcriptIndex } from "./transcript-index.js";
 import { esc } from "./chart.js";
 import { uid } from "./import.js";
@@ -9,26 +15,16 @@ import {
 } from "./interviews.js";
 import { askForm, button, formselect, get, modal, notice, val } from "./ui.js";
 
-const colours = [
-  "#405cac",
-  "#8e4a70",
-  "#357366",
-  "#996022",
-  "#5a5392",
-  "#336c88",
-  "#876a32",
-  "#80624c",
-];
-function colour(label) {
-  let hash = 0;
-  for (const c of label) hash = (hash * 31 + c.codePointAt(0)) >>> 0;
-  return colours[hash % colours.length];
-}
-export function chip(label) {
+export function chip(label, styles, original = label) {
+  const style = styles.get(labelKey(label)) || styles.get(labelKey(original));
   return (
     '<span class="iv-chip" style="--chip:' +
-    colour(label) +
-    '">' +
+    (style?.colour || "#555555") +
+    '"' +
+    (style?.category
+      ? ' title="' + esc("Category: " + style.category) + '"'
+      : "") +
+    ">" +
     esc(label) +
     "</span>"
   );
@@ -76,7 +72,7 @@ function rangeTarget(index, original, start, end) {
   };
 }
 
-function quotationRanges(index, original) {
+export function quotationRanges(index, original) {
   const ranges = new Map();
   function add(start, text, labels) {
     if (!labels.length || !text.length) return;
@@ -97,7 +93,7 @@ function quotationRanges(index, original) {
     (a, b) => a.start - b.start || a.end - b.end,
   );
 }
-function highlightedText(original, ranges) {
+function highlightedText(original, ranges, styles) {
   const points = [
     ...new Set([
       0,
@@ -118,15 +114,15 @@ function highlightedText(original, ranges) {
         hits.length === 1
           ? `data-iv-quotation="${esc(original.id)}" data-start="${first.start}" data-end="${first.end}"`
           : "";
-      return `<mark class="iv-highlight" style="--chip:${colour(labels[0])}" title="${esc(labels.join(", "))}" ${attr}>${text}</mark>`;
+      return `<mark class="iv-highlight" style="--chip:${styles.get(labelKey(labels[0]))?.colour || "#555555"}" title="${esc(labels.join(", "))}" ${attr}>${text}</mark>`;
     })
     .join("");
 }
 
-export function transcriptRows(passages, selected) {
+export function transcriptRows(passages, selected, styles, sourceOrdinals) {
   const index = transcriptIndex(passages);
   const selectedId = index.positions.get(selected?.id)?.original.id;
-  const ordinals = index.numbers;
+  const ordinals = sourceOrdinals || index.numbers;
   return index.originals
     .map((p) => {
       const ranges = quotationRanges(index, p);
@@ -142,13 +138,16 @@ export function transcriptRows(passages, selected) {
             short = quote.length > 72 ? quote.slice(0, 69) + "…" : quote;
           return button(
             "iv-excerpt",
-            "“" + esc(short) + "” " + [...r.labels].map(chip).join(" "),
+            "“" +
+              esc(short) +
+              "” " +
+              [...r.labels].map((label) => chip(label, styles)).join(" "),
             "iv-quotation-button",
             `data-id="${esc(p.id)}" data-start="${r.start}" data-end="${r.end}" title="Edit labels on this quotation"`,
           );
         })
         .join("");
-      return `<article class="iv-passage ${p.id === selectedId ? "iv-selected" : ""}" data-iv-id="${esc(p.id)}"><button data-act="iv-select" data-id="${esc(p.id)}" aria-pressed="${p.id === selectedId}">${p.parent ? "Saved quotation" : "Passage"} ${ordinals.get(p.id)}</button><p data-iv-text="${esc(p.id)}">${highlightedText(p, ranges)}</p><div>${p.codes.map(chip).join("")}</div>${links ? '<div class="iv-quotation-list">' + links + "</div>" : ""}${unlocated.length ? "<details><summary>Recorded supporting words</summary><small>The location of these words is ambiguous. Use the passage label to edit the assignment.</small>" + unlocated.map((e) => "<p>" + chip(e.code) + " “" + esc(e.quote) + "”</p>").join("") + "</details>" : ""}</article>`;
+      return `<article class="iv-passage ${p.id === selectedId ? "iv-selected" : ""}" data-iv-id="${esc(p.id)}"><button data-act="iv-select" data-id="${esc(p.id)}" aria-pressed="${p.id === selectedId}">${p.parent ? "Saved quotation" : "Passage"} ${ordinals.get(p.id)}</button><p data-iv-text="${esc(p.id)}">${highlightedText(p, ranges, styles)}</p><div>${p.codes.map((label) => chip(label, styles)).join("")}</div>${links ? '<div class="iv-quotation-list">' + links + "</div>" : ""}${unlocated.length ? "<details><summary>Recorded supporting words</summary><small>The location of these words is ambiguous. Use the passage label to edit the assignment.</small>" + unlocated.map((e) => "<p>" + chip(e.code, styles) + " “" + esc(e.quote) + "”</p>").join("") + "</details>" : ""}</article>`;
     })
     .join("");
 }
@@ -223,6 +222,7 @@ function selectedTargets(ps, selected, explicit) {
 
 export function manageLabels(d, api, refresh, initial = "") {
   const book = sharedBook(d);
+  const styles = labelAppearance(d);
   modal(
     "Manage project labels",
     '<div class="iv-label-editor">' +
@@ -235,7 +235,11 @@ export function manageLabels(d, api, refresh, initial = "") {
         ],
         initial,
       ) +
-      '<label>Label name<input id="iv-label-name" maxlength="100" required></label><label>Meaning (optional)<textarea id="iv-label-meaning" maxlength="500"></textarea></label><p id="iv-label-usage"></p>' +
+      '<label>Label name<input id="iv-label-name" maxlength="100" required></label><label>Meaning (optional)<textarea id="iv-label-meaning" maxlength="500"></textarea></label><label>Label colour<input id="iv-label-colour" type="color"></label><label>Category (optional)<input id="iv-label-category" maxlength="100" list="iv-categories" placeholder="Choose or type a category"></label><datalist id="iv-categories">' +
+      (d.coding?.categories || [])
+        .map((c) => '<option value="' + esc(c) + '"></option>')
+        .join("") +
+      '</datalist><small>Labels start with different colours. Type a category name to group related labels.</small><p id="iv-label-usage"></p>' +
       (d.interviews?.draft ? '<p id="iv-label-draft" role="status"></p>' : "") +
       '<button type="button" class="iv-remove-label" id="iv-label-delete">Remove label</button></div>',
     () => {
@@ -245,6 +249,12 @@ export function manageLabels(d, api, refresh, initial = "") {
         label: val("iv-label-name").trim(),
         definition: val("iv-label-meaning").trim(),
       });
+      setLabelAppearance(
+        d,
+        val("iv-label-name").trim(),
+        val("iv-label-colour"),
+        val("iv-label-category"),
+      );
       refresh();
     },
     "Save label",
@@ -254,6 +264,11 @@ export function manageLabels(d, api, refresh, initial = "") {
       entry = i === "" ? null : book[Number(i)];
     get("iv-label-name").value = entry?.label || "";
     get("iv-label-meaning").value = entry?.definition || "";
+    const appearance = entry
+      ? styles.get(labelKey(entry.label))
+      : { colour: availableLabelColour(styles) };
+    get("iv-label-colour").value = appearance?.colour || "#315ea5";
+    get("iv-label-category").value = entry ? appearance?.category || "" : "";
     get("iv-label-delete").hidden = !entry;
     const count = entry
       ? d.passages.filter((p) =>
@@ -309,7 +324,37 @@ export function manageLabels(d, api, refresh, initial = "") {
   show();
 }
 
+export function manageCategories(d, refresh) {
+  const names = d.coding?.categories || [];
+  modal(
+    "Manage label categories",
+    formselect("iv-category-choice", "Category", [
+      ["", "Create a category"],
+      ...names.map((c) => [c, c]),
+    ]) +
+      '<label>Category name<input id="iv-category-name" maxlength="100"></label><small>Assign labels to a category in Manage labels.</small><p><button type="button" id="iv-category-remove" hidden>Remove category</button></p>',
+    () => {
+      if (!val("iv-category-name").trim())
+        throw Error("Enter a category name.");
+      editCategory(d, val("iv-category-choice"), val("iv-category-name"));
+      refresh();
+    },
+    "Save category",
+  );
+  get("iv-category-choice").onchange = () => {
+    const old = val("iv-category-choice");
+    get("iv-category-name").value = old;
+    get("iv-category-remove").hidden = !old;
+  };
+  get("iv-category-remove").onclick = () => {
+    editCategory(d, val("iv-category-choice"), "");
+    get("dialog").close();
+    refresh();
+  };
+}
+
 export function editPassageLabels(d, s, ps, api, refresh, explicit) {
+  const styles = labelAppearance(d);
   const targets = selectedTargets(ps, s.passage, explicit);
   const fixed = s.established && approvedBook(d).length > 0;
   const book = fixed ? approvedBook(d) : sharedBook(d),
@@ -336,7 +381,7 @@ export function editPassageLabels(d, s, ps, api, refresh, explicit) {
       book
         .map(
           (e, i) =>
-            `<label class="tick"><input type="checkbox" name="iv-label" value="${i}">${chip(e.label)}</label>`,
+            `<label class="tick"><input type="checkbox" name="iv-label" value="${i}">${chip(e.label, styles)}</label>`,
         )
         .join("") +
       (fixed

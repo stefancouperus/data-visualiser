@@ -133,6 +133,24 @@ export function verifyProject(p) {
   }
   if (!p.settingsOnly)
     for (const d of p.datasets) {
+      const styles = d.coding?.labelStyles;
+      const categories = d.coding?.categories;
+      if (
+        (styles !== undefined &&
+          (!Array.isArray(styles) ||
+            styles.some(
+              (row) =>
+                typeof row?.label !== "string" ||
+                !/^#[0-9a-f]{6}$/i.test(row.colour) ||
+                typeof row.category !== "string",
+            ))) ||
+        (categories !== undefined &&
+          (!Array.isArray(categories) ||
+            categories.some((c) => typeof c !== "string")))
+      )
+        throw Error(
+          "This project contains unreadable label colours or categories.",
+        );
       const review = d.coding?.bookDraft;
       if (
         review != null &&
@@ -369,6 +387,18 @@ function rewriteThemeReferences(project, d, old, name, undoViews) {
   const matches = (value) =>
     typeof value === "string" && labelKey(value) === previous;
   const rename = (value) => (matches(value) ? name : value);
+  if (d.coding?.labelStyles) {
+    const target = d.coding.labelStyles.find(
+      (row) => row.label === name && !matches(row.label),
+    );
+    d.coding.labelStyles = d.coding.labelStyles.flatMap((row) =>
+      matches(row.label)
+        ? name && !target
+          ? [{ ...row, label: name }]
+          : []
+        : [row],
+    );
+  }
   for (const p of d.passages) {
     p.codes = [...new Set(p.codes.map(rename).filter(Boolean))];
     if (p.codingEvidence) {

@@ -4,6 +4,7 @@ import {
   highlightChoices,
   paletteFor,
 } from "./figure-styles.js";
+import { figurePresentation } from "./figure-edits.js";
 import * as d3 from "d3";
 import { drawWordTable } from "./word-table.js";
 import { drawGap } from "./survey-gap.js";
@@ -211,8 +212,12 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
   }
   if (style === "workshop") rule(pos - 7, w - margin, accent, 1.4);
   pos += 12;
-  const records = a.records || [],
-    groups = [...new Set(records.map((r) => r.group))],
+  const { records, named, field, order } = figurePresentation(a, v);
+  const originalRows =
+    v.task === "patterns" && records !== a.records
+      ? new Map(a.records.map((r, i) => [r, i]))
+      : null;
+  const groups = [...new Set(records.map((r) => r.group))],
     labels = [...new Set(records.map((r) => r.label))];
   const labelIndex = new Map(labels.map((key, i) => [key, i]));
   const ink = (i) => palette[i % palette.length];
@@ -225,19 +230,22 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
         ? accent
         : muted[i % muted.length]
       : ink(i);
-  function bars(list, mark) {
+  function bars(list, mark, rowDimension = "labels") {
     if (!list.length) return;
     const max = Math.max(1, ...records.map((r) => r.value)),
       left = Math.min(w * 0.36, 215);
     const scale = d3.scaleLinear([0, max], [0, w - left - 85]);
     for (const r of list) {
       line(
-        shorten(r.label, Math.floor(left / (8.1 * theme.scale))),
+        shorten(
+          named(rowDimension, r.label),
+          Math.floor(left / (8.1 * theme.scale)),
+        ),
         margin,
         pos + 5,
       )
         .append("title")
-        .text(r.label);
+        .text(named(rowDimension, r.label));
       const colour = markInk(
         groups.length === 1 &&
           labels.length <= palette.length &&
@@ -282,7 +290,11 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
     const namedQuestions = v.patternMode === "together";
     if (namedQuestions)
       for (const [i, name] of a.selectedLabels.entries())
-        block(i + 1 + ". " + name, Math.floor((w - 52) / 8), 13);
+        block(
+          i + 1 + ". " + named("questions", name),
+          Math.floor((w - 52) / 8),
+          13,
+        );
     const max = Math.max(1, ...records.map((r) => r.value));
     const patternKeys = a.groupLabel
       ? [...new Set(records.map((r) => r.groupValue))]
@@ -295,17 +307,18 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
       if (r.group && group !== r.group) {
         group = r.group;
         pos += 8;
-        block(group, Math.floor((w - 52) / 8), 15, true);
+        block(named("groups", group), Math.floor((w - 52) / 8), 15, true);
       }
       const rowStart = pos - 16;
       const names = namedQuestions
         ? r.parts.map((p, j) => j + 1 + ". " + p)
         : r.parts;
+      const category = named("labels", r.label);
       const label = a.groupLabel
-        ? r.groupValue
-        : ranked
+        ? named("subgroups", r.groupValue)
+        : ranked && category === r.label
           ? names.join("   ·   ")
-          : r.label;
+          : category;
       const amount = r.undefinedShare
         ? "No answers"
         : a.unit.startsWith("%")
@@ -351,12 +364,14 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
         .attr("width", w - 2 * margin)
         .attr("height", pos - rowStart)
         .attr("fill", "transparent")
-        .attr("data-pattern-row", index)
+        .attr("data-pattern-row", originalRows?.get(r) ?? index)
         .attr("role", inspectable ? "button" : null)
         .attr("tabindex", inspectable ? 0 : null)
         .attr(
           "aria-label",
-          "Read evidence: " + (a.groupLabel ? r.group + " · " : "") + label,
+          "Read evidence: " +
+            (a.groupLabel ? named("groups", r.group) + " · " : "") +
+            label,
         )
         .attr("cursor", inspectable ? "pointer" : null)
         .append("title")
@@ -366,6 +381,7 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
     pos = drawGap(root, {
       records,
       groups,
+      named,
       width: w,
       margin,
       pos,
@@ -385,17 +401,28 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
       theme,
       interactive,
       sourcesLabel: a.sourcesLabel,
+      named,
     });
   } else if (v.chart === "excerpts") {
     for (const p of a.excerpt) {
       rule(pos - 14, margin + 24, accent, 2);
-      block(p.source + "  ·  " + (p.codes?.join(", ") || "Text"), 74, 13, true);
+      block(
+        named("sources", p.source) +
+          "  ·  " +
+          (p.codes?.map((c) => named("codes", c)).join(", ") || "Text"),
+        74,
+        13,
+        true,
+      );
       block(p.text, Math.floor((w - 52) / 8));
       pos += 12;
     }
   } else if (v.chart === "table") {
     block(
-      "Group  /  category                               Value",
+      field(
+        "tableHeading",
+        "Group  /  category                               Value",
+      ),
       65,
       13,
       true,
@@ -413,8 +440,8 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
           : null;
       const emphasise = highlighted && r.label === highlighted;
       block(
-        (r.group ? r.group + "  /  " : "") +
-          r.label +
+        (r.group ? named("groups", r.group) + "  /  " : "") +
+          named("labels", r.label) +
           "     " +
           num(r.value) +
           (a.unit.startsWith("%") ? "%" : "") +
@@ -435,21 +462,30 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
     root.attr("data-width", Math.max(w, labelW + 45 + cw * labels.length));
     labels.forEach((name, i) =>
       line(
-        shorten(name, Math.max(7, Math.floor(cw / (8 * theme.scale)))),
+        shorten(
+          named("labels", name),
+          Math.max(7, Math.floor(cw / (8 * theme.scale))),
+        ),
         margin + labelW + i * cw,
         pos,
         11,
       )
         .append("title")
-        .text(name),
+        .text(named("labels", name)),
     );
     pos += 9;
     for (const g of groups) {
-      line(shorten(g || a.unit, 19), margin, pos + 23, 13);
+      line(
+        shorten(named("groups", g) || field("unit", a.unit), 19),
+        margin,
+        pos + 23,
+        13,
+      );
       records
         .filter((r) => r.group === g)
-        .forEach((r, i) => {
-          const value = r.value;
+        .forEach((r) => {
+          const i = labelIndex.get(r.label),
+            value = r.value;
           const cell = root
             .append("g")
             .attr("data-code", r.label)
@@ -458,7 +494,12 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
             .attr("tabindex", inspectable ? 0 : null)
             .attr(
               "aria-label",
-              "Read evidence: " + g + " · " + r.label + " · " + value,
+              "Read evidence: " +
+                named("groups", g) +
+                " · " +
+                named("labels", r.label) +
+                " · " +
+                value,
             )
             .attr("cursor", inspectable ? "pointer" : null);
           cell
@@ -478,7 +519,15 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
             .attr("text-anchor", "middle")
             .attr("fill", readableText(heat(value / max)))
             .text(num(value));
-          cell.append("title").text(g + " · " + r.label + " · " + value);
+          cell
+            .append("title")
+            .text(
+              named("groups", g) +
+                " · " +
+                named("labels", r.label) +
+                " · " +
+                value,
+            );
         });
       pos += 37;
     }
@@ -491,6 +540,7 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
       pos,
       theme,
       style,
+      named,
       markInk,
       paper,
       line,
@@ -508,7 +558,7 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
     const y = d3
       .scaleLinear([0, d3.max(records, (r) => r.value) || 1], [bottom, top])
       .nice();
-    line(a.unit, margin, pos, 12);
+    line(field("axisY", a.unit), margin, pos, 12);
     root
       .append("g")
       .attr("transform", "translate(65,0)")
@@ -537,13 +587,14 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
         .text(r.label + " · " + r.n + " of " + r.den);
     }
     pos = bottom + 38;
-    block(a.x, Math.floor((w - 52) / 8), 13);
+    block(field("axisX", a.x), Math.floor((w - 52) / 8), 13);
   } else if (v.chart === "stack") {
     for (const g of groups) {
       const series = records.filter((r) => r.group === g);
       const count = series[0]?.den;
       line(
-        (g || a.x) + (count == null ? "" : " (n = " + count + ")"),
+        (named("groups", g) || a.x) +
+          (count == null ? "" : " (n = " + count + ")"),
         margin,
         pos,
         13,
@@ -563,14 +614,17 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
           .attr("stroke-width", 0.7)
           .attr("fill", markInk(labels.indexOf(r.label), r.label))
           .append("title")
-          .text(r.label + " " + num(r.value) + "%");
+          .text(named("labels", r.label) + " " + num(r.value) + "%");
         x += n;
       }
       pos += 44;
     }
     labels.forEach((l, i) => {
       pointMark(root, style, margin + 4, pos - 4, 4, markInk(i, l), paper);
-      for (const t of wrap(l, Math.floor((w - 65) / (7.5 * theme.scale)))) {
+      for (const t of wrap(
+        named("labels", l),
+        Math.floor((w - 65) / (7.5 * theme.scale)),
+      )) {
         line(t, margin + 17, pos, 13, l === highlighted);
         pos += 20 * theme.scale;
       }
@@ -580,15 +634,22 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
     v.chart === "scatter" ||
     v.chart === "line"
   ) {
-    const isModel = v.chart === "model",
-      ps = isModel
-        ? (a.predictions || []).map((p, i) => ({
-            a: a.numericalPredictor ? Number(p.label) : i,
-            b: p.value,
-            g: "",
-            ...p,
-          }))
-        : a.points;
+    const isModel = v.chart === "model";
+    let predictions = a.predictions || [];
+    if (isModel && !a.numericalPredictor) {
+      const byLabel = new Map(predictions.map((p) => [p.label, p]));
+      predictions = order("predictions", [...byLabel.keys()]).map((key) =>
+        byLabel.get(key),
+      );
+    }
+    const ps = isModel
+      ? predictions.map((p, i) => ({
+          a: a.numericalPredictor ? Number(p.label) : i,
+          b: p.value,
+          g: "",
+          ...p,
+        }))
+      : a.points;
     if (ps.length) {
       const h = 225,
         left = 68,
@@ -609,7 +670,9 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
       if (isModel && !a.numericalPredictor)
         axis = axis
           .tickValues(ps.map((p) => p.a))
-          .tickFormat((i) => shorten(ps[i]?.label || "", 12));
+          .tickFormat((i) =>
+            shorten(named("predictions", ps[i]?.label || ""), 12),
+          );
       else if (a.date)
         axis = axis.tickFormat((n) => new Date(n).toISOString().slice(0, 10));
       root
@@ -620,8 +683,8 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
         .append("g")
         .attr("transform", "translate(" + left + ",0)")
         .call(d3.axisLeft(y).ticks(theme.ticks));
-      line(a.y || a.unit, margin, pos - 4, 12);
-      const series = [...new Set(ps.map((p) => p.g))];
+      line(field("axisY", a.y || a.unit), margin, pos - 4, 12);
+      const series = order("series", [...new Set(ps.map((p) => p.g))]);
       for (const [i, g] of series.entries()) {
         const points = ps.filter((p) => p.g === g).sort((a, b) => a.a - b.a);
         if (v.chart === "line")
@@ -662,12 +725,18 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
           )
             .append("title")
             .text(
-              [g, p.label || p.a, num(p.b)].filter((v) => v !== "").join(" · "),
+              [
+                named("series", g),
+                named("predictions", p.label) || p.a,
+                num(p.b),
+              ]
+                .filter((v) => v !== "")
+                .join(" · "),
             );
         }
       }
       pos = bottom + 43;
-      block(a.x || "", Math.floor((w - 52) / 8), 13);
+      block(field("axisX", a.x || ""), Math.floor((w - 52) / 8), 13);
       for (const [i, g] of series.entries())
         if (g) {
           pointMark(
@@ -679,26 +748,27 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
             markInk(i, g),
             paper,
           );
-          line(g, margin + 17, pos, 13, g === highlighted);
+          line(named("series", g), margin + 17, pos, 13, g === highlighted);
           pos += 18;
         }
     }
   } else if (groups.length > 1 && v.chart !== "small") {
     for (const label of labels) {
-      line(label, margin, pos, 14, true);
+      line(named("labels", label), margin, pos, 14, true);
       pos += 22;
       bars(
         records
           .filter((r) => r.label === label)
           .map((r) => ({ ...r, label: r.group })),
         v.chart,
+        "groups",
       );
       pos += 6;
     }
   } else {
     for (const g of groups) {
       if (g) {
-        line(g, margin, pos, 14, true);
+        line(named("groups", g), margin, pos, 14, true);
         pos += theme.row;
       }
       bars(
@@ -735,7 +805,7 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
     pos += 14;
   }
   block(
-    (a.unit ? a.unit + " · " : "") + a.note,
+    (a.unit ? field("unit", a.unit) + " · " : "") + a.note,
     Math.floor((w - 52) / 7.3),
     12,
   );
