@@ -8,6 +8,8 @@ export const discoveryLimit = 6;
 const key = (text) =>
   text.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 
+export { key as labelKey };
+
 export function allCodes(d) {
   const approved = d.interviews?.established
     ? (d.coding?.book || []).map((e) => e.label)
@@ -87,6 +89,7 @@ function validateSuggestions(raw, passages, guide, newLabelLimit, excluded) {
   const known = new Map(
     guide.vocabulary.map((entry) => [key(entry.label), entry]),
   );
+  const withdrawn = new Set((guide.withdrawnLabels || []).map(key));
   const newLabels = new Map();
   const used = new Map(passages.map((p) => [p.id, new Set(p.codes.map(key))]));
   const sources = new Map(passages.map((p) => [p.id, p.text]));
@@ -112,6 +115,10 @@ function validateSuggestions(raw, passages, guide, newLabelLimit, excluded) {
     }
     const id = key(label),
       taken = used.get(entry.id);
+    if (withdrawn.has(id)) {
+      skip("label");
+      continue;
+    }
     if (taken.has(id)) {
       skip("duplicate");
       continue;

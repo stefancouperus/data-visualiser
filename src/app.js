@@ -21,6 +21,7 @@ import {
   useCodingCopy,
 } from "./interview-recovery.js";
 import { interviewScreen, interviewAction } from "./interview-workspace.js";
+import { transcriptEndpoint } from "./interview-manual.js";
 import { writtenAnswerSet, isOpenQuestion } from "./open-answers.js";
 import { confirmedRoles, editRoles } from "./variable-roles.js";
 import { termHelp, bindTermHelp, termMeaning } from "./term-help.js";
@@ -32,6 +33,7 @@ import {
 } from "./indicator-ui.js";
 import {
   codingGuide,
+  labelKey,
   checkedSuggestions,
   acceptsCodingBatch,
   requestsCoding,
@@ -73,6 +75,7 @@ import {
   reattach,
   settingsProject,
   renameTheme,
+  editInterviewLabel,
   linkage,
 } from "./project.js";
 import { newView, analyse, allCodes, kinds } from "./analysis.js";
@@ -456,6 +459,34 @@ async function showCodingCopies(container) {
     // Upload and downloaded projects still work when browser storage is blocked.
   }
 }
+// Rendering a completed bot batch replaces the transcript's text nodes. Retain
+// a student's unfinished native text selection by its original passage offsets.
+function readingSelection() {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || selection.isCollapsed) return;
+  const anchor = transcriptEndpoint(
+    selection.anchorNode,
+    selection.anchorOffset,
+  );
+  const focus = transcriptEndpoint(selection.focusNode, selection.focusOffset);
+  if (!anchor || !focus) return;
+  const point = ({ id, offset }) => {
+    const paragraph = document.querySelector(
+      '[data-iv-text="' + CSS.escape(id) + '"]',
+    );
+    if (!paragraph) return;
+    const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (offset <= node.length) return [node, offset];
+      offset -= node.length;
+    }
+  };
+  return () => {
+    const from = point(anchor),
+      to = point(focus);
+    if (from && to) selection.setBaseAndExtent(...from, ...to);
+  };
+}
 function render() {
   // A student may reopen a visual or change an existing question into an open one.
   const dataset = getData();
@@ -472,6 +503,7 @@ function render() {
       }
     }
   }
+  const restoreReadingSelection = readingSelection();
   const transcriptScroll = document.querySelector(".iv-text")?.scrollTop || 0;
   const previousSource = document.querySelector(".iv-paper h2")?.textContent;
   const expanded = [
@@ -562,8 +594,10 @@ function render() {
   if (
     previousSource &&
     previousSource === document.querySelector(".iv-paper h2")?.textContent
-  )
+  ) {
+    restoreReadingSelection?.();
     document.querySelector(".iv-text").scrollTop = transcriptScroll;
+  }
   if (step === 0) showCodingCopies(get("coding-copies"));
   bindTermHelp(get("app"));
   if (bot) {
@@ -2508,7 +2542,7 @@ function evidence(i, match, codingPrompt = "") {
       (d.openAnswers
         ? `<p>${d.openAnswers.answered} of ${d.openAnswers.eligible} included respondents answered. Select an answer, give the idea a short label, or ask the bot to suggest labels for your selection.</p>`
         : "") +
-      `<label>Find a passage<input id="searchPass"></label><div id="passlist">${list()}</div><div class="bar"><button type="button" id="shortpass">Use highlighted words as a passage</button><button type="button" id="discusspass" data-i="${i}">Discuss selected passages</button></div><label>Code to apply<input id="applycode" list="knowncodes"></label><datalist id="knowncodes">${opts(allCodes(d), "")}</datalist>${codingControls(d)}`,
+      `<label>Find a passage<input id="searchPass"></label><div id="passlist">${list()}</div><div class="bar"><button type="button" id="shortpass">Use highlighted words as a passage</button><button type="button" id="discusspass" data-i="${i}">Discuss selected passages</button>${isInterview(d) && !codingPrompt ? '<button type="button" id="iv-open-passage">Open passage in transcript</button>' : ""}</div><label>Code to apply<input id="applycode" list="knowncodes"></label><datalist id="knowncodes">${opts(allCodes(d), "")}</datalist>${codingControls(d)}`,
     () => {
       if (codingPrompt) {
         if (get("suggestpass").disabled)
@@ -2517,17 +2551,31 @@ function evidence(i, match, codingPrompt = "") {
         return false;
       }
       if (!selected.size) throw Error("Choose one or more passages.");
-      const code = val("applycode").trim();
+      let code = val("applycode").trim();
+      const transcript = isInterview(d);
+      const affected = new Set();
+      if (transcript && code) {
+        const existing = sharedBook(d).find(
+          (entry) => labelKey(entry.label) === labelKey(code),
+        );
+        if (existing) code = existing.label;
+        else changeInterviewLabel(d, { label: code, definition: "" });
+      }
       for (const p of d.passages.filter((p) => selected.has(p.id))) {
-        if (
-          code &&
-          isInterview(d) &&
-          interviews(d).established &&
-          !d.coding.book.some((e) => e.label === code)
-        )
-          throw Error("Choose a label from your shared interview codebook.");
-        if (code && !p.codes.includes(code)) p.codes.push(code);
+        if (code && !p.codes.includes(code)) {
+          p.codes.push(code);
+          affected.add(p.source);
+        }
         p.reviewed = true;
+      }
+      if (transcript) {
+        if (affected.size) {
+          const state = interviews(d);
+          state.done = state.done.filter((name) => !affected.has(name));
+          state.finished = false;
+        }
+        checkpointInterview(project, d);
+        if (!analysisReady(d)) return goto(1);
       }
       render();
     },
@@ -2563,6 +2611,31 @@ function evidence(i, match, codingPrompt = "") {
     page = 0;
     refresh();
   };
+  if (get("iv-open-passage")) {
+    get("iv-open-passage").onclick = () => {
+      const passage =
+        selected.size === 1
+          ? ps.find((p) => selected.has(p.id))
+          : !selected.size && ps.length === 1
+            ? ps[0]
+            : undefined;
+      if (!passage) {
+        get("formerror").textContent =
+          "Tick one passage to open it in the transcript.";
+        return;
+      }
+      const state = interviews(d);
+      state.source = passage.source;
+      state.passage = passage.id;
+      get("dialog").close();
+      goto(1);
+      const row = [...document.querySelectorAll("[data-iv-id]")].find(
+        (el) => el.dataset.ivId === (passage.parent || passage.id),
+      );
+      row?.scrollIntoView({ block: "nearest" });
+      row?.querySelector("button")?.focus({ preventScroll: true });
+    };
+  }
   get("shortpass").onmousedown = (e) => e.preventDefault();
   get("shortpass").onclick = () => {
     const selection = window.getSelection();
@@ -2583,17 +2656,38 @@ function evidence(i, match, codingPrompt = "") {
     const range = r.cloneRange();
     range.selectNodeContents(anchor);
     range.setEnd(r.startContainer, r.startOffset);
-    const start = range.toString().length,
-      quote = selection.toString();
+    let start = range.toString().length;
+    const quote = selection.toString();
     if (!quote.trim()) return;
-    let p = d.passages.find(
-      (p) => p.parent === original.id && p.start === start && p.text === quote,
-    );
+    let parent = original;
+    const visited = new Set();
+    while (parent.parent && !visited.has(parent.id)) {
+      visited.add(parent.id);
+      const next = d.passages.find(
+        (p) => p.id === parent.parent && p.source === original.source,
+      );
+      if (
+        !next ||
+        !Number.isInteger(parent.start) ||
+        next.text.slice(parent.start, parent.start + parent.text.length) !==
+          parent.text
+      )
+        break;
+      start += parent.start;
+      parent = next;
+    }
+    let p =
+      quote === original.text
+        ? original
+        : d.passages.find(
+            (p) =>
+              p.parent === parent.id && p.start === start && p.text === quote,
+          );
     if (!p) {
       p = {
         id: uid(),
         source: original.source,
-        parent: original.id,
+        parent: parent.id,
         start,
         text: quote,
         codes: [],
@@ -2670,6 +2764,17 @@ const reviewActs = [
   "multi",
   "tocorpus",
 ];
+function changeInterviewLabel(d, change) {
+  if (getData() !== d)
+    throw Error("Open this interview collection again to edit its labels.");
+  const changed = editInterviewLabel(project, d, change, undoViews);
+  if (changed) {
+    suggestions = [];
+    proposal = captionDraft = queuedShortcut = null;
+    pendingSelections.clear();
+  }
+  return changed;
+}
 async function handleInterview(act, el, d) {
   const owner = project;
   const checkpoint = () => checkpointInterview(owner, d);
@@ -2679,6 +2784,7 @@ async function handleInterview(act, el, d) {
     status: () => codingSaveStatus.get(owner)?.message || "",
     render,
     focus: () => project.researchFocus,
+    changeLabel: (change) => changeInterviewLabel(d, change),
     extract: extractCodebook,
     unlock: unlockBot,
     code: (context) => requestInterviewCoding(context, requestTutor),
@@ -2690,7 +2796,7 @@ async function handleInterview(act, el, d) {
         !d.sources.every((source) => s.done.includes(source))
       )
         throw Error("Check each interview before exploring themes.");
-      if (!s.finished) {
+      if (!project.confirmed.includes(d.id)) {
         const v = newView(d);
         if (d.sources.length > 1 && d.coding?.book?.length)
           Object.assign(v, { task: "group", chart: "presence" });
@@ -3088,8 +3194,9 @@ async function action(act, el) {
       const answers = {
         botfilehelp:
           "For a questionnaire, choose your Qualtrics export or a table of responses. For interviews, choose transcripts or coded passages. To continue a previous project, choose Open a saved project and select your downloaded project file.",
-        bottexthelp:
-          "Read a passage with its surrounding words. If it is already coded, check whether its labels capture what the speaker means. If you are starting from scratch, you can build labels from the passages or apply a codebook you already have.",
+        bottexthelp: isInterview(d)
+          ? "Highlight the speaker’s words, or select a whole passage. Choose Edit labels on selected text to add or remove labels there. Manage labels changes the shared list for these interviews."
+          : "Read a passage with its surrounding words. If it is already coded, check whether its labels capture what the speaker means. If you are starting from scratch, you can build labels from the passages or apply a codebook you already have.",
         botsavehelp:
           "Choose Download project with data. To continue on this or another computer, choose Open a saved project on Upload and select that file.",
       };
@@ -3740,17 +3847,36 @@ document.addEventListener("mousedown", (e) => {
 });
 document.addEventListener("click", async (e) => {
   const text = e.target.closest("[data-iv-text]");
-  if (
-    text &&
-    !window.getSelection()?.toString() &&
-    !interviews(getData()).draft
-  ) {
-    interviews(getData()).passage = text.dataset.ivText;
-    render();
-    return;
-  }
   const el = e.target.closest("[data-act]");
   try {
+    if (text && !window.getSelection()?.toString()) {
+      const d = getData(),
+        mark = e.target.closest("[data-iv-quotation]");
+      if (mark) {
+        await handleInterview(
+          "iv-excerpt",
+          {
+            dataset: {
+              id: mark.dataset.ivQuotation,
+              start: mark.dataset.start,
+              end: mark.dataset.end,
+            },
+          },
+          d,
+        );
+      } else {
+        // Keep the original text nodes in place so a double-click can select a word.
+        interviews(d).passage = text.dataset.ivText;
+        for (const item of document.querySelectorAll("[data-iv-id]")) {
+          const selected = item.dataset.ivId === text.dataset.ivText;
+          item.classList.toggle("iv-selected", selected);
+          item
+            .querySelector('[data-act="iv-select"]')
+            ?.setAttribute("aria-pressed", String(selected));
+        }
+      }
+      return;
+    }
     if (el) {
       await action(el.dataset.act, el);
       return;

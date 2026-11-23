@@ -1,10 +1,13 @@
 import { uid } from "./import.js";
-import { codingGuide, checkedSuggestions, discoveryLimit } from "./coding.js";
+import {
+  codingGuide,
+  checkedSuggestions,
+  discoveryLimit,
+  labelKey as normal,
+} from "./coding.js";
 
 export const isInterview = (d) =>
   d?.kind === "text" && !d.openAnswers && d.textPurpose !== "documents";
-const normal = (s) =>
-  s.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 export function sharedBook(d) {
   const entries = new Map();
   for (const e of [
@@ -17,6 +20,50 @@ export function sharedBook(d) {
       entries.set(normal(entry.label), entry);
   }
   return [...entries.values()];
+}
+// Some imported projects declare a label only by applying it to a passage.
+// Keep it in the vocabulary when a student removes its last assignment.
+export function retainInterviewVocabulary(d, entries) {
+  const declared = new Set(
+    [...(d.coding?.book || []), ...(d.coding?.meanings || [])].map((e) =>
+      normal(typeof e === "string" ? e : e.label),
+    ),
+  );
+  const missing = entries.filter((entry) => !declared.has(normal(entry.label)));
+  if (!missing.length) return;
+  d.coding ||= {};
+  d.coding.meanings = [
+    ...(d.coding.meanings || []),
+    ...missing.map((entry) => ({ ...entry })),
+  ];
+}
+// A quotation may itself contain a saved selection from an older project. Keep
+// its parent chain while any descendant has labels; never remove original text.
+export function pruneEmptyQuotations(d) {
+  const passages = new Map(d.passages.map((p) => [p.id, p]));
+  const keep = new Set();
+  const keepChain = (p) => {
+    while (p && !keep.has(p.id)) {
+      keep.add(p.id);
+      p = passages.get(p.parent);
+    }
+  };
+  for (const p of d.passages) {
+    if (!p.parent || p.codes.length || !passages.has(p.parent)) keepChain(p);
+  }
+  // Legacy jobs could batch saved quotations as well as original paragraphs.
+  // Their work units must retain the same order until the review is finished.
+  if (d.interviews?.draft && !d.interviews.draft.originalOnly) return;
+  if (keep.size === passages.size) return;
+  let selected = passages.get(d.interviews?.passage);
+  const visited = new Set();
+  while (selected && !keep.has(selected.id) && !visited.has(selected.id)) {
+    visited.add(selected.id);
+    selected = passages.get(selected.parent);
+  }
+  if (d.interviews?.passage)
+    d.interviews.passage = keep.has(selected?.id) ? selected.id : null;
+  d.passages = d.passages.filter((p) => keep.has(p.id));
 }
 // Keep uninterrupted speech manageable while preserving offsets on previously annotated text.
 function prepareReadingPassages(d) {
@@ -273,7 +320,12 @@ export function coveredByQuotation(match, parent, excerpts) {
   }
   return true;
 }
-export function draftGuide(d, sample, priorMatches = []) {
+export function draftGuide(
+  d,
+  sample,
+  priorMatches = [],
+  withdrawnLabels = d.interviews?.draft?.withdrawnLabels || [],
+) {
   if (!sample) return codingGuide(d);
   const base = codingGuide({
     ...d,
@@ -296,6 +348,7 @@ export function draftGuide(d, sample, priorMatches = []) {
   return {
     ...base,
     vocabulary,
+    ...(withdrawnLabels.length ? { withdrawnLabels } : {}),
     limits: {
       ...base.limits,
       newPerBatch: Math.max(

@@ -1954,7 +1954,7 @@ test("two interviews share an approved inductive codebook, resume a bot draft an
   await btn("Review suggested coding").click();
   await btn("Apply reviewed coding").click();
   await expect(page.locator(".iv-passage")).toHaveCount(8);
-  await expect(page.locator(".iv-passage > div .iv-chip")).toHaveCount(8);
+  await expect(page.locator(".iv-passage > div > .iv-chip")).toHaveCount(8);
   await finishInterviews(page);
   await expect(page.locator("#graphic0")).toContainText("Second.txt");
   await expect(page.locator("#graphic0")).toContainText("Fare cost");

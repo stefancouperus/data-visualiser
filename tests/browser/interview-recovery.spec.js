@@ -104,7 +104,7 @@ test("interview recovery checkpoints a failed batch, reviewer decisions and manu
     await expect(other.locator("[name=iv-match]").nth(1)).not.toBeChecked();
     await button(other, "Apply reviewed coding").click();
     await expect(
-      other.locator(".iv-passage").first().locator(":scope > div .iv-chip"),
+      other.locator(".iv-passage").first().locator(":scope > div > .iv-chip"),
     ).toHaveText(["Fares", "Delays"]);
     await expect(
       other.locator(".iv-passage").nth(2).locator(".iv-chip"),
@@ -118,7 +118,7 @@ test("interview recovery checkpoints a failed batch, reviewer decisions and manu
   await button(page, "Resume coding project").click();
   await expect(button(page, "Review suggested coding")).toHaveCount(0);
   await expect(
-    page.locator(".iv-passage").first().locator(":scope > div .iv-chip"),
+    page.locator(".iv-passage").first().locator(":scope > div > .iv-chip"),
   ).toHaveText(["Fares", "Delays"]);
   await button(page, "Upload").click();
   await button(page, "Remove recovery copy").click();
@@ -182,7 +182,7 @@ test("two tabs editing one recovery revision preserve both versions", async ({
   ]) {
     await button(page, "Resume coding project").nth(i).click();
     if (i) await button(page, "Resume coding project").last().click();
-    await expect(page.locator(".iv-passage > div .iv-chip")).toHaveText(labels);
+    await expect(page.locator(".iv-passage > div > .iv-chip")).toHaveText(labels);
     await button(page, "Upload").click();
   }
 });

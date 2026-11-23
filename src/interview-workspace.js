@@ -4,10 +4,15 @@ import {
   checkedCollectedSuggestions,
   codingLimits,
   discoveryLimit,
-  bookEntries,
 } from "./coding.js";
 import { codingControls, bindCodingControls } from "./codebook-ui.js";
-import { uid } from "./import.js";
+import {
+  chip,
+  transcriptRows,
+  transcriptOrdinals,
+  manageLabels,
+  editPassageLabels,
+} from "./interview-manual.js";
 import {
   askForm,
   button as b,
@@ -20,6 +25,7 @@ import {
 import {
   interviews,
   sharedBook,
+  pruneEmptyQuotations,
   establish,
   finishInterview,
   balancedSample,
@@ -30,27 +36,6 @@ import {
 } from "./interviews.js";
 
 const jobs = new WeakMap();
-const colours = [
-  "#405cac",
-  "#8e4a70",
-  "#357366",
-  "#996022",
-  "#5a5392",
-  "#336c88",
-  "#876a32",
-  "#80624c",
-];
-function chip(label) {
-  let hash = 0;
-  for (const c of label) hash = (hash * 31 + c.codePointAt(0)) >>> 0;
-  return (
-    '<span class="iv-chip" style="--chip:' +
-    colours[hash % colours.length] +
-    '">' +
-    esc(label) +
-    "</span>"
-  );
-}
 const tools = [
   [
     "imported",
@@ -67,7 +52,6 @@ const tools = [
     "Use an uploaded codebook (deductive)",
     "Extract the labels and meanings, then approve them.",
   ],
-  ["manual", "Code by hand", "Select a passage and give the idea a label."],
 ];
 function routeButtons(d) {
   return tools
@@ -103,19 +87,20 @@ export function interviewScreen(d, storageStatus = "") {
   const shared = s.established;
   const canFinish = !remaining && d.sources.length && !locked;
   return `<div class="iv-progress"><div><strong>${d.sources.length - remaining} of ${d.sources.length} interviews checked</strong><progress value="${d.sources.length - remaining}" max="${d.sources.length}"></progress></div>${b("iv-finish", "Coding complete · explore themes", "primary", canFinish ? "" : "disabled")}</div>
-  <div class="iv-grid"><aside class="iv-side"><h2>Interviews</h2>${d.sources.map((source, i) => b("iv-source", esc(source) + "<small>" + (draftSources.includes(source) ? "Draft in progress" : s.done.includes(source) ? "✓ Checked" : "To check") + "</small>", "iv-source", `data-index="${i}" aria-pressed="${source === s.source}" ${locked && source !== s.source ? "disabled" : ""}`)).join("")}
+  <div class="iv-grid"><aside class="iv-side"><h2>Interviews</h2>${d.sources.map((source, i) => b("iv-source", esc(source) + "<small>" + (draftSources.includes(source) ? "Draft in progress" : s.done.includes(source) ? "✓ Checked" : "To check") + "</small>", "iv-source", `data-index="${i}" aria-pressed="${source === s.source}"`)).join("")}
   ${b("iv-add", "+ Add interview", "", locked ? "disabled" : "")} ${b("download", "Save coding project", "plain")}<small data-iv-storage role="status">${esc(storageStatus || "Coding changes create a recovery copy in this browser. Reopen or remove it from Upload.")}</small></aside>
-  <section class="iv-paper"><header><small>${d.excerptSources?.includes(s.source) ? "Imported passages" : "Transcript"}</small><h2>${esc(s.source)}</h2><p>${ps.length} passages · select a passage to label it, or highlight a shorter quotation.</p>${d.excerptSources?.includes(s.source) ? "<small>Check the coverage of your export. Only the imported passages can be coded or compared.</small>" : ""}</header>
-  <div class="iv-text">${ps.map((p, i) => `<article class="iv-passage ${p.id === selected?.id ? "iv-selected" : ""}" data-iv-id="${esc(p.id)}"><button data-act="iv-select" data-id="${esc(p.id)}" aria-pressed="${p.id === selected?.id}" ${locked ? "disabled" : ""}>${p.parent ? "Saved quotation" : "Passage"} ${i + 1}</button><p data-iv-text="${esc(p.id)}">${esc(p.text)}</p><div>${p.codes.map(chip).join("")}</div>${p.codingEvidence?.length ? "<details><summary>Words supporting these labels</summary>" + p.codingEvidence.map((e) => "<p>" + chip(e.code) + " “" + esc(e.quote) + "”</p>").join("") + "</details>" : ""}</article>`).join("")}</div>
+  <section class="iv-paper"><header><small>${d.excerptSources?.includes(s.source) ? "Imported passages" : "Transcript"}</small><h2>${esc(s.source)}</h2><p>Choose a passage or highlight the words you want to label. Click a saved quotation to change its labels.</p>${selected ? '<div class="iv-manual-tools">' + b("iv-manual", "Edit labels on selected text") + '<a class="iv-label-jump" href="#iv-project-labels">Project labels</a></div>' : ""}${d.excerptSources?.includes(s.source) ? "<small>Check the coverage of your export. Only the imported passages can be coded or compared.</small>" : ""}</header>
+  <div class="iv-text">${transcriptRows(ps, selected)}</div>
   ${done ? "<p>✓ You have checked this interview.</p>" : b("iv-done", "Mark this interview as checked", "", locked || !book.length ? "disabled" : "")}</section>
-  <aside class="iv-tools"><h2>Shared codebook</h2>${book.length ? '<div class="iv-legend">' + book.map((e) => "<div>" + chip(e.label) + (e.definition ? "<small>" + esc(e.definition) + "</small>" : "") + "</div>").join("") + "</div>" : "<p>Your labels and their meanings will appear here.</p>"}
-  ${!locked && !shared ? methods : ""}
+  <aside class="iv-tools"><h2 id="iv-project-labels" tabindex="-1">Project labels</h2>${book.length ? '<div class="iv-legend">' + book.map((e) => "<div>" + chip(e.label) + (e.definition ? "<small>" + esc(e.definition) + "</small>" : "") + "</div>").join("") + "</div>" : "<p>Add your first label here or while reading a passage.</p>"}
+  ${b("iv-editbook", "Manage labels", "plain")}
+  ${!locked && !shared && s.method !== "manual" ? methods : ""}
   ${!locked && !shared && s.method === "book" ? b("iv-book", "Upload or review codebook") : ""}
   ${!locked && !shared && s.method === "inductive" ? b("iv-sample", "Ask the bot for labels", "primary") : ""}
-  ${!locked && !shared && s.method && book.length ? b("iv-establish", "Use these labels for all interviews") + "<small>This confirms your shared codebook. You can then ask the bot to apply it to the interviews you choose.</small>" : ""}
-  ${!locked && shared ? "<p>Use these same labels across interviews.</p>" + b("iv-editbook", "Edit shared codebook", "plain") + b("iv-sample", "Look for additional labels", "plain") + b("iv-auto", d.sources.length > 1 ? "Code interviews with the bot" : "Code this interview with the bot", "primary") : ""}
-  ${!locked && (s.method || shared) && selected ? b("iv-manual", "Edit labels on selected text") : ""}
-  ${!locked && !shared && s.method ? b("iv-change", "Choose another approach", "plain") : ""}
+  ${!locked && !shared && book.length ? b("iv-establish", "Use these labels for all interviews") + "<small>This confirms your shared codebook. You can then ask the bot to apply it to the interviews you choose.</small>" : ""}
+  ${!locked && shared ? "<p>Use these same labels across interviews.</p>" + b("iv-sample", "Look for additional labels", "plain") + b("iv-auto", d.sources.length > 1 ? "Code interviews with the bot" : "Code this interview with the bot", "primary") : ""}
+  ${!locked && !shared && s.method === "manual" ? '<details class="iv-coding-options" data-chart-options="iv-manual-options"><summary>Coding options</summary>' + b("iv-sample", "Ask the bot for labels", "plain") + b("iv-method", "Use an uploaded codebook", "plain", 'data-method="book"') + "</details>" : ""}
+  ${!locked && !shared && s.method && s.method !== "manual" ? b("iv-change", "Choose another approach", "plain") : ""}
   ${draft ? `<section class="iv-review" aria-live="polite"><h3>${draft.sample ? "Suggested labels" : "Bot coding draft"}</h3><p>${draft.next} of ${draft.total} batches processed · ${draft.matches.length} new suggested matches</p><small>Interviews in this draft: ${draftSources.map(esc).join(", ")}</small>${draft.error ? "<p>" + esc(draft.error) + "</p>" : ""}${job ? b("iv-stop", "Pause after this batch") : draft.next < draft.total ? b("iv-resume", "Resume coding") : b("iv-review", "Review suggested coding", "primary")}${job ? "" : b("iv-discard", "Discard draft", "plain")}</section>` : ""}
   </aside></div>`;
 }
@@ -128,13 +113,11 @@ function codingScope(d, state, sample, resuming, initialScope, api) {
       ? initialScope
       : "current";
   const lists = new Map(d.sources.map((name) => [name, []]));
-  const ordinals = new Map();
+  const ordinals = transcriptOrdinals(d.passages);
   for (const p of d.passages) {
     const list = lists.get(p.source);
     if (!list) continue;
-    // Match the passage numbers visible in the central transcript, including any saved excerpts.
-    const position = (ordinals.get(p.source) || 0) + 1;
-    ordinals.set(p.source, position);
+    const position = ordinals.get(p.id);
     if (!p.parent && p.text.trim()) list.push({ p, position });
   }
   const labelAllowance = sample
@@ -311,21 +294,37 @@ export async function interviewAction(act, el, d, api) {
   const s = interviews(d),
     ps = d.passages.filter((p) => p.source === s.source);
   const refresh = (persist = true) => {
+    const pending = jobs.get(d);
+    if (pending && pending.draft !== s.draft) {
+      pending.stop = true;
+      jobs.delete(d);
+      if (s.draft && s.draft.next < s.draft.total)
+        s.draft.error =
+          "Your edits are saved. Resume coding to continue with your changes.";
+    }
     if (persist && act !== "iv-select" && act !== "iv-source") api.checkpoint();
     if (api.current() === d) api.render();
   };
   if (
     s.draft &&
-    !["iv-source", "iv-stop", "iv-resume", "iv-review", "iv-discard"].includes(
-      act,
-    )
+    ![
+      "iv-source",
+      "iv-select",
+      "iv-manual",
+      "iv-excerpt",
+      "iv-editbook",
+      "iv-stop",
+      "iv-resume",
+      "iv-review",
+      "iv-discard",
+    ].includes(act)
   )
     throw Error("Finish reviewing or discard the current draft first.");
   function changed(names = [s.source]) {
     s.done = s.done.filter((name) => !names.includes(name));
     s.finished = false;
   }
-  if (act === "iv-source" && !s.draft) {
+  if (act === "iv-source") {
     s.source = d.sources[Number(el.dataset.index)];
     s.passage = null;
   }
@@ -337,46 +336,7 @@ export async function interviewAction(act, el, d, api) {
   }
   if (act === "iv-add") return api.add();
   if (act === "iv-establish") establish(d);
-  if (act === "iv-editbook") {
-    const book = sharedBook(d);
-    modal(
-      "Edit the shared codebook",
-      "<p>Change a meaning or add a label. If you change the codebook, check each interview again before comparing themes.</p>" +
-        book
-          .map(
-            (e, i) =>
-              "<label>" +
-              chip(e.label) +
-              '<textarea id="iv-def-' +
-              i +
-              '">' +
-              esc(e.definition) +
-              "</textarea></label>",
-          )
-          .join("") +
-        '<label>Additional label (optional)<input id="iv-add-label" maxlength="100"></label><label>Meaning of the additional label<input id="iv-add-meaning" maxlength="500"></label>',
-      () => {
-        const entries = book.map((e, i) => ({
-          label: e.label,
-          definition: val("iv-def-" + i).trim(),
-        }));
-        if (val("iv-add-label").trim())
-          entries.push({
-            label: val("iv-add-label"),
-            definition: val("iv-add-meaning"),
-          });
-        const approved = bookEntries(entries);
-        if (JSON.stringify(approved) !== JSON.stringify(book)) {
-          d.coding.book = approved;
-          s.done = [];
-          s.finished = false;
-          refresh();
-        }
-      },
-      "Save codebook",
-    );
-    return;
-  }
+  if (act === "iv-editbook") return manageLabels(d, api, refresh);
   if (act === "iv-book") {
     const working = { ...d, coding: { ...d.coding, mode: "deductive" } };
     modal(
@@ -398,93 +358,15 @@ export async function interviewAction(act, el, d, api) {
     get("suggestpass").parentElement.previousElementSibling.hidden = true;
     return;
   }
-  if (act === "iv-manual") {
-    let p = ps.find((p) => p.id === s.passage) || ps[0];
-    const sel = window.getSelection();
-    let excerpt;
-    if (sel?.rangeCount && !sel.isCollapsed) {
-      const range = sel.getRangeAt(0),
-        node = range.startContainer.parentElement?.closest("[data-iv-text]");
-      if (
-        node &&
-        node === range.endContainer.parentElement?.closest("[data-iv-text]")
-      ) {
-        const parent = ps.find((x) => x.id === node.dataset.ivText),
-          prefix = range.cloneRange();
-        prefix.selectNodeContents(node);
-        prefix.setEnd(range.startContainer, range.startOffset);
-        const quote = range.toString(),
-          start = prefix.toString().length;
-        if (quote.trim() && quote !== parent.text) {
-          excerpt = ps.find(
-            (x) =>
-              x.parent === parent.id && x.start === start && x.text === quote,
-          ) || {
-            id: uid(),
-            source: s.source,
-            text: quote,
-            parent: parent.id,
-            start,
-            codes: [],
-            reviewed: false,
-          };
-          p = excerpt;
-        } else p = parent;
-      }
-    }
-    const book = sharedBook(d);
-    modal(
-      "Label this passage",
-      "<blockquote>" +
-        esc(p.text) +
-        "</blockquote>" +
-        book
-          .map(
-            (e, i) =>
-              `<label class="tick"><input type="checkbox" name="iv-label" value="${i}" ${p.codes.includes(e.label) ? "checked" : ""}>${chip(e.label)}</label>`,
-          )
-          .join("") +
-        (!s.established
-          ? '<label>New label<input id="iv-new" maxlength="100"></label><label>What does this label mean?<input id="iv-definition" maxlength="500"></label>'
-          : ""),
-      () => {
-        const labels = [
-          ...document.querySelectorAll("[name=iv-label]:checked"),
-        ].map((n) => book[Number(n.value)].label);
-        const added = val("iv-new").trim();
-        if (added) {
-          const existing = book.find(
-            (e) => e.label.toLowerCase() === added.toLowerCase(),
-          );
-          labels.push(existing?.label || added);
-          d.coding ||= {};
-          d.coding.meanings ||= [];
-          if (!existing)
-            d.coding.meanings.push({
-              label: added,
-              definition: val("iv-definition").trim(),
-            });
-        }
-        if (excerpt && !d.passages.includes(p))
-          d.passages.splice(
-            d.passages.indexOf(ps.find((x) => x.id === p.parent)) + 1,
-            0,
-            p,
-          );
-        p.codes = [...new Set(labels)];
-        if (p.codingEvidence)
-          p.codingEvidence = p.codingEvidence.filter((e) =>
-            p.codes.includes(e.code),
-          );
-        p.reviewed = true;
-        s.passage = p.id;
-        changed();
-        refresh();
-      },
-      "Save passage coding",
+  if (act === "iv-manual" || act === "iv-excerpt")
+    return editPassageLabels(
+      d,
+      s,
+      ps,
+      api,
+      refresh,
+      act === "iv-excerpt" ? el.dataset : null,
     );
-    return;
-  }
   if (act === "iv-done") {
     const ok = await askForm(
       "Finish checking this interview?",
@@ -524,6 +406,7 @@ export async function interviewAction(act, el, d, api) {
     )
       return;
     delete s.draft;
+    pruneEmptyQuotations(d);
   }
   if (act === "iv-sample" || act === "iv-auto" || act === "iv-resume") {
     if (jobs.has(d)) return;
@@ -575,12 +458,17 @@ export async function interviewAction(act, el, d, api) {
       }
     draft.total = batches.length;
     draft.error = "";
-    const job = { stop: false };
+    const job = { stop: false, draft };
     jobs.set(d, job);
     await api.checkpoint();
     refresh(false);
     try {
-      while (draft.next < batches.length && !job.stop && api.current() === d) {
+      while (
+        s.draft === draft &&
+        draft.next < batches.length &&
+        !job.stop &&
+        api.current() === d
+      ) {
         const batch = batches[draft.next];
         const guide = draftGuide(d, sample, draft.matches);
         const result = await api.code({
@@ -609,7 +497,7 @@ export async function interviewAction(act, el, d, api) {
     } catch (e) {
       draft.error = e.message + " Choose Resume coding to retry this batch.";
     } finally {
-      jobs.delete(d);
+      if (jobs.get(d) === job) jobs.delete(d);
       await api.checkpoint();
       refresh(false);
     }
@@ -621,12 +509,11 @@ export async function interviewAction(act, el, d, api) {
     const sources = draft.sources || [draft.source];
     const sourcePassages = new Map(sources.map((source) => [source, []]));
     for (const p of d.passages) sourcePassages.get(p.source)?.push(p);
-    const positions = new Map();
+    const positions = transcriptOrdinals(d.passages);
     const targets = [];
     const selectedIds = draft.ids && new Set(draft.ids);
     for (const list of sourcePassages.values()) {
-      list.forEach((p, i) => {
-        positions.set(p.id, i + 1);
+      list.forEach((p) => {
         if (
           (!draft.originalOnly || !p.parent) &&
           (!selectedIds || selectedIds.has(p.id))
@@ -635,12 +522,24 @@ export async function interviewAction(act, el, d, api) {
       });
     }
     const reviewExcluded = {};
+    const parentById = new Map(targets.map((p) => [p.id, p]));
+    const children = new Map();
+    for (const p of d.passages) {
+      if (!p.parent || !parentById.has(p.parent)) continue;
+      if (!children.has(p.parent)) children.set(p.parent, []);
+      children.get(p.parent).push(p);
+    }
     const matches = checkedCollectedSuggestions(
       draft.matches,
       targets,
       guide,
       reviewExcluded,
-    );
+    ).filter((m) => {
+      if (!coveredByQuotation(m, parentById.get(m.id), children.get(m.id)))
+        return true;
+      reviewExcluded.duplicate = (reviewExcluded.duplicate || 0) + 1;
+      return false;
+    });
     const byPassage = new Map();
     matches.forEach((m, index) => {
       if (!byPassage.has(m.id)) byPassage.set(m.id, []);
@@ -739,6 +638,7 @@ export async function interviewAction(act, el, d, api) {
           }
         }
         delete s.draft;
+        pruneEmptyQuotations(d);
         if (
           draft.sample &&
           s.established &&

@@ -923,3 +923,38 @@ dialog h2 {
 .bot-included { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
 .bot.bot-locked { height: fit-content !important; }
 .bot-locked .botbody { flex: 0 1 auto; }
+
+/* The transcript keeps the selected words, their labels and the edit action together. */
+.iv-highlight {
+  background: color-mix(in srgb, var(--chip, #397869) 17%, white);
+  color: inherit;
+  border-bottom: 2px solid var(--chip, #397869);
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.iv-highlight[data-iv-quotation] { cursor: pointer; }
+.iv-highlight[data-iv-quotation]:hover { background: color-mix(in srgb, var(--chip, #397869) 30%, white); }
+.iv-text ::selection { background: #b6dafa; color: #112a3c; }
+.iv-quotation-list { margin-top: .4rem; }
+.iv-passage .iv-quotation-button {
+  font-size: .84rem;
+  max-width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.iv-label-editor, .iv-selection-preview { min-width: 0; }
+.iv-selection-preview { max-height: 28vh; overflow-y: auto; }
+.iv-selection-preview blockquote { white-space: pre-wrap; overflow-wrap: anywhere; }
+.iv-remove-label { color: #8a2b32; }
+.iv-manual-tools { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin: .55rem 0 .8rem; }
+.iv-label-jump { display: none; }
+.iv-legend > div + div { margin-top: .45rem; }
+.iv-tools details > summary { cursor: pointer; }
+.iv-quotation-list { display: flex; flex-wrap: wrap; gap: .3rem; }
+.iv-label-editor label { margin-bottom: .65rem; }
+.iv-selection-preview blockquote { border-inline-start: 3px solid #799589; margin: .4rem 0 .85rem; padding: .4rem .75rem; background: var(--soft); }
+@media(max-width:650px) {
+  .iv-label-jump { display: inline; font-size: .85rem; }
+  #iv-project-labels { scroll-margin-top: 1rem; }
+}

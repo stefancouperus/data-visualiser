@@ -6,6 +6,9 @@ import { readFocus } from "./research-focus.js";
 import { readTutorHistory } from "./tutor-history.js";
 import { filteredRows } from "./import.js";
 import { applyAnswerLabels } from "./survey-labels.js";
+import { interviews, sharedBook, pruneEmptyQuotations } from "./interviews.js";
+import { labelKey } from "./coding.js";
+
 export const fresh = () => ({
   tutorHistory: Object.create(null),
   includeBotChat: false,
@@ -135,7 +138,7 @@ export function verifyProject(p) {
                 (!Array.isArray(draft.ids) ||
                   draft.ids.some((id) => !safeID(id)))) ||
               !Array.isArray(draft.matches) ||
-              [draft.rejected, draft.manual].some(
+              [draft.rejected, draft.manual, draft.withdrawnLabels].some(
                 (choices) =>
                   choices !== undefined &&
                   (!Array.isArray(choices) ||
@@ -316,32 +319,162 @@ export function renameTheme(project, d, old, name, undoViews) {
       } else from.label = name;
     }
   }
-  const rename = (c) => (c === old ? name : c);
+  rewriteThemeReferences(project, d, old, name, undoViews);
+}
+
+function rewriteThemeReferences(project, d, old, name, undoViews) {
+  const previous = labelKey(old);
+  const matches = (value) =>
+    typeof value === "string" && labelKey(value) === previous;
+  const rename = (value) => (matches(value) ? name : value);
   for (const p of d.passages) {
-    p.codes = [...new Set(p.codes.map(rename))];
-    for (const e of p.codingEvidence || []) e.code = rename(e.code);
+    p.codes = [...new Set(p.codes.map(rename).filter(Boolean))];
+    if (p.codingEvidence) {
+      p.codingEvidence = p.codingEvidence.filter((entry) => {
+        entry.code = rename(entry.code);
+        return !!entry.code;
+      });
+    }
   }
-  const views = [
-    ...project.views,
-    ...undoViews.flat(),
+  const active = !project.active || project.active === d.id;
+  const views = new Set([
+    ...(active ? project.views : []),
+    ...(active ? undoViews.flat() : []),
+    ...(project.workingViews?.[d.id]?.views || []),
     ...(project.savedVisuals || [])
       .filter((s) => s.dataset === d.id)
       .map((s) => s.view),
     ...project.saved.filter((s) => s.dataset === d.id).flatMap((s) => s.views),
-  ];
+  ]);
   for (const v of views) {
-    if (v.x === old) v.x = name;
-    if (v.y === old) v.y = name;
-    if (v.items) v.items = [...new Set(v.items.map(rename))];
-    if (v.task === "two" && v.x === v.y) {
+    const affectedAxis = matches(v.x) || matches(v.y);
+    if (matches(v.x)) v.x = name;
+    if (matches(v.y)) v.y = name;
+    if (v.items) v.items = [...new Set(v.items.map(rename).filter(Boolean))];
+    if (affectedAxis && v.task === "two" && (!v.x || !v.y || v.x === v.y)) {
       v.task = "one";
+      v.x ||= v.y || "";
       v.y = "";
-      v.chart = "bars";
+      v.chart = v.x ? "bars" : "excerpts";
+      v.title = "";
+      v.annotation = "";
+    } else if (affectedAxis && !v.x && v.task === "one") {
+      v.chart = "excerpts";
       v.title = "";
       v.annotation = "";
     }
-    if (v.highlight === old && old !== name) delete v.highlight;
+    // A highlight can also be a source or subgroup with the same name.
+    if (
+      !v.groupBy &&
+      !d.sources.includes(v.highlight) &&
+      matches(v.highlight)
+    ) {
+      if (name) v.highlight = name;
+      else delete v.highlight;
+    }
   }
+}
+
+// Save one dictionary edit atomically in the interview collection. A distinct
+// collection in the same project can use the same label with its own meaning.
+export function editInterviewLabel(
+  project,
+  d,
+  { oldLabel, label, definition, remove = false },
+  undoViews = [],
+) {
+  const book = sharedBook(d);
+  const same = (a, b) => labelKey(a) === labelKey(b);
+  const old =
+    oldLabel == null ? undefined : book.find((e) => same(e.label, oldLabel));
+  if ((oldLabel != null || remove) && !old)
+    throw Error("Choose an existing label to change.");
+  const name = remove ? "" : (label ?? old?.label ?? "").trim();
+  const meaning = (definition ?? old?.definition ?? "").trim();
+  if (!remove && !name) throw Error("Enter a name for the label.");
+  if (!remove && book.some((e) => e !== old && same(e.label, name))) {
+    throw Error("A label with that name already exists. Choose another name.");
+  }
+  if (old && old.label === name && old.definition === meaning && !remove)
+    return false;
+  const state = interviews(d);
+  d.coding ||= {};
+  const changedMeaning = old && (old.definition || "") !== meaning;
+  const entry = { label: name, definition: meaning };
+  // Imported labels can exist only on passages. Record their meaning even if
+  // the last use on a passage is subsequently removed.
+  const primary = state.established ? "book" : "meanings";
+  for (const key of ["book", "meanings"]) {
+    if (!d.coding[key] && key !== primary) continue;
+    const entries = (d.coding[key] || []).map((e) =>
+      typeof e === "string" ? { label: e, definition: "" } : e,
+    );
+    const index = old ? entries.findIndex((e) => same(e.label, old.label)) : -1;
+    if (index >= 0) {
+      d.coding[key] = entries.flatMap((e, i) => {
+        if (i === index && !remove) return [{ ...entry }];
+        return same(e.label, old.label) ? [] : [e];
+      });
+    } else if (!remove && key === primary) {
+      d.coding[key] = [...entries, { ...entry }];
+    }
+  }
+  if (old && (remove || old.label !== name)) {
+    rewriteThemeReferences(project, d, old.label, name, undoViews);
+  }
+  if (state.draft) {
+    // An already-sent request uses the former vocabulary. Swapping the draft
+    // lets the job's identity check ignore the late reply and preserves the
+    // checkpoint for resuming with the student's current choices.
+    const draft = { ...state.draft };
+    if (old) {
+      const replacement = remove || changedMeaning ? "" : name;
+      draft.matches = draft.matches.flatMap((m) => {
+        if (!same(m.code, old.label)) return [m];
+        return replacement
+          ? [{ ...m, code: replacement, definition: meaning }]
+          : [];
+      });
+      for (const key of ["manual", "rejected"]) {
+        if (!draft[key]) continue;
+        draft[key] = draft[key].flatMap((choice) => {
+          let pair;
+          try {
+            pair = JSON.parse(choice);
+          } catch {
+            return [];
+          }
+          if (
+            !Array.isArray(pair) ||
+            pair.length !== 2 ||
+            typeof pair[1] !== "string"
+          )
+            return [];
+          if (!same(pair[1], old.label)) return [choice];
+          return replacement ? [JSON.stringify([pair[0], replacement])] : [];
+        });
+      }
+    }
+    const withdrawn = (draft.withdrawnLabels || []).filter(
+      (term) => !name || !same(term, name),
+    );
+    if (old && (remove || !same(old.label, name))) withdrawn.push(old.label);
+    draft.withdrawnLabels = [...new Set(withdrawn)];
+    state.draft = draft;
+  }
+  if (remove && book.length === 1) {
+    state.established = false;
+    if (state.method === "book" || state.method === "imported")
+      state.method = "manual";
+    d.coding.mode = "inductive";
+    if (state.draft && !state.draft.sample) delete state.draft;
+  }
+  if (remove) pruneEmptyQuotations(d);
+  if (!old || remove || changedMeaning) {
+    state.done = [];
+    state.finished = false;
+  }
+  return true;
 }
 export function dataCount(d) {
   return d.kind === "text"
