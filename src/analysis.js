@@ -1,20 +1,26 @@
 import { hasAnswer, choicesIn, optionLevels } from "./survey-answers.js";
 import { patternSummary } from "./patterns.js";
 import { allCodes } from "./coding.js";
+import { wordCloudData } from "./word-cloud.js";
 import { bin } from "d3";
+import { gapGroups } from "./survey-gap.js";
 import { filteredRows } from "./import.js";
+import { boxPlotSummary } from "./box-plot.js";
 export const kinds = {
   bars: "Bar chart",
   dots: "Dot plot",
+  gap: "Two-group gap plot",
   stack: "100% stacked bars",
   grid: "Heatmap",
   table: "Data table",
   hist: "Histogram",
+  box: "Box plot",
   scatter: "Scatterplot",
   line: "Line chart",
   small: "Small multiples",
   presence: "Presence grid",
   excerpts: "Read excerpts",
+  wordcloud: "Word cloud",
   model: "Fitted model",
 };
 export { allCodes };
@@ -53,6 +59,12 @@ export function newView(d) {
   };
 }
 export function analyse(d, v) {
+  if (d.kind === "text" && (v.task === "words" || v.chart === "wordcloud"))
+    return wordCloudData(d, v);
+  if (v.chart === "gap" && (v.task !== "group" || d.kind !== "table"))
+    throw Error(
+      "Choose a survey question and a question that splits its answers into two groups.",
+    );
   if (v.task === "patterns") return patternSummary(d, v);
   if (d.kind === "text") return qualitative(d, v);
   const f = (k) => d.fields.find((a) => a.id === k),
@@ -114,6 +126,7 @@ export function analyse(d, v) {
     base.note = base.points.length + " paired observations.";
     return base;
   }
+  if (v.chart === "box") return boxPlotSummary(base, rows, v, x, y);
   if (v.chart === "hist") {
     const ns = rows
       .filter((r) => r[x.id] !== "" && Number.isFinite(+r[x.id]))
@@ -141,9 +154,18 @@ export function analyse(d, v) {
   }
   const cross = v.task !== "one" && y,
     multi = x.type === "multiple";
-  const valid = rows.filter((r) => hasAnswer(r, x) && (!cross || r[y.id]));
+  const gap = v.chart === "gap";
+  const compare = gap ? gapGroups(d, v, rows) : [];
+  if (gap && !compare.length)
+    throw Error(
+      "A gap plot needs two different single-choice questions and exactly two groups with answers to both in this selection.",
+    );
+  const valid = rows.filter(
+    (r) => hasAnswer(r, x) && (!cross || (r[y.id] != null && r[y.id] !== "")),
+  );
   const tally = new Map(),
     observed = new Set();
+  for (const group of compare) tally.set(group, { den: 0, counts: new Map() });
   for (const row of valid) {
     const group = cross ? row[y.id] : "";
     if (!tally.has(group)) tally.set(group, { den: 0, counts: new Map() });
@@ -166,6 +188,7 @@ export function analyse(d, v) {
     throw Error(
       "This comparison has over 20,000 cells. Choose a grouping question with fewer distinct answers or narrow the selection.",
     );
+  const percentages = v.measure === "percent" || v.chart === "stack" || gap;
   for (const [group, entry] of tally) {
     for (const label of labels) {
       const n = entry.counts.get(label) || 0;
@@ -174,14 +197,10 @@ export function analyse(d, v) {
         label,
         n,
         den: entry.den,
-        value:
-          (v.measure === "percent" || v.chart === "stack") && entry.den
-            ? (100 * n) / entry.den
-            : n,
+        value: percentages && entry.den ? (100 * n) / entry.den : n,
       });
     }
   }
-  const percentages = v.measure === "percent" || v.chart === "stack";
   base.unit = percentages
     ? d.unit === "response"
       ? "% of valid responses"
@@ -200,6 +219,9 @@ export function analyse(d, v) {
     (cross && percentages
       ? " Percentages use the valid responses within each group."
       : "");
+  if (gap)
+    base.note +=
+      " The line shows the gap between the two percentages for each answer.";
   return base;
 }
 function qualitative(d, v) {

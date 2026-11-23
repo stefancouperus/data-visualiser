@@ -5,6 +5,8 @@ import { figureStyles, styleFor, paletteOptions } from "./figure-styles.js";
 import { esc } from "./chart.js";
 import { button as b, opts, select, input, table, icon, pict } from "./ui.js";
 import { kinds, allCodes } from "./analysis.js";
+import { gapGroups } from "./survey-gap.js";
+import { supportsBoxPlot } from "./box-plot.js";
 import { dataCount } from "./project.js";
 import {
   groupChoices,
@@ -26,34 +28,34 @@ export function landing(local) {
         <p>Build a shared codebook or check labels you already applied.</p>
         <div class="action-row">${b("upload", "Upload uncoded transcripts", "", 'data-route="interview"')}${b("upload", "Upload coded interviews", "", 'data-route="coded"')}</div></section>
     </div><details class="other-files"><summary>Other file types</summary><div class="list">${[
-    ["table", "table", "Table or spreadsheet", "CSV, TSV or Excel"],
-    [
-      "coded",
-      "check",
-      "Coded or annotated text",
-      "Documents and spreadsheets with your own labels",
-    ],
-    [
-      "text",
-      "text",
-      "Written responses or documents",
-      "Uncoded text, Word documents or a column of answers",
-    ],
-  ]
-    .map(([r, i, t, s]) =>
-      b(
-        "upload",
-        icon(i) +
-          "<span><strong>" +
-          t +
-          "</strong><small>" +
-          s +
-          "</small></span>",
-        "",
-        'data-route="' + r + '"',
-      ),
-    )
-    .join("")}</div></details>`;
+      ["table", "table", "Table or spreadsheet", "CSV, TSV or Excel"],
+      [
+        "coded",
+        "check",
+        "Coded or annotated text",
+        "Documents and spreadsheets with your own labels",
+      ],
+      [
+        "text",
+        "text",
+        "Written responses or documents",
+        "Uncoded text, Word documents or a column of answers",
+      ],
+    ]
+      .map(([r, i, t, s]) =>
+        b(
+          "upload",
+          icon(i) +
+            "<span><strong>" +
+            t +
+            "</strong><small>" +
+            s +
+            "</small></span>",
+          "",
+          'data-route="' + r + '"',
+        ),
+      )
+      .join("")}</div></details>`;
 }
 export function datasetSelect(p) {
   if (p.datasets.length === 1) return "";
@@ -79,6 +81,7 @@ export function check(d) {
   )}${"<details><summary>Seeing question codes or numbers instead of answer text?</summary><p>Use a Qualtrics export with choice text, or add the questionnaire (.qsf) that belongs to this export.</p>" + b("surveylabels", "Add questionnaire labels") + "</details>"}<details><summary>Review fields and import settings</summary>${b("unit", "Change record unit")}${d.fields.map((f) => `<details class="check-item"><summary>${esc(f.label)} <small> · ${esc(f.type)}</small></summary><p>Original column: ${esc(f.raw)}. Example values: ${esc(f.levels.slice(0, 5).join(" · "))}</p>${b("field", "Edit field", "", 'data-field="' + f.id + '"')}</details>`).join("")}<div class="bar">${b("combinetables", "Combine with another table")}${b("exclude", "Exclude records by value")}${b("multi", "Group multiple-answer columns")}${b("tocorpus", "Use a column as written responses")}</div>${d.rules.map((r, i) => `<p>Exclude ${esc(d.fields.find((f) => f.id === r.field)?.label)} = ${esc(r.value)} ${b("delrule", "Remove", "plain", 'data-i="' + i + '"')}</p>`).join("")}</details></section>`;
 }
 export function available(d, v) {
+  if (d.kind === "text" && v.task === "words") return ["wordcloud", "table"];
   if (d.openAnswers && v.task === "themes") return ["bars", "dots", "table"];
   if (v.task === "patterns")
     return d.kind === "text" && v.patternMode === "sources" && !v.groupBy
@@ -88,20 +91,36 @@ export function available(d, v) {
   if (d.kind === "text") {
     if (v.task === "group") return ["presence", "grid", "table"];
     if (v.task === "two") return ["bars", "dots", "table"];
-    return ["bars", "dots", "table", "excerpts"];
+    return ["bars", "dots", "table", "excerpts", "wordcloud"];
   }
   const x = d.fields.find((f) => f.id === v.x),
     y = d.fields.find((f) => f.id === v.y);
   if (!x) return ["table"];
   if (x.type === "text") return ["excerpts"];
   if (v.task === "one" && x.type === "number")
-    return ["hist", "bars", "dots", "table"];
+    return ["hist", "box", "bars", "dots", "table"];
   const c = ["bars", "dots", "table"];
   if (x.type !== "multiple") c.push("stack");
   if (y && v.task !== "one") c.push("grid", "small");
+  if (supportsBoxPlot(x, y, v.task)) c.push("box");
+  if (v.task === "group" && gapGroups(d, v).length === 2) c.push("gap");
   if (y?.type === "number" && ["number", "date"].includes(x.type))
     c.push("scatter", "line");
   return c;
+}
+export function adaptChart(d, view, options = available(d, view)) {
+  if (options.includes(view.chart)) return "";
+  if (
+    view.chart === "gap" &&
+    view.task === "group" &&
+    options.includes("stack")
+  ) {
+    view.chart = "stack";
+    view.measure = "percent";
+    return "The gap chart needs two groups with usable answers. Stacked bars now show the percentages within each group.";
+  }
+  view.chart = options[0];
+  return "";
 }
 function patternPicker(d, v, i, staged) {
   const text = d.kind === "text",
@@ -153,6 +172,9 @@ function patternPicker(d, v, i, staged) {
     )}${grouping}<small>${d.openAnswers ? "Respondents who share the selected survey answer form a group." : text ? "Interviews that share the same recorded detail form a group." : "Each answer in the column you choose forms a group."} Choose “Everyone together” to skip this split.</small>${termHelp("group", d, v)}${text ? b("addgroups", d.openAnswers ? "Edit respondent groups" : "Add interview groups", "plain", 'data-i="' + i + '"') : ""}${units}</div>`;
 }
 const chartLabels = {
+  wordcloud: "Word cloud",
+  box: "Box plot",
+  gap: "Gap chart",
   bars: "Bars",
   dots: "Dots",
   table: "Table",
@@ -198,6 +220,7 @@ function selectionControls(d, v, i, staged) {
               ? "Read written answers"
               : "Read interview passages",
         ],
+        ["words", "Explore frequently used words"],
         ...(d.openAnswers && codes.length
           ? [["themes", "Compare themes across answers"]]
           : []),
@@ -249,12 +272,21 @@ function selectionControls(d, v, i, staged) {
         : text
           ? ["group", "themes"].includes(v.task)
             ? ""
-            : select(
-                "x",
-                "Choose a theme or code",
-                [...(v.task === "one" ? [["", "All passages"]] : []), ...codes],
-                v.x,
-              )
+            : v.task === "words" && !codes.length
+              ? ""
+              : select(
+                  "x",
+                  v.task === "words"
+                    ? "Which passages should count?"
+                    : "Choose a theme or code",
+                  [
+                    ...(["one", "words"].includes(v.task)
+                      ? [["", "All passages"]]
+                      : []),
+                    ...codes,
+                  ],
+                  v.x,
+                )
           : select(
               "x",
               v.task === "group"
@@ -329,7 +361,7 @@ export function panel(
           )
           .map((f) => [f.id, f.label]);
   const options = available(d, v);
-  if (!options.includes(v.chart)) v.chart = options[0];
+  const changedChart = adaptChart(d, v, options);
   const meta = text
     ? [...new Set(Object.values(d.metadata || {}).flatMap(Object.keys))]
     : [];
@@ -340,16 +372,36 @@ export function panel(
         : Object.values(d.metadata || {}).map((m) => m[v.filter])
       : optionLevels(d.fields.find((f) => f.id === v.filter))
     : [];
+  let readingHint = "";
+  if (v.chart === "wordcloud" || v.task === "words")
+    readingHint =
+      "Select a word to read where it appears. A word repeated by one person can be frequent across the whole selection.";
+  else if (v.task === "patterns" && v.items?.length)
+    readingHint =
+      "Click a " +
+      (v.chart === "grid" ? "cell" : "row") +
+      " to read the " +
+      (text ? "passages" : "responses") +
+      " behind it.";
+  else if (options.includes("gap") && v.chart !== "gap")
+    readingHint =
+      "Try Gap chart under Chart type to see how far apart the two groups are on each answer.";
+  else if (options.includes("box") && v.chart !== "box")
+    readingHint =
+      "Try Box plot under Chart type to see the middle answer and how widely the answers vary.";
+  if (changedChart) readingHint = changedChart;
   return `<section class="plotcard ${comparing ? "comparison-card" : "explore-card"}" data-panel="${i}">${comparing ? `<div class="view-heading"><h2>${side} view</h2><span>${esc(kinds[v.chart])}</span></div><details data-chart-options="edit-${i}"><summary>Change ${side.toLowerCase()} view</summary>` : ""}
   ${confirmedName ? `<div class="topline"><p><strong>Confirmed selection</strong><br>${esc(confirmedName)}</p>${b("editselection", "Change selection", "", "data-i=" + i)}</div>` : `<div class="selection-editor">${selectionControls(d, draft || v, i, !!draft)}</div>`}
   ${comparing ? "</details>" : ""}
   <div class="live-figure"><div class="figure-toolbar"><strong tabindex="-1" id="figure-heading${i}">Current visual</strong><div class="figure-actions">${options.length > 1 ? `<details class="chart-picker"><summary aria-label="Chart type · ${esc(kinds[v.chart])}">${icon(v.chart)} Chart type · ${esc(chartLabels[v.chart])}</summary>${chartTools(options, v.chart, i)}</details>` : ""}${b("savevisual", icon("save") + " Save visual", "", 'data-i="' + i + '"')}</div>
-  </div><div class="figure-stage"><div class="graphic" id="graphic${i}"></div></div>${v.task === "patterns" && v.items?.length ? `<small>Click a ${v.chart === "grid" ? "cell" : "row"} to read the ${text ? "passages" : "responses"} behind it.</small>` : ""}<div id="modeldetails${i}"></div><div class="figure-evidence action-row">${b("describechart", icon("bot") + " Ask about this visual", "", 'data-i="' + i + '"')}${text ? b("passages", d.openAnswers ? "Read and code written answers" : "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></div>
+  </div><div class="figure-stage"><div class="graphic" id="graphic${i}"></div></div>${readingHint ? "<small>" + readingHint + "</small>" : ""}<div id="modeldetails${i}"></div><div class="figure-evidence action-row">${b("describechart", icon("bot") + " Ask about this visual", "", 'data-i="' + i + '"')}${text ? b("passages", d.openAnswers ? "Read and code written answers" : "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></div>
   <details data-chart-options="${i}"><summary>Chart settings</summary><div class="selection-mode"><label class="tick"><input type="checkbox" data-stage-selection="${i}" ${draft ? "" : "checked"}>Update the visual as I select</label></div>${b("figurestyle", "Figure style · " + figureStyles[styleFor(v.style)].label, "", 'data-i="' + i + '"')}${!text ? b("variables", d.fields.some((f) => f.roles?.length) ? "Review question roles" : "Choose question roles") : ""}${termHelp("percent", d, v)}<div class="formgrid">
  ${
    v.task !== "patterns" &&
    !text &&
-   !["model", "scatter", "line", "stack", "excerpts"].includes(v.chart)
+   !["model", "scatter", "line", "stack", "excerpts", "box", "gap"].includes(
+     v.chart,
+   )
      ? select(
          "measure",
          "Show",
@@ -377,7 +429,8 @@ export function panel(
        : text &&
            v.task !== "patterns" &&
            v.task !== "group" &&
-           v.chart !== "excerpts"
+           !["excerpts", "wordcloud"].includes(v.chart) &&
+           v.task !== "words"
          ? select(
              "measure",
              "Count",
@@ -388,6 +441,21 @@ export function panel(
              v.measure,
            )
          : ""
+ }
+ ${
+   text && (v.chart === "wordcloud" || v.task === "words")
+     ? select(
+         "wordLanguage",
+         "Leave out common words in",
+         [
+           ["both", "Dutch and English"],
+           ["nl", "Dutch"],
+           ["en", "English"],
+           ["none", "Keep all words"],
+         ],
+         v.wordLanguage || "both",
+       )
+     : ""
  }
  ${v.chart === "scatter" || v.chart === "line" ? select("z", "Colour by", [["", "One series"], ...choices.filter(([k]) => k !== v.x && k !== v.y)], v.z) : ""}
  </div><details data-chart-options="${i}-appearance"><summary>Filters and appearance</summary>${termHelp("filter", d, v)}<div class="formgrid">${select("filter", "Keep a subset", [["", "All records"], ...(text ? [["source", "Source"], ...meta] : choices)], v.filter)}${

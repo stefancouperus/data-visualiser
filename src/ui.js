@@ -1,5 +1,9 @@
 import { esc } from "./chart.js";
 const paths = {
+  wordcloud:
+    "M6 18h11a4 4 0 0 0 1-8 6 6 0 0 0-11-2 5 5 0 0 0-1 10Zm1-6h5m-4 3h8",
+  box: "M3 12h5m8 0h5M3 9v6m18-6v6M8 7h8v10H8zM12 7v10",
+  gap: "M8 7h9m-12 9h9M4 7a2 2 0 1 0 4 0 2 2 0 1 0-4 0m13 0a2 2 0 1 0 4 0 2 2 0 1 0-4 0M1 16a2 2 0 1 0 4 0 2 2 0 1 0-4 0m13 0a2 2 0 1 0 4 0 2 2 0 1 0-4 0",
   bars: "M3 4v16h18M6 7h12M6 12h8M6 17h15",
   dots: "M3 20h18M6 14h.1m5-6h.1m5 4h.1",
   stack: "M3 5h18v5H3zM8 5v5m5-5v5M3 14h18v5H3zM12 14v5m5-5v5",

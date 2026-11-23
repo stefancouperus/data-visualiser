@@ -5,6 +5,9 @@ import {
   paletteFor,
 } from "./figure-styles.js";
 import * as d3 from "d3";
+import { drawWordCloud, drawWordTable } from "./word-cloud-figure.js";
+import { drawGap } from "./survey-gap.js";
+import { drawBoxPlot } from "./box-plot.js";
 export const esc = (s) =>
   String(s ?? "").replace(
     /[&<>"']/g,
@@ -112,7 +115,9 @@ export function styleSample(style, palette) {
 export function figure(a, v, { width = 700, interactive = false } = {}) {
   const inspectable =
     interactive &&
-    (v.task === "patterns" || ["grid", "presence"].includes(v.chart));
+    (v.task === "patterns" ||
+      v.task === "words" ||
+      ["grid", "presence", "wordcloud"].includes(v.chart));
   const style = styleFor(v.style),
     theme = figureStyles[style],
     mono = v.palette === "grey";
@@ -357,6 +362,41 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
         .append("title")
         .text("Read the evidence for " + label);
     }
+  } else if (v.chart === "gap") {
+    pos = drawGap(root, {
+      records,
+      groups,
+      width: w,
+      margin,
+      pos,
+      palette,
+      paper,
+      scale: theme.scale,
+      wrap,
+      line,
+    });
+  } else if (v.chart === "wordcloud") {
+    pos = drawWordCloud({
+      root,
+      records,
+      w,
+      margin,
+      pos,
+      theme,
+      ink: markInk,
+      interactive,
+    });
+  } else if (v.task === "words" && v.chart === "table") {
+    pos = drawWordTable({
+      root,
+      records,
+      w,
+      margin,
+      pos,
+      theme,
+      interactive,
+      sourcesLabel: a.sourcesLabel,
+    });
   } else if (v.chart === "excerpts") {
     for (const p of a.excerpt) {
       rule(pos - 14, margin + 24, accent, 2);
@@ -453,6 +493,20 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
         });
       pos += 37;
     }
+  } else if (v.chart === "box") {
+    pos = drawBoxPlot({
+      root,
+      records,
+      width: w,
+      margin,
+      pos,
+      theme,
+      style,
+      markInk,
+      paper,
+      line,
+      wrap,
+    });
   } else if (v.chart === "hist" && records.length) {
     const lo = records[0].lo,
       hi = records.at(-1).hi;
@@ -672,7 +726,12 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
     !a.points?.length &&
     !a.predictions?.length
   ) {
-    block("No matching observations.", 65);
+    block(
+      v.chart === "wordcloud" || v.task === "words"
+        ? "No words to show. Try a different theme, source or common-word setting."
+        : "No matching observations.",
+      65,
+    );
   }
   root
     .selectAll(".tick text")

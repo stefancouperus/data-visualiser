@@ -174,10 +174,13 @@ export function highlightChoices(a, v) {
       "grid",
       "presence",
       "hist",
+      "box",
+      "wordcloud",
       "table",
     ].includes(v.chart)
   )
     return [];
+  if (v.task === "words" && v.chart === "table") return [];
   if (v.task === "patterns" && a.groupLabel)
     return [...new Set(a.records.map((r) => r.groupValue))];
   const groups = [...new Set(a.records.map((r) => r.group).filter(Boolean))];

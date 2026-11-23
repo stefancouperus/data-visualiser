@@ -4,7 +4,22 @@ import {
   chartFields,
   directComparison,
   resolveAxis,
+  wordCloudRequest,
 } from "../src/question-matching.js";
+test("a word cloud uses the requested source or theme and clarifies unresolved names", () => {
+  const ask = (q) =>
+    wordCloudRequest(
+      q,
+      { task: "one", x: "Travel" },
+      ["Travel", "River"],
+      ["River", "Hill.txt"],
+    );
+  assert.equal(ask("Draw a word cloud").x, "Travel");
+  assert.equal(ask("Draw a word cloud for interview Hill").value, "Hill.txt");
+  assert.equal(ask("Draw a word cloud for theme River").x, "River");
+  assert.equal(ask("Draw a word cloud for River").action, "answer");
+  assert.equal(ask("Draw a word cloud for interview Unknown").action, "answer");
+});
 const fields = [
   {
     id: "c2",

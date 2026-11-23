@@ -29,6 +29,7 @@ import {
 } from "./interview-workspace.js";
 import { transcriptEndpoint } from "./interview-manual.js";
 import { writtenAnswerSet, isOpenQuestion } from "./open-answers.js";
+import { wordPassages } from "./word-cloud.js";
 import { confirmedRoles, editRoles } from "./variable-roles.js";
 import { termHelp, bindTermHelp, termMeaning } from "./term-help.js";
 import "./style.css";
@@ -62,6 +63,7 @@ import {
   patternRequest,
   groupingRequest,
   namedChartRequest,
+  wordCloudRequest,
   resolveAxis,
 } from "./question-matching.js";
 import { filterRequest } from "./filter-request.js";
@@ -143,6 +145,7 @@ import {
   datasetSelect,
   saveScreen,
   available,
+  adaptChart,
 } from "./screens.js";
 const steps = ["Upload", "Check", "Explore", "Compare", "Save and export"],
   icons = ["upload", "check", "explore", "compare", "save"];
@@ -160,6 +163,8 @@ function focusBot(target) {
 }
 const focusIndex = () => (step === 3 && botFocus === "right" ? 1 : 0);
 function viewName(d, v) {
+  if (v.task === "words")
+    return v.x ? "Words in " + v.x : "Words across all passages";
   if (v.task === "themes") return "Themes in written answers";
   const name = (id) => d.fields?.find((f) => f.id === id)?.label || id;
   if (v.task === "patterns")
@@ -294,8 +299,8 @@ function commitSelection(i) {
     for (const k of [...changed, "chart"]) next[k] = draft.view[k];
     next.title = next.annotation = "";
     delete next.highlight;
-    if (!available(getData(), next).includes(next.chart))
-      next.chart = available(getData(), next)[0];
+    const change = adaptChart(getData(), next);
+    if (change) notice(change);
     summary(i, next);
     snapshotViews();
     project.views[i] = next;
@@ -724,7 +729,19 @@ function summary(i, v = project.views[i]) {
     throw Error(
       "The question used to group or filter this figure now contains written answers. Clear that selection or choose a closed question.",
     );
-  if (v.task !== "model") return analyse(d, v);
+  if (v.task !== "model") {
+    const result = analyse(d, v);
+    if (
+      v.filter &&
+      (["box", "gap", "wordcloud"].includes(v.chart) || v.task === "words")
+    ) {
+      const label =
+        d.fields?.find((f) => f.id === v.filter)?.label ||
+        (v.filter === "source" ? "Source" : v.filter);
+      result.note += " Filtered by " + label + " = “" + v.value + "”.";
+    }
+    return result;
+  }
   const rows = filteredRows(d, v),
     m = fitModel(d, rows, { ...v, predictors: v.predictors || [] });
   return {
@@ -842,6 +859,16 @@ function tidy(v, key) {
     });
     return;
   }
+  if (key === "task" && v.task === "words") {
+    Object.assign(v, {
+      x: "",
+      y: "",
+      chart: "wordcloud",
+      title: "",
+      annotation: "",
+    });
+    return;
+  }
   if (key === "task" && v.task === "patterns") {
     const choices = patternChoices(d).map(([id]) => id);
     v.items = Array.isArray(v.items)
@@ -919,9 +946,16 @@ function goto(i) {
   if (i === 3 && !project.comparisonStarted) {
     const right = structuredClone(project.views[0]);
     right.chart =
-      { bars: "dots", dots: "bars", small: "bars", grid: "table" }[
-        right.chart
-      ] || right.chart;
+      {
+        bars: "dots",
+        dots: "bars",
+        small: "bars",
+        grid: "table",
+        box: right.task === "one" ? "hist" : "box",
+        gap: "stack",
+        wordcloud: "table",
+      }[right.chart] || right.chart;
+    if (project.views[0].chart === "wordcloud") right.task = "words";
     project.views[1] = right;
     project.comparisonStarted = true;
   }
@@ -1120,7 +1154,11 @@ function botContext(question = "") {
               "table",
             ],
             numericPair: ["scatter", "line"],
-            singleNumber: ["hist"],
+            singleNumber: ["hist", "box"],
+            numericByCategory:
+              "box with x=numeric answer and y=single-answer grouping field",
+            twoGroupPercentages:
+              "gap with task=group for two groups with valid answers",
             note: "availableCharts in each view lists only that view’s current options. You may change the task and questions to draw another supported chart.",
           }
         : undefined,
@@ -1132,6 +1170,12 @@ function botContext(question = "") {
             x: "",
             y: "",
             measure: "passages",
+          },
+          wordFrequencies: {
+            task: "words",
+            chart: "wordcloud",
+            x: "Empty for all passages, or one exact theme",
+            alternative: "table for ranked word counts",
           },
         }
       : {}),
@@ -1179,8 +1223,35 @@ function proposedChart(pick) {
     )
       return null;
     const view = { ...current, chart: pick.chart };
+    if (pick.chart === "wordcloud") view.task = "words";
     summary(panel, view);
     return candidate(view);
+  }
+  if (text && (pick.task === "words" || pick.chart === "wordcloud")) {
+    if (
+      !["wordcloud", "table"].includes(pick.chart) ||
+      (pick.x && !keys.includes(pick.x)) ||
+      pick.y
+    )
+      return null;
+    const scoped = {};
+    if (pick.filter !== undefined) {
+      if (pick.filter === "source" && d.sources.includes(pick.value))
+        Object.assign(scoped, { filter: "source", value: pick.value });
+      else if (pick.filter === "" && !pick.value)
+        Object.assign(scoped, { filter: "", value: "" });
+      else return null;
+    }
+    return candidate({
+      ...current,
+      ...scoped,
+      task: "words",
+      chart: pick.chart,
+      x: pick.x || "",
+      y: "",
+      title: "",
+      annotation: "",
+    });
   }
   if (pick.task === "patterns") {
     const modes = patternModes(text, !!d.openAnswers),
@@ -1340,6 +1411,21 @@ function applyProposal(explanation) {
   snapshotViews();
   pendingSelections.delete(candidate.panel);
   project.views[candidate.panel] = candidate.view;
+  let linkedMessage = "";
+  if (step === 3 && project.linked && candidate.view.task === "words") {
+    const other = project.views[1 - candidate.panel];
+    if (
+      (other.filter || "") !== (candidate.view.filter || "") ||
+      (candidate.view.filter && other.value !== candidate.view.value)
+    ) {
+      Object.assign(other, {
+        filter: candidate.view.filter,
+        value: candidate.view.value,
+      });
+      pendingSelections.delete(1 - candidate.panel);
+      linkedMessage = " Both views use this filter because Link filters is on.";
+    }
+  }
   tutorRecord(project).activity.push(
     "Created " +
       kinds[candidate.view.chart].toLowerCase() +
@@ -1381,6 +1467,7 @@ function applyProposal(explanation) {
       chart.title +
       ". " +
       chart.note +
+      linkedMessage +
       (candidate.groupSuggestion ? "" : groupInsight) +
       (typeof explanation === "string" ? " " + explanation : ""),
   });
@@ -1627,6 +1714,10 @@ async function ask(question, skill, intent = "") {
           value: requested.value,
         }));
         try {
+          const adapted = changes
+            .filter((v) => v.chart === "gap")
+            .map((v) => adaptChart(dataset, v))
+            .find(Boolean);
           changes.forEach((v, index) => summary(panels[index], v));
           snapshotViews();
           changes.forEach((v, index) => {
@@ -1645,6 +1736,7 @@ async function ask(question, skill, intent = "") {
             : "Cleared the view filter on " +
               target +
               ". Project exclusions still apply.";
+          if (adapted) message += " " + adapted;
           tutorRecord(project).activity.push(message);
         } catch (error) {
           message =
@@ -1699,9 +1791,17 @@ async function ask(question, skill, intent = "") {
     [2, 3].includes(step) &&
     !intent &&
     skill === "recommend" &&
-    dataset?.kind === "table" &&
-    (namedSurveyComparison(dataset.fields, question) ||
-      directComparison(dataset.fields, question));
+    dataset &&
+    (dataset.kind === "text"
+      ? wordCloudRequest(question, current, allCodes(dataset), dataset.sources)
+      : namedSurveyComparison(dataset.fields, question) ||
+        directComparison(dataset.fields, question));
+  if (direct?.chart === "gap" && !proposedChart(direct))
+    direct = {
+      action: "answer",
+      explanation:
+        "A gap chart needs two groups with answers to both questions in this selection. Try a grouped bar chart to compare more groups, or change the selection.",
+    };
   if (direct?.action === "clarifyAxes") {
     const axes = direct.axes;
     const controls = axes.map(({ phrase, choices, role }, i) => {
@@ -3250,6 +3350,7 @@ async function action(act, el) {
       if (step === 3) focusBot(i ? "right" : "left");
       proposal = captionDraft = queuedShortcut = null;
       view.chart = el.dataset.chart;
+      if (view.chart === "wordcloud") view.task = "words";
       render();
       document
         .querySelector(`[data-panel="${i}"] .chart-picker summary`)
@@ -4074,6 +4175,27 @@ document.addEventListener("click", async (e) => {
       await action(el.dataset.act, el);
       return;
     }
+    const word = e.target.closest("[data-cloud-word]");
+    if (word?.closest("[data-panel]")) {
+      const index = Number(word.closest("[data-panel]").dataset.panel);
+      const term = word.dataset.cloudWord;
+      const rows = wordPassages(getData(), project.views[index], term);
+      modal(
+        "Passages containing “" + term + "”",
+        "<p>" +
+          rows.length +
+          " matching " +
+          (rows.length === 1 ? "passage" : "passages") +
+          ". " +
+          (rows.length > 200 ? "Showing the first 200." : "") +
+          "</p>" +
+          table(
+            ["Source", "Passage"],
+            rows.slice(0, 200).map((p) => [p.source, p.text]),
+          ),
+      );
+      return;
+    }
     const row = e.target.closest("[data-pattern-row]");
     if (row?.closest("[data-panel]")) {
       patternEvidence(
@@ -4123,7 +4245,8 @@ document.addEventListener("keydown", (e) => {
     (e.key === "Enter" || e.key === " ") &&
     e.target.closest("[data-panel]") &&
     (e.target.hasAttribute("data-pattern-row") ||
-      e.target.hasAttribute("data-code"))
+      e.target.hasAttribute("data-code") ||
+      e.target.hasAttribute("data-cloud-word"))
   ) {
     e.preventDefault();
     e.target.dispatchEvent(new MouseEvent("click", { bubbles: true }));

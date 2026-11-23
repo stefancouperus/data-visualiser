@@ -169,7 +169,32 @@ export function namedSurveyComparison(fields, question, chosen) {
     return null;
   const numericPair = coordinateComparison(fields, question, chosen);
   if (numericPair) return numericPair;
-  if (!["bars", "dots", "grid", "small", "table", "stack"].includes(chart))
+  if (chart === "box" && !/\bby\b/i.test(question)) {
+    const single = question
+      .trim()
+      .replace(/[.!?]+$/, "")
+      .match(/\bbox\s?plot\s+(?:of|for|showing)\s+(.+)$/i);
+    if (!single) return null;
+    const matches = axisChoices(
+      fields.filter((f) => f.type === "number" && !f.roles?.includes("open")),
+      single[1],
+    );
+    return matches.length === 1
+      ? {
+          action: "draw",
+          task: "one",
+          chart,
+          x: matches[0].id,
+          y: "",
+          measure: "count",
+        }
+      : null;
+  }
+  if (
+    !["bars", "dots", "grid", "small", "table", "stack", "box", "gap"].includes(
+      chart,
+    )
+  )
     return null;
   const instruction = question.trim().replace(/[.?!]+$/u, "");
   const by = instruction.match(
@@ -198,7 +223,18 @@ export function namedSurveyComparison(fields, question, chosen) {
       f.levels.length &&
       !f.roles?.includes("open"),
   );
-  const matches = axes.map((axis) => axisChoices(options, axis));
+  const matches = axes.map((axis, index) =>
+    axisChoices(
+      options.filter((f) =>
+        chart === "box" && index === 0
+          ? f.type === "number"
+          : ["box", "gap"].includes(chart)
+            ? ["category", "ordered"].includes(f.type)
+            : true,
+      ),
+      axis,
+    ),
+  );
   if (!chosen && matches.some((list) => list.length > 1)) {
     return {
       action: "clarifyAxes",
@@ -225,7 +261,8 @@ export function namedSurveyComparison(fields, question, chosen) {
     !tokens(within).every((t) => tokens(y.label).includes(t))
   )
     return null;
-  if (chart === "stack" && /count|number/i.test(unit || "")) return null;
+  if (["stack", "gap"].includes(chart) && /count|number/i.test(unit || ""))
+    return null;
   return {
     action: "draw",
     task: "group",
@@ -233,7 +270,9 @@ export function namedSurveyComparison(fields, question, chosen) {
     x: x.id,
     y: y.id,
     measure:
-      chart === "stack" || /percent/i.test(unit || "") ? "percent" : "count",
+      ["stack", "gap"].includes(chart) || /percent/i.test(unit || "")
+        ? "percent"
+        : "count",
   };
 }
 
@@ -321,7 +360,7 @@ export function namedChartRequest(question) {
     ...question
       .trim()
       .matchAll(
-        /(?:^|[.!?]\s+)(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:draw|create|make|show|plot|build)\s+(?:me\s+)?(?:a |an |the )?(100% stacked bar(?: chart)?s?|stacked bar(?: chart)?s?|bar (?:chart|plot)|dot plot|heat\s?map|scatter\s?plot|histogram|presence (?:grid|matrix)|line (?:chart|graph)|small multiples|data table)\b/gi,
+        /(?:^|[.!?]\s+)(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:draw|create|make|show|plot|build)\s+(?:me\s+)?(?:a |an |the )?(100% stacked bar(?: chart)?s?|stacked bar(?: chart)?s?|bar (?:chart|plot)|dot plot|heat\s?map|scatter\s?plot|histogram|word\s?cloud|box\s?plot|gap (?:chart|plot)|presence (?:grid|matrix)|line (?:chart|graph)|small multiples|data table)\b/gi,
       ),
   ];
   if (commands.length !== 1) return;
@@ -330,12 +369,86 @@ export function namedChartRequest(question) {
   if (name.startsWith("bar")) return "bars";
   if (name.startsWith("dot")) return "dots";
   if (name.startsWith("heat")) return "grid";
+  if (name.startsWith("word")) return "wordcloud";
+  if (name.startsWith("box")) return "box";
+  if (name.startsWith("gap")) return "gap";
   if (name.startsWith("scatter")) return "scatter";
   if (name === "histogram") return "hist";
   if (name.startsWith("presence")) return "presence";
   if (name.startsWith("line")) return "line";
   if (name === "small multiples") return "small";
   return "table";
+}
+
+// Keep explicit cloud requests on the device, including the requested text scope.
+export function wordCloudRequest(question, current, codes, sources) {
+  if (namedChartRequest(question) !== "wordcloud") return null;
+  const tail = question
+    .trim()
+    .replace(/[.!?]+$/, "")
+    .split(/\bword\s?cloud\b/i)
+    .pop()
+    .trim()
+    .replace(/^(?:of|for|from|using|showing|with)\s+/i, "");
+  const draw = {
+    action: "draw",
+    task: "words",
+    chart: "wordcloud",
+    x: "",
+    y: "",
+  };
+  if (
+    /^(?:all|every)(?: (?:the|my|our))? (?:passages?|interviews?|transcripts?|written answers?|sources?)$/i.test(
+      tail,
+    )
+  )
+    return { ...draw, filter: "", value: "" };
+  if (
+    !tail ||
+    /^(?:(?:the|my|our|these|this|current|selected)\s+)*(?:selection|passages|interviews|transcripts|written answers|theme)$/i.test(
+      tail,
+    )
+  ) {
+    if (current.task === "two" || current.task === "patterns")
+      return {
+        action: "answer",
+        explanation:
+          "Would you like words from all passages, one interview, or one theme? Tell me which to use.",
+      };
+    return {
+      ...draw,
+      x: ["one", "words"].includes(current.task) ? current.x || "" : "",
+    };
+  }
+  const name = tail
+    .replace(/^(?:the )?(?:theme|code|interview|source|transcript)\s+/i, "")
+    .replace(/^["“‘']|["”’']$/g, "")
+    .toLowerCase();
+  const wantCode = /^(?:the )?(?:theme|code)\s+/i.test(tail);
+  const wantSource = /^(?:the )?(?:interview|source|transcript)\s+/i.test(tail);
+  const theme = !wantSource && codes.find((c) => c.toLowerCase() === name);
+  const exactSource = sources.find((s) => s.toLowerCase() === name);
+  const fileMatches = sources.filter(
+    (s) => s.toLowerCase().replace(/\.(txt|docx|csv|tsv)$/i, "") === name,
+  );
+  const source =
+    !wantCode && (exactSource || (fileMatches.length === 1 && fileMatches[0]));
+  if (theme && source)
+    return {
+      action: "answer",
+      explanation:
+        "That name matches both a theme and an interview. Which would you like to use?",
+    };
+  if (theme) return { ...draw, x: theme };
+  if (source) return { ...draw, filter: "source", value: source };
+  if (wantSource || wantCode)
+    return {
+      action: "answer",
+      explanation: wantCode
+        ? "Which theme should I use? Choose a name from the project codebook."
+        : "Which interview should I use? Choose a source name from this project.",
+    };
+  return null;
 }
 
 // Recognise a student's stated unit before the model chooses a display. Resolve

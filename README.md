@@ -32,6 +32,10 @@ Coding progress is saved in this browser. After a refresh, choose **Resume codin
 
 ## Development and deployment
 
+In **Explore**, choose **Compare groups** and two single-answer survey questions to see a **Gap chart** when two groups have usable answers. Each row joins the percentages for one answer in each group. For a numerical answer, choose **Box plot** to see its median, middle half and full range, either overall or by group.
+
+In an interview or written-answer collection, choose **Explore frequently used words**. Select all passages or one theme. Use **Chart settings** to filter by source or change which common words are omitted. Select a word to read its passages. Switch **Chart type** to **Table** to see how often a word occurs and how many passages and sources contain it.
+
 Use Node 22. Run `npm ci`, `npm run dev`, `npm test` and `npm run build`. Run the interaction checks with `npx playwright test`; install the Playwright Chromium browser on systems without the configured macOS Chrome. Browser test fixtures are synthetic and are not included in the landing page.
 
 GitHub Actions builds the static site and deploys it to Pages from main. Set the GitHub repository variable `DATA_BOT_URL` to the HTTPS URL of the deployed Worker. Set GitHub Pages' build source to GitHub Actions. For local development, supply `VITE_BOT_URL` when starting Vite and use a local Worker with the local origin.
