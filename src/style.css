@@ -818,6 +818,11 @@ dialog h2 {
 }
 
 .book-source { white-space: pre-wrap; overflow: auto; max-height: 13rem; }
+.book-category, .iv-label-category { margin: .4rem 0; }
+.book-category > summary, .iv-label-category > summary { cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+.book-category[open] { border-inline-start: 2px solid var(--line); padding-inline-start: .7rem; }
+.book-category[open] > summary { margin-bottom: .5rem; }
+.iv-label-category > div { padding-inline-start: .5rem; }
 .book-row { border-bottom: 1px solid var(--line); padding: 0.6rem 0; }
 
 .goal-picker { margin: 0 0 1rem; padding: 0; border: 0; min-width: 0; }

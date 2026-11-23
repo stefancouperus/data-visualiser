@@ -2,6 +2,7 @@ import { codingSelection } from "./coding-passages.js";
 import { transcriptIndex } from "./transcript-index.js";
 import {
   labelAppearance,
+  groupCodebookEntries,
   rememberLabelAppearance,
 } from "./label-appearance.js";
 import { esc } from "./chart.js";
@@ -65,28 +66,42 @@ export function interviewActivity(d) {
 
 function labelList(d, entries, className = "iv-legend") {
   const styles = labelAppearance(d, entries);
-  return (
-    '<div class="' +
-    className +
-    '">' +
-    entries
+  const groups = groupCodebookEntries(
+    entries,
+    (entry) => entry.category || styles.get(labelKey(entry.label))?.category,
+  );
+  const renderEntries = (members) =>
+    members
       .map(
         (entry) =>
           "<div>" +
           chip(entry.label, styles) +
-          (styles.get(labelKey(entry.label))?.category
-            ? "<small>" +
-              esc(styles.get(labelKey(entry.label)).category) +
-              "</small>"
-            : "") +
           (entry.definition
             ? "<small>" + esc(entry.definition) + "</small>"
             : "") +
           "</div>",
       )
-      .join("") +
-    "</div>"
-  );
+      .join("");
+  const content = groups.some(([name]) => name)
+    ? groups
+        .map(
+          ([name, members], i) =>
+            '<details class="iv-label-category" data-chart-options="label-category-' +
+            className.replace(/ /g, "-") +
+            "-" +
+            i +
+            '"><summary>' +
+            esc(name || "Labels without a category") +
+            " · " +
+            members.length +
+            (members.length === 1 ? " label" : " labels") +
+            "</summary>" +
+            renderEntries(members) +
+            "</details>",
+        )
+        .join("")
+    : renderEntries(entries);
+  return '<div class="' + className + '">' + content + "</div>";
 }
 
 function codebookSetup(d, state, labels, sampleReview) {

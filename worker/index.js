@@ -19,6 +19,39 @@ const skills = {
 };
 const gateway = "https://llm.k8s.rug.nl/v1/chat/completions";
 const models = ["gemma-26B-MoE", "Qwen3.6-35B-A3B-AWQ-4bit"];
+
+function codebookFormat(context) {
+  const text = { type: "string" };
+  const fields = { label: text, category: text, definition: text };
+  if (Array.isArray(context?.sections) && context.sections.length) {
+    const ids = context.sections.map((s) => s.id);
+    fields.sectionId = { type: "string", enum: ids };
+  }
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "codebook_entries",
+      strict: true,
+      schema: {
+        type: "object",
+        properties: {
+          entries: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: fields,
+              required: Object.keys(fields),
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["entries"],
+        additionalProperties: false,
+      },
+    },
+  };
+}
+
 const enc = new TextEncoder();
 const hex = (bytes) =>
   Array.from(new Uint8Array(bytes), (v) =>
@@ -148,7 +181,10 @@ export default {
             body: JSON.stringify({
               model,
               messages,
-              temperature: 0.3,
+              temperature: data.skill === "codebook" ? 0 : 0.3,
+              ...(data.skill === "codebook" && {
+                response_format: codebookFormat(data.context),
+              }),
               max_tokens:
                 data.skill === "codebook"
                   ? 6000

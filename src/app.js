@@ -18,6 +18,7 @@ import {
   saveHelpMode,
 } from "./bot-help.js";
 import { structuredAnswer } from "./bot-response.js";
+import { extractCodebookEntries } from "./codebook-extraction.js";
 import { botSession, confirmTaskAccess } from "./bot-access.js";
 import { interviewScopeRequest } from "./interview-scope.js";
 import { requestInterviewCoding } from "./interview-coding-request.js";
@@ -843,11 +844,20 @@ function documentCodebook(d) {
   const approved = approvedBook(d);
   if (!draft && !approved.length)
     return b("makeinterview", "Use the interview coding workspace");
-  const labels = (entries) =>
-    entries
+  const labels = (entries) => {
+    const categories = new Set(entries.map((e) => e.category).filter(Boolean));
+    if (categories.size)
+      return (
+        entries.length +
+        " labels · " +
+        categories.size +
+        (categories.size === 1 ? " category" : " categories")
+      );
+    return entries
       .filter((e) => e.label.trim())
       .map((e) => esc(e.label))
       .join(" · ");
+  };
   return `<section class="card document-codebook"><h2>Project codebook</h2>
     ${draft ? `<p><strong>Draft labels to review</strong><br>${labels(draft.entries) || "Your draft is ready to edit."}</p>` : ""}
     ${approved.length ? `<p><strong>Approved labels</strong><br>${labels(approved)}</p>` : ""}
@@ -1998,14 +2008,10 @@ async function requestTutor(payload) {
   return data.answer;
 }
 async function extractCodebook(document) {
-  return withBotActivity("Extracting labels from your codebook…", async () => {
-    const answer = await requestTutor({
-      skill: "codebook",
-      question: "Extract the code labels and their meanings for review.",
-      context: { document },
-    });
-    return structuredAnswer(answer).entries;
-  });
+  return withBotActivity(
+    "Reading labels and categories from your codebook…",
+    () => extractCodebookEntries(document, requestTutor),
+  );
 }
 async function checkGroupSuggestion() {
   proposal = captionDraft = null;

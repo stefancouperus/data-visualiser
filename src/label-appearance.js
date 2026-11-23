@@ -61,17 +61,49 @@ export function labelAppearance(d, additionalLabels = []) {
     entries.map((e) => stored.get(labelKey(e.label))?.colour).filter(Boolean),
   );
   const styles = new Map();
-  for (const { label } of entries) {
+  for (const { label, category } of entries) {
     const key = labelKey(label);
     const appearance = stored.get(key) || {
       label,
       colour: nextColour(used),
-      category: "",
+      category: category || "",
     };
     styles.set(key, { ...appearance, label });
     used.add(appearance.colour);
   }
   return styles;
+}
+
+// Preserve the source order of both the categories and the labels inside them.
+export function groupCodebookEntries(
+  entries,
+  categoryFor = (entry) => entry.category,
+) {
+  const groups = new Map();
+  for (const entry of entries) {
+    const name = categoryFor(entry)?.trim() || "";
+    const key = labelKey(name);
+    if (!groups.has(key)) groups.set(key, [name, []]);
+    groups.get(key)[1].push(entry);
+  }
+  return [...groups.values()];
+}
+
+// Native label appearance is also used by the transcript legend and Word export.
+export function applyCodebookCategories(d, book) {
+  const styles = labelAppearance(d);
+  const names = new Map(
+    (d.coding.categories || []).map((c) => [labelKey(c), c]),
+  );
+  for (const entry of book) {
+    const style = styles.get(labelKey(entry.label));
+    const category = entry.category?.trim() || "";
+    if (category && !names.has(labelKey(category)))
+      names.set(labelKey(category), category);
+    style.category = names.get(labelKey(category)) || "";
+  }
+  d.coding.labelStyles = [...styles.values()];
+  if (names.size) d.coding.categories = [...names.values()];
 }
 
 export function availableLabelColour(styles) {
@@ -100,6 +132,12 @@ export function setLabelAppearance(d, label, colour, category) {
   d.coding ||= {};
   d.coding.labelStyles = [...styles.values()];
   if (name && !existing) d.coding.categories = [...categories, name];
+  for (const entry of d.coding.book || []) {
+    if (typeof entry === "string" || labelKey(entry.label) !== labelKey(label))
+      continue;
+    if (name) entry.category = name;
+    else delete entry.category;
+  }
 }
 
 export function editCategory(d, old, name) {
@@ -119,4 +157,9 @@ export function editCategory(d, old, name) {
     : [...categories, trimmed];
   for (const row of d.coding.labelStyles || [])
     if (old && row.category === old) row.category = trimmed;
+  for (const entry of d.coding.book || []) {
+    if (!old || typeof entry === "string" || entry.category !== old) continue;
+    if (trimmed) entry.category = trimmed;
+    else delete entry.category;
+  }
 }

@@ -165,7 +165,8 @@ export function verifyProject(p) {
           review.entries.some(
             (entry) =>
               typeof entry?.label !== "string" ||
-              typeof entry.definition !== "string",
+              typeof entry.definition !== "string" ||
+              (entry.category != null && typeof entry.category !== "string"),
           ))
       ) {
         throw Error(
@@ -490,7 +491,11 @@ export function editInterviewLabel(
     const index = old ? entries.findIndex((e) => same(e.label, old.label)) : -1;
     if (index >= 0) {
       d.coding[key] = entries.flatMap((e, i) => {
-        if (i === index && !remove) return [{ ...entry }];
+        if (i === index && !remove) {
+          const updated = { ...e, ...entry };
+          if (old.label !== name) delete updated.sourceLabel;
+          return [updated];
+        }
         return same(e.label, old.label) ? [] : [e];
       });
     } else if (!remove && key === primary) {

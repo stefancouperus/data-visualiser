@@ -14,18 +14,17 @@ const entries = [
   { label: "Disruption", definition: "An unexpected change of plan." },
   { label: "Cost", definition: "Financial impact." },
 ];
-async function upload(page) {
+async function upload(
+  page,
+  transcript = "Mijn trein was te laat. Een taxi kostte meer.",
+) {
   await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
   await page.goto("/");
   const choose = page.waitForEvent("filechooser");
   await page
     .getByRole("button", { name: /Upload uncoded transcripts/ })
     .click();
-  await (
-    await choose
-  ).setFiles(
-    file("Travel.txt", "Mijn trein was te laat. Een taxi kostte meer."),
-  );
+  await (await choose).setFiles(file("Travel.txt", transcript));
 }
 async function savedProject(page, asFile = false) {
   const pending = page.waitForEvent("download");
@@ -148,4 +147,130 @@ test("reopening an in-flight extraction shows the same job and receives its resu
   expect(
     (await savedProject(page)).datasets[0].coding.bookDraft,
   ).toBeUndefined();
+});
+
+test("category-based codebooks keep two same-named labels distinct from draft through approved coding and ZIP restore", async ({
+  page,
+}) => {
+  const transcript = "The newsletter is sent monthly.";
+  await upload(page, transcript);
+  const calls = [];
+  const rows = [
+    {
+      category: "Committee meetings",
+      label: "Monthly",
+      definition: "Meeting every month.",
+    },
+    {
+      category: "Committee meetings",
+      label: "Weekly",
+      definition: "Meeting every week.",
+    },
+    {
+      category: "Newsletters",
+      label: "Monthly",
+      definition: "Newsletter sent every month.",
+    },
+  ];
+  await page.route(requestUrl, async (route) => {
+    const { skill, context } = route.request().postDataJSON();
+    if (skill === "codebook") {
+      await route.fulfill({
+        json: { answer: JSON.stringify({ entries: rows }) },
+      });
+      return;
+    }
+    calls.push(context.guide);
+    const entry = context.guide.vocabulary.find(
+      (e) => e.category === "Newsletters",
+    );
+    await route.fulfill({
+      json: {
+        answer: JSON.stringify({
+          suggestions: [
+            {
+              id: context.passages[0].id,
+              code: entry.label,
+              reason: "Newsletter schedule",
+              quote: "sent monthly",
+            },
+          ],
+        }),
+      },
+    });
+  });
+  await page.locator("[data-act=iv-book]").click();
+  const csv = [
+    "Category,Label,Definition",
+    ...rows.map((e) => [e.category, e.label, e.definition].join(",")),
+  ].join("\n");
+  await page.locator("#book-file").setInputFiles({
+    name: "Handbook.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(csv),
+  });
+  await button(page, "Extract labels").click();
+  const categories = page.locator("#book-rows details.book-category");
+  await expect(categories).toHaveCount(2);
+  await expect(categories.first().locator("summary")).toHaveText(
+    "Committee meetings · 2 labels",
+  );
+  await expect(categories.last().locator("summary")).toHaveText(
+    "Newsletters · 1 label",
+  );
+  await categories.first().getByLabel("Category name").fill("Meetings");
+  await categories
+    .first()
+    .getByLabel("Meaning and rules")
+    .first()
+    .fill("The group meets every month.");
+  const weekly = categories.first().locator(".book-row").nth(1);
+  await weekly.getByRole("button", { name: "Move label", exact: true }).click();
+  await weekly
+    .getByLabel("Move to category")
+    .selectOption({ label: "Newsletters" });
+  await button(page, "Close").click();
+  const sidebar = page.locator(".iv-tools");
+  await expect(sidebar).toContainText("Meetings · 1 label");
+  await expect(sidebar).toContainText("Newsletters · 2 labels");
+  const draft = await savedProject(page, true);
+  await page.reload();
+  await openBackup(page, draft);
+  await page.locator("[data-act=iv-reviewbook]").click();
+  await expect(categories.first().getByLabel("Category name")).toHaveValue(
+    "Meetings",
+  );
+  await expect(
+    categories.first().getByLabel("Meaning and rules").first(),
+  ).toHaveValue("The group meets every month.");
+  await button(page, "Use these labels").click();
+  await expect(page.getByRole("dialog")).toBeHidden();
+  const approved = (await savedProject(page)).datasets[0].coding;
+  const monthlies = approved.book.filter((e) => e.sourceLabel === "Monthly");
+  expect(monthlies).toHaveLength(2);
+  expect(new Set(monthlies.map((e) => e.label)).size).toBe(2);
+  expect(monthlies.map((e) => e.category)).toEqual(["Meetings", "Newsletters"]);
+  expect(approved.categories).toEqual(["Meetings", "Newsletters"]);
+  expect(approved.book.find((e) => e.label === "Weekly")).toEqual({
+    label: "Weekly",
+    definition: "Meeting every week.",
+    category: "Newsletters",
+  });
+  for (const entry of approved.book)
+    expect(
+      approved.labelStyles.find((s) => s.label === entry.label).category,
+    ).toBe(entry.category);
+
+  await button(page, "Code with the bot").click();
+  await button(page, "Send to bot for coding").click();
+  await button(page, "Review suggested coding").click();
+  await button(page, "Apply reviewed coding").click();
+  const final = (await savedProject(page)).datasets[0];
+  expect(calls).toHaveLength(1);
+  expect(calls[0].vocabulary.map((e) => e.label)).toEqual(
+    approved.book.map((e) => e.label),
+  );
+  expect(final.passages.find((p) => p.text === transcript).codes).toEqual([
+    monthlies.find((e) => e.category === "Newsletters").label,
+  ]);
 });

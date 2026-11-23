@@ -1,61 +1,13 @@
 import { botSession } from "./bot-access.js";
 import { esc } from "./chart.js";
-import { readFile } from "./import.js";
+import { readCodebookFile } from "./codebook-document.js";
 import {
-  approvedBook,
-  bookEntries,
-  codingLimits,
-  labelKey,
-  labelsInCodebook,
-} from "./coding.js";
+  applyCodebookCategories,
+  groupCodebookEntries,
+  labelAppearance,
+} from "./label-appearance.js";
+import { approvedBook, bookEntries, codingLimits, labelKey } from "./coding.js";
 import { busyIndicator, formselect, get } from "./ui.js";
-
-async function fileText(file) {
-  if (!/\.pdf$/i.test(file.name)) {
-    const doc = await readFile(file);
-    return doc.kind === "doc"
-      ? doc.paragraphs.join("\n")
-      : doc.sheets
-          .map((s) => s.grid.map((row) => row.join("\t")).join("\n"))
-          .join("\n\n");
-  }
-  const [pdfjs, worker] = await Promise.all([
-    import("pdfjs-dist"),
-    import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
-  ]);
-  pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
-  const loading = pdfjs.getDocument({
-    data: new Uint8Array(await file.arrayBuffer()),
-    isEvalSupported: false,
-  });
-  try {
-    const pdf = await loading.promise;
-    const pages = [];
-    for (let number = 1; number <= pdf.numPages; number++) {
-      const content = await (await pdf.getPage(number)).getTextContent();
-      let line = "",
-        previous;
-      for (const item of content.items) {
-        if (!("str" in item)) continue;
-        // PDF text runs may split one word at a ligature or font change.
-        if (previous && !/\s$/u.test(line) && !/^\s/u.test(item.str)) {
-          const gap =
-            item.dir === "rtl"
-              ? previous.transform[4] - (item.transform[4] + item.width)
-              : item.transform[4] - (previous.transform[4] + previous.width);
-          if (gap > Math.max(1, item.height * 0.12)) line += " ";
-        }
-        line += item.str;
-        if (item.hasEOL) line += "\n";
-        previous = item.hasEOL ? undefined : item;
-      }
-      pages.push(line);
-    }
-    return pages.join("\n\n");
-  } finally {
-    await loading.destroy();
-  }
-}
 
 // A request belongs to its dataset. Closing the editor only dismisses its view.
 const requests = new WeakMap();
@@ -70,11 +22,11 @@ export function codingControls(d, options = {}) {
   const edit = `<div id="codebook-controls" data-standalone="${!!options.standalone}" data-manual="${!!options.manual}">
     <p id="approved-book"></p>
     <div id="book-upload"><label>Upload your codebook<input id="book-file" type="file" accept=".pdf,.docx,.txt,.xlsx,.csv,.tsv"></label>
-    <small>Choose a Word document, a PDF with selectable text, a text file or a spreadsheet. Select Extract labels to send the codebook to the bot.</small>
+    <small>Choose a Word document, a PDF with selectable text, a text file or a spreadsheet. Select Extract labels to read the file. Sections that need interpretation may be sent to the Data bot.</small>
     <div class="bar"><button type="button" id="extract-book">Extract labels</button></div></div>
     <div class="bar"><button type="button" id="book-manual">Enter labels manually</button><button type="button" id="edit-book" hidden>Review approved labels</button></div>
     <p id="book-status" role="status"></p>
-    <section id="book-draft" hidden><h3>Review your labels</h3><p>Check the labels and their meanings. Your draft stays in this project when you close this window.</p>
+    <section id="book-draft" hidden><h3>Review your labels</h3><p id="book-instructions">Check the labels and their meanings. Your draft stays in this project when you close this window.</p>
     <details id="book-original"><summary>Read text from the upload</summary><pre class="book-source"></pre></details>
     <div id="book-rows"></div><div class="bar"><button type="button" id="book-add">Add label</button><button type="button" class="primary" id="use-book">Use these labels</button><button type="button" class="plain" id="cancel-book">Discard draft</button></div>
     <p role="alert" id="book-error" tabindex="-1"></p></section></div>`;
@@ -111,7 +63,7 @@ export function bindCodingControls(
     rows = el("book-rows"),
     status = el("book-status"),
     error = el("book-error");
-  let displayed, timer;
+  let displayed, timer, canMoveLabels;
   const isOpen = () => form.isConnected && dialog.open;
   const notify = () => {
     clearTimeout(timer);
@@ -123,10 +75,24 @@ export function bindCodingControls(
   };
   function updateDraft() {
     if (!d.coding?.bookDraft || d.coding.bookDraft !== displayed) return;
-    d.coding.bookDraft.entries = [...rows.children].map((row) => ({
-      label: row.querySelector("[data-label]").value,
-      definition: row.querySelector("[data-definition]").value,
-    }));
+    d.coding.bookDraft.entries = [...rows.querySelectorAll(".book-row")].map(
+      (row) => {
+        const category = row
+          .closest(".book-category")
+          ?.querySelector("[data-category]")
+          .value.trim();
+        return {
+          label: row.querySelector("[data-label]").value,
+          definition: row.querySelector("[data-definition]").value,
+          ...(category && { category }),
+        };
+      },
+    );
+    for (const group of rows.querySelectorAll(".book-category")) {
+      const name = group.querySelector("[data-category]").value.trim();
+      const count = group.querySelectorAll(".book-row").length;
+      group.querySelector("summary").textContent = categorySummary(name, count);
+    }
     if (error.textContent) {
       error.textContent = "";
       for (const field of rows.querySelectorAll("[aria-invalid]")) {
@@ -138,16 +104,101 @@ export function bindCodingControls(
     clearTimeout(timer);
     timer = setTimeout(notify, 350);
   }
-  function appendRow(entry) {
+  function appendRow(entry, container = rows) {
     const row = document.createElement("div");
     row.className = "book-row";
     row.innerHTML = `<label>Label<input data-label value="${esc(entry.label)}"></label><label>Meaning and rules<textarea data-definition>${esc(entry.definition)}</textarea></label><button type="button" class="plain">Remove label</button>`;
     row.querySelector("button").onclick = () => {
+      const group = row.closest(".book-category");
       row.remove();
+      if (group && !group.querySelector(".book-row")) group.remove();
       updateDraft();
     };
-    rows.append(row);
+    if (canMoveLabels) {
+      const move = document.createElement("button");
+      move.type = "button";
+      move.className = "plain";
+      move.textContent = "Move label";
+      move.onclick = () => {
+        const previous = row.closest(".book-category");
+        const targets = [...rows.querySelectorAll(".book-category")].filter(
+          (group) => group !== previous,
+        );
+        if (!targets.length) {
+          status.textContent = "There are no other categories in this draft.";
+          return;
+        }
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", "Move to category");
+        select.add(new Option("Keep in current category", ""));
+        targets.forEach((group, i) =>
+          select.add(
+            new Option(
+              group.querySelector("[data-category]").value ||
+                "Labels without a category",
+              String(i),
+            ),
+          ),
+        );
+        move.hidden = true;
+        move.after(select);
+        const close = () => {
+          select.remove();
+          move.hidden = false;
+        };
+        select.onchange = () => {
+          if (select.value !== "") {
+            const target = targets[Number(select.value)];
+            target.querySelector("[data-members]").append(row);
+            target.open = true;
+            if (previous && !previous.querySelector(".book-row"))
+              previous.remove();
+            updateDraft();
+          }
+          close();
+          move.focus();
+        };
+        select.onblur = close;
+        select.focus();
+      };
+      row.append(move);
+    }
+    container.append(row);
     return row;
+  }
+  function categorySummary(name, count) {
+    return (
+      (name || "Labels without a category") +
+      " · " +
+      count +
+      (count === 1 ? " label" : " labels")
+    );
+  }
+  function showDraftRows(entries) {
+    const groups = groupCodebookEntries(entries);
+    const groupedReview = groups.some(([category]) => category);
+    canMoveLabels = groups.length > 1;
+    el("book-instructions").textContent = groupedReview
+      ? "Open a category to check its individual labels. You can rename a category or move a label. The category distinguishes labels with the same name when you apply them."
+      : "Check the labels and their meanings. Your draft stays in this project when you close this window.";
+    if (!groupedReview) {
+      entries.forEach((entry) => appendRow(entry));
+      return;
+    }
+    for (const [name, members] of groups) {
+      const group = document.createElement("details");
+      group.className = "book-category";
+      group.open = !rows.children.length;
+      group.innerHTML = `<summary>${esc(categorySummary(name, members.length))}</summary><label>Category name<input data-category value="${esc(name)}"></label><div data-members></div><button type="button" class="plain" data-add-in-category>Add label to this category</button>`;
+      rows.append(group);
+      const list = group.querySelector("[data-members]");
+      for (const member of members) appendRow(member, list);
+      group.querySelector("[data-add-in-category]").onclick = () => {
+        const row = appendRow(empty(), list);
+        updateDraft();
+        row.querySelector("[data-label]").focus();
+      };
+    }
   }
   function show() {
     if (!isOpen()) return;
@@ -192,7 +243,7 @@ export function bindCodingControls(
       rows.replaceChildren();
       error.textContent = "";
       if (draft) {
-        draft.entries.forEach(appendRow);
+        showDraftRows(draft.entries);
         el("book-original").hidden = !draft.sourceText;
         el("book-original").querySelector("pre").textContent = draft.sourceText;
       }
@@ -246,13 +297,20 @@ export function bindCodingControls(
     updateDraft();
     row.querySelector("[data-label]").focus();
   };
-  el("edit-book").onclick = () =>
+  el("edit-book").onclick = () => {
+    const styles = labelAppearance(d);
     setDraft({
       method: "manual",
       name: d.coding.bookName || "Project codebook",
-      entries: approvedBook(d),
+      entries: approvedBook(d).map((entry) => ({
+        ...entry,
+        label: entry.sourceLabel || entry.label,
+        category:
+          styles.get(labelKey(entry.label))?.category || entry.category || "",
+      })),
       sourceText: "",
     });
+  };
   el("cancel-book").onclick = () => {
     file.value = "";
     setDraft(null);
@@ -268,7 +326,7 @@ export function bindCodingControls(
         ) {
           messages.set(
             d,
-            "Course code confirmed. Choose Extract labels to send your codebook.",
+            "Course code confirmed. Choose Extract labels to read your codebook.",
           );
           show();
           el("extract-book").focus();
@@ -282,8 +340,9 @@ export function bindCodingControls(
     requests.set(d, "Reading the codebook…");
     show();
     try {
-      const sourceText = (await fileText(source)).trim();
-      if (!sourceText)
+      const document = await readCodebookFile(source);
+      const sourceText = document.text;
+      if (!sourceText.trim())
         throw Error(
           "This file has no selectable text. Use a text-based PDF, Word document or spreadsheet.",
         );
@@ -293,13 +352,15 @@ export function bindCodingControls(
         );
       requests.set(d, "Extracting labels from your codebook…");
       editors.get(d)?.();
-      const response = await extract(sourceText);
+      const result = await extract(document);
+      const response = result?.entries;
       if (
         !Array.isArray(response) ||
         response.some(
           (row) =>
             typeof row?.label !== "string" ||
-            typeof row.definition !== "string",
+            typeof row.definition !== "string" ||
+            (row.category != null && typeof row.category !== "string"),
         )
       )
         throw Error("The bot returned an unreadable codebook. Try again.");
@@ -307,33 +368,19 @@ export function bindCodingControls(
         throw Error(
           "The project codebook changed while the bot was reading. Your newer work has been kept.",
         );
-      const grounded = labelsInCodebook(response, sourceText);
-      const entries = new Map();
-      for (const row of grounded) {
-        const key = labelKey(row.label),
-          existing = entries.get(key);
-        if (!existing) entries.set(key, { ...row });
-        else if (
-          row.definition &&
-          !existing.definition.split("\n").includes(row.definition)
-        )
-          existing.definition = [existing.definition, row.definition]
-            .filter(Boolean)
-            .join("\n");
-      }
-      const count = entries.size;
+      const count = response.length;
       setDraft(
         {
           method: "upload",
           name: source.name,
-          entries: [...entries.values()],
+          entries: response,
           sourceText,
         },
         (count
           ? count + " draft label" + (count === 1 ? "" : "s") + " to check."
           : "Check the source text and add any missing labels.") +
-          (response.length > grounded.length
-            ? " Some suggested labels could not be found in the uploaded text and were left out."
+          (result.omitted
+            ? " Some suggestions could not be matched to the source. Compare your draft with the uploaded text."
             : ""),
       );
     } catch (err) {
@@ -349,7 +396,23 @@ export function bindCodingControls(
     try {
       // Read current controls as well, including autofill or an edit still in focus.
       updateDraft();
-      const book = bookEntries(draft.entries);
+      // A label already applied to passages keeps its identity if its sibling
+      // with the same name is removed from a revised codebook.
+      const scopedKey = (category, label) =>
+        JSON.stringify([category || "", label]);
+      const previous = new Map(
+        approvedBook(d)
+          .filter((e) => e.sourceLabel)
+          .map((e) => [scopedKey(e.category, e.sourceLabel), e.label]),
+      );
+      const book = bookEntries(
+        draft.entries.map((row) => ({
+          ...row,
+          previousLabel: previous.get(
+            scopedKey(row.category, row.label.trim()),
+          ),
+        })),
+      );
       clearTimeout(timer);
       timer = null;
       d.coding = {
@@ -359,6 +422,7 @@ export function bindCodingControls(
         book,
         bookName: draft.name,
       };
+      applyCodebookCategories(d, book);
       delete d.coding.bookDraft;
       messages.set(d, "Codebook approved.");
       file.value = "";
@@ -369,8 +433,12 @@ export function bindCodingControls(
       const seen = new Set();
       const invalid = [...rows.querySelectorAll("[data-label]")].find(
         (field) => {
-          const key = labelKey(field.value);
-          if (!key || seen.has(key)) return true;
+          const label = labelKey(field.value);
+          const category =
+            field.closest(".book-category")?.querySelector("[data-category]")
+              .value || "";
+          const key = JSON.stringify([labelKey(category), label]);
+          if (!label || seen.has(key)) return true;
           seen.add(key);
           return false;
         },
@@ -380,6 +448,8 @@ export function bindCodingControls(
         hint.className = "book-row-error";
         hint.id = "book-row-error";
         hint.textContent = err.message;
+        const group = invalid.closest(".book-category");
+        if (group) group.open = true;
         invalid.closest("label").append(hint);
         invalid.setAttribute("aria-invalid", "true");
         invalid.setAttribute("aria-describedby", hint.id);

@@ -73,4 +73,93 @@ test("course unlock is required and transient upstream failure uses Qwen with th
   assert.equal(result.model, "Qwen3.6-35B-A3B-AWQ-4bit");
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[0].messages, calls[1].messages);
+  assert.equal(calls[0].response_format, undefined);
+});
+
+test("codebook requests pass grouped entries through intact and reject a truncated draft", async (t) => {
+  const { token } = await (
+    await worker.fetch(req("/session", { code: env.COURSE_CODE }), env)
+  ).json();
+  const document = "Frequency\n  Listening\n  - Rarely\n  Reading\n  - Rarely";
+  const entries = ["Listening", "Reading"].map((branch) => ({
+    label: "Rarely",
+    category: "Frequency › " + branch,
+    definition: "",
+  }));
+  let context = { document };
+  let responseEntries = entries;
+  let truncated = false;
+  t.mock.method(globalThis, "fetch", async (_url, { body }) => {
+    const upstream = JSON.parse(body);
+    assert.deepEqual(JSON.parse(upstream.messages[1].content).context, context);
+    assert.equal(upstream.temperature, 0);
+    const row =
+      upstream.response_format.json_schema.schema.properties.entries.items;
+    assert.equal(upstream.response_format.json_schema.strict, true);
+    assert.deepEqual(
+      row.required,
+      context.sections
+        ? ["label", "category", "definition", "sectionId"]
+        : ["label", "category", "definition"],
+    );
+    if (context.sections)
+      assert.deepEqual(
+        row.properties.sectionId.enum,
+        context.sections.map((s) => s.id),
+      );
+    assert.match(
+      upstream.messages[0].content,
+      /identical label in two different categories/,
+    );
+    return Response.json({
+      choices: [
+        {
+          finish_reason: truncated ? "length" : "stop",
+          message: {
+            content: JSON.stringify({
+              entries: truncated
+                ? responseEntries.slice(0, 1)
+                : responseEntries,
+            }),
+          },
+        },
+      ],
+    });
+  });
+  const ask = () =>
+    worker.fetch(
+      req(
+        "/ask",
+        {
+          skill: "codebook",
+          question: "Extract the labels for review.",
+          context,
+        },
+        token,
+      ),
+      env,
+    );
+  const complete = await ask();
+  assert.equal(complete.status, 200);
+  assert.deepEqual(JSON.parse((await complete.json()).answer).entries, entries);
+  context = {
+    sections: entries.map((e, i) => ({
+      id: "s" + i,
+      category: e.category,
+      text: e.label,
+    })),
+  };
+  responseEntries = entries.map((e, i) => ({
+    ...e,
+    sectionId: context.sections[i].id,
+  }));
+  const sectioned = await ask();
+  assert.deepEqual(
+    JSON.parse((await sectioned.json()).answer).entries,
+    responseEntries,
+  );
+  truncated = true;
+  const partial = await ask();
+  assert.equal(partial.status, 422);
+  assert.equal((await partial.json()).answer, undefined);
 });

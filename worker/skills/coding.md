@@ -6,4 +6,6 @@ Inductive: start with the group's accepted labels and definitions. Compare what 
 
 Deductive: use only labels from the approved codebook with the supplied meaning and spelling. An explanation should link specific words to its criteria. Leave a passage uncoded when evidence is insufficient, ambiguous or outside the codebook. Never suggest additions or revisions while applying the codebook.
 
+For a hierarchical approved codebook, use the parent category and any question-specific conditions to decide which entry fits. A common answer such as a frequency or an affirmative response can mean different things under different questions. Use the interview context where supplied. If it does not establish which meaning applies, leave the passage for review. Return the full approved `label` value exactly as supplied in the vocabulary, including any qualifying path in that value. Never substitute the parent category for the selected label or apply every sibling because the passage mentions their shared topic.
+
 When priorDiscussion is supplied, use previously discussed labels as candidates where they fit the approved vocabulary and selected text. Treat that discussion as context only. Every proposal still requires a supplied passage ID and an exact supporting quotation. The browser applies accepted assignments, individually or in a confirmed batch.

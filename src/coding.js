@@ -23,6 +23,12 @@ export function labelVocabulary(entries = []) {
         label: label.trim(),
         definition:
           typeof entry?.definition === "string" ? entry.definition : "",
+        ...(typeof entry?.category === "string" && entry.category.trim()
+          ? { category: entry.category.trim() }
+          : {}),
+        ...(typeof entry?.sourceLabel === "string" && entry.sourceLabel.trim()
+          ? { sourceLabel: entry.sourceLabel.trim() }
+          : {}),
       });
   }
   return [...vocabulary.values()];
@@ -215,21 +221,72 @@ function validateSuggestions(raw, passages, guide, newLabelLimit, excluded) {
   return result;
 }
 export function bookEntries(rows) {
-  const seen = new Set();
   if (!rows.length)
     throw Error("Include at least one label before using this codebook.");
-  return rows.map((row) => {
+  const branches = new Map();
+  const entries = rows.map((row) => {
     const label = row.label.trim(),
-      definition = row.definition.trim();
+      definition = row.definition.trim(),
+      category = (row.category || "")
+        .split("›")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(" › ");
     if (!label) throw Error("Give each entry a label or remove its row.");
-    if (seen.has(key(label)))
+    const name = key(label);
+    if (!branches.has(name)) branches.set(name, new Set());
+    const parents = branches.get(name);
+    if (parents.has(key(category)))
       throw Error(
-        "Each label must appear once. Combine or rename the duplicate “" +
+        "Each label must appear once within a category. Combine or rename the duplicate “" +
           label +
           "”.",
       );
-    seen.add(key(label));
-    return { label, definition };
+    parents.add(key(category));
+    const item = category
+      ? { label, definition, category }
+      : { label, definition };
+    // A shared inductive review can add entries to a previously approved
+    // deductive book; it supplies its already-qualified project codes.
+    if (row.sourceLabel && row.sourceLabel !== label)
+      item.sourceLabel = row.sourceLabel;
+    return item;
+  });
+  // Passage tags are strings in both existing projects and shared Word files.
+  // Only homonyms need a qualified tag. Keep the exact leaf for the editor.
+  const used = new Set(branches.keys());
+  return entries.map((entry, index) => {
+    const previous = rows[index].previousLabel;
+    if (
+      typeof previous === "string" &&
+      entry.category &&
+      previous.endsWith(" › " + entry.label) &&
+      !used.has(key(previous))
+    ) {
+      used.add(key(previous));
+      return { ...entry, label: previous, sourceLabel: entry.label };
+    }
+    const parents = branches.get(key(entry.label));
+    if (parents.size === 1 || !entry.category) return entry;
+    const path = entry.category.split(" › ");
+    for (let depth = 1; depth <= path.length; depth++) {
+      const parent = path.slice(-depth).join(" › ");
+      const suffix = key(parent);
+      const ambiguous = [...parents].some(
+        (other) =>
+          other !== key(entry.category) &&
+          (other === suffix || other.endsWith(" › " + suffix)),
+      );
+      // A complete path is distinct even when another branch ends with it.
+      if (ambiguous && depth < path.length) continue;
+      const label = parent + " › " + entry.label;
+      if (used.has(key(label))) continue;
+      used.add(key(label));
+      return { ...entry, label, sourceLabel: entry.label };
+    }
+    throw Error(
+      "Two labels would have the same full name. Edit a label or its category before approving the codebook.",
+    );
   });
 }
 
@@ -282,7 +339,9 @@ export function requestsCoding(message) {
     return false;
   return (
     acceptsCodingBatch(message) ||
-    /\b(?:apply|use|assign) (?:them|those|these)(?: to| across| on| in) (?:all |both |each |every |the |my |our |selected |other )*(?:interviews?|transcripts?)\b/i.test(message) ||
+    /\b(?:apply|use|assign) (?:them|those|these)(?: to| across| on| in) (?:all |both |each |every |the |my |our |selected |other )*(?:interviews?|transcripts?)\b/i.test(
+      message,
+    ) ||
     /\b(?:come up with|suggest|propose|generate|recommend|identify|assign|apply|adopt|create|give me|develop|find)\b.{0,65}\b(?:labels?|codes?|themes?)\b/i.test(
       message,
     ) ||
