@@ -1153,3 +1153,68 @@ label.tick, label.iv-match { cursor: pointer; }
   border-top: 1px solid var(--line);
 }
 .recent-project small { display: block; }
+
+button.brand {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  align-self: flex-start;
+  border-radius: 5px;
+  color: var(--ink);
+}
+button.brand:hover {
+  background: #e5ecff;
+}
+.workflow-method {
+  margin: 3px 0 1px;
+  padding: 10px 12px 1px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+.compact .workflow-method {
+  padding: 7px 0 0;
+  font-size: 0.63rem;
+  text-align: center;
+}
+@media (max-width: 740px) {
+  aside.rail {
+    display: grid;
+    grid-template-columns: 33px minmax(0, 1fr);
+    align-items: center;
+    gap: 4px;
+  }
+  .rail button.brand {
+    display: flex;
+    align-self: center;
+    padding: 3px;
+  }
+  .brand .mark {
+    width: 26px;
+    height: 26px;
+  }
+  .rail .brand span {
+    display: none;
+  }
+  .nav:has(.workflow-method) {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+  .nav:has(.workflow-method) > button:first-child {
+    flex-direction: row;
+  }
+  .nav .workflow-method,
+  .compact .nav .workflow-method {
+    grid-column: 2 / -1;
+    align-self: center;
+    border: 0;
+    margin: 0;
+    padding: 0 0.5rem;
+    font-size: 0.76rem;
+    text-align: left;
+  }
+  .nav .workflow-method span,
+  .compact .nav .workflow-method span {
+    display: inline;
+  }
+}

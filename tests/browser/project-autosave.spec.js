@@ -1,3 +1,4 @@
+import { backupContents } from "./backup-helpers.js";
 import { test, expect } from "@playwright/test";
 import { makeTable } from "../../src/import.js";
 import { fresh } from "../../src/project.js";
@@ -196,7 +197,7 @@ test("local recovery keeps the conversation while the default shared download om
   const data = [];
   for await (const bytes of await (await download).createReadStream())
     data.push(bytes);
-  const p = JSON.parse(Buffer.concat(data));
+  const p = backupContents(Buffer.concat(data));
   expect(p.tutorHistory[p.active].messages).toBeUndefined();
 });
 

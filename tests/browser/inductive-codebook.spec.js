@@ -1,3 +1,4 @@
+import { backupContents, openBackup } from "./backup-helpers.js";
 import { test, expect } from "@playwright/test";
 
 const button = (scope, name) =>
@@ -31,13 +32,14 @@ const examples = [
   ]),
 ];
 
-async function downloadProject(page) {
+async function downloadProject(page, asFile = false) {
   const next = page.waitForEvent("download");
   await button(page, "Save coding project").click();
   const chunks = [];
   for await (const piece of await (await next).createReadStream())
     chunks.push(piece);
-  return JSON.parse(Buffer.concat(chunks));
+  const bytes = Buffer.concat(chunks);
+  return asFile ? bytes : backupContents(bytes);
 }
 
 async function openProject(page, project) {
@@ -145,13 +147,14 @@ test("two named interviews yield an editable, recoverable draft and the approved
   await expect(page.locator("[data-iv-storage]").first()).toContainText(
     "saved on this device",
   );
-  const portable = await downloadProject(page);
+  const archive = await downloadProject(page, true);
+  const portable = backupContents(archive);
   const pending = portable.datasets[0];
   expect(pending.passages.every((p) => p.codes.length === 0)).toBe(true);
   expect(pending.coding?.book || []).toEqual([]);
 
   await page.reload();
-  await button(page, "Resume coding project").click();
+  await openBackup(page, archive);
   await workspace.locator("[data-act=iv-review]").click();
   await expect(retained.locator("[name=iv-draft-label]")).toHaveValue(
     approved.label,

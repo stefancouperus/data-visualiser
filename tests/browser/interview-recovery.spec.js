@@ -1,3 +1,4 @@
+import { backupContents, openBackup } from "./backup-helpers.js";
 import { test, expect } from "@playwright/test";
 import { fresh } from "../../src/project.js";
 import { corpus, texts } from "../../src/import.js";
@@ -87,9 +88,9 @@ test("interview recovery checkpoints a failed batch, reviewer decisions and manu
   const bytes = [];
   for await (const c of await (await download).createReadStream())
     bytes.push(c);
-  const portable = JSON.parse(Buffer.concat(bytes));
+  const portable = backupContents(Buffer.concat(bytes));
   await page.reload();
-  await button(page, "Resume coding project").click();
+  await openBackup(page, Buffer.concat(bytes));
   await button(page, "Review suggested coding").click();
   await expect(page.locator("[name=iv-match]").nth(1)).not.toBeChecked();
   await first.locator("summary").click();
@@ -149,7 +150,7 @@ test("blocked browser recovery storage gives an actionable message and leaves po
   for await (const c of await (await download).createReadStream())
     bytes.push(c);
   expect(
-    JSON.parse(Buffer.concat(bytes)).datasets[0].passages[0].codes,
+    backupContents(Buffer.concat(bytes)).datasets[0].passages[0].codes,
   ).toEqual(["Delays"]);
 });
 
@@ -171,18 +172,36 @@ test("two tabs editing one recovery revision preserve both versions", async ({
   await edit(page, 0, "Fares");
   const other = await context.newPage();
   await other.goto("/");
+  const originalId = await button(other, "Resume coding project").getAttribute(
+    "data-copy",
+  );
   await button(other, "Resume coding project").click();
   await edit(page, 1, "Fares");
   await edit(other, 2, "Delays");
   await page.reload();
   await expect(button(page, "Resume coding project")).toHaveCount(2);
-  for (const [i, labels] of [
-    [0, ["Fares", "Delays"]],
-    [1, ["Fares", "Fares"]],
+  const ids = await button(page, "Resume coding project").evaluateAll(
+    (buttons) => buttons.map((button) => button.dataset.copy),
+  );
+  const fork = ids.find((id) => id !== originalId);
+  for (const [id, labels] of [
+    [fork, ["Fares", "Delays"]],
+    [originalId, ["Fares", "Fares"]],
   ]) {
-    await button(page, "Resume coding project").nth(i).click();
-    if (i) await button(page, "Resume coding project").last().click();
-    await expect(page.locator(".iv-passage > div > .iv-chip")).toHaveText(labels);
+    await page
+      .locator('[data-act="recoverCoding"][data-copy="' + id + '"]')
+      .click();
+    if (id === originalId) {
+      const switchDialog = page.getByRole("dialog", {
+        name: "Switch projects?",
+      });
+      await switchDialog
+        .getByRole("button", { name: "Resume coding project", exact: true })
+        .click();
+    }
+    await expect(page.locator(".iv-passage > div > .iv-chip")).toHaveText(
+      labels,
+    );
     await button(page, "Upload").click();
   }
 });

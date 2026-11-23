@@ -1,3 +1,4 @@
+import { backupContents } from "./backup-helpers.js";
 import { test, expect } from "@playwright/test";
 import { zipSync, strToU8 } from "fflate";
 async function upload(page, route, name, data) {
@@ -726,13 +727,13 @@ test("portable download reopens from the start screen with optional bot memory",
     const wait = page.waitForEvent("download");
     await btn("Download project with data").click();
     const file = await wait;
-    expect(file.suggestedFilename()).toBe("Workshop survey - project.json");
+    expect(file.suggestedFilename()).toBe("Workshop survey - project.zip");
     const stream = await file.createReadStream();
     const chunks = [];
     for await (const chunk of stream) chunks.push(chunk);
     return Buffer.concat(chunks);
   }
-  const first = JSON.parse((await save()).toString());
+  const first = backupContents(await save());
   expect(first.datasets[0].rows.length).toBe(2);
   expect(first.tutorHistory[first.active].messages).toBeUndefined();
   expect(first.tutorHistory[first.active].activity.length).toBe(1);
@@ -745,8 +746,8 @@ test("portable download reopens from the start screen with optional bot memory",
   await (
     await picker
   ).setFiles({
-    name: "saved.json",
-    mimeType: "application/json",
+    name: "saved.zip",
+    mimeType: "application/zip",
     buffer: bytes,
   });
   await expect(page.locator("#graphic1 svg")).toBeVisible();
@@ -756,13 +757,13 @@ test("portable download reopens from the start screen with optional bot memory",
   await btn("Send").click();
   await expect(page.locator(".chatlog")).toContainText("Earlier we discussed");
   await page.reload();
-  await page.locator("#project-drop").evaluate((zone, json) => {
+  await page.locator("#project-drop").evaluate((zone, bytes) => {
     const dt = new DataTransfer();
-    dt.items.add(new File([json], "saved.json", { type: "application/json" }));
+    dt.items.add(new File([new Uint8Array(bytes)], "saved.zip", { type: "application/zip" }));
     zone.dispatchEvent(
       new DragEvent("drop", { bubbles: true, dataTransfer: dt }),
     );
-  }, bytes.toString());
+  }, [...bytes]);
   await expect(page.locator("#graphic1 svg")).toBeVisible();
 });
 
@@ -871,8 +872,8 @@ test("figure styles preview the current data and survive comparison, export and 
   await (
     await picked
   ).setFiles({
-    name: "styled.json",
-    mimeType: "application/json",
+    name: "styled.zip",
+    mimeType: "application/zip",
     buffer: data,
   });
   await expect(chart).toHaveAttribute("data-style", "policy");
@@ -968,7 +969,7 @@ test("uncoded interview uses a reviewed PDF codebook and only approved labels", 
   const chunks = [];
   for await (const c of await (await pending).createReadStream())
     chunks.push(c);
-  const saved = JSON.parse(Buffer.concat(chunks));
+  const saved = backupContents(Buffer.concat(chunks));
   expect(saved.datasets[0].passages.map((p) => p.codes)).toEqual([
     ["Shift conflict"],
     [],
@@ -1846,7 +1847,7 @@ test("chat grounds label suggestions and applies only the accepted batch to the 
   await btn("Download project with data").click();
   const chunks = [];
   for await (const c of await (await dl).createReadStream()) chunks.push(c);
-  const saved = JSON.parse(Buffer.concat(chunks));
+  const saved = backupContents(Buffer.concat(chunks));
   expect(saved.datasets[0].passages.map((p) => p.codes)).toEqual([
     ["Opening hours"],
     ["Opening hours"],
@@ -1948,8 +1949,8 @@ test("two interviews share an approved inductive codebook, resume a bot draft an
   await (
     await reopen
   ).setFiles({
-    name: "project.json",
-    mimeType: "application/json",
+    name: "project.zip",
+    mimeType: "application/zip",
     buffer: Buffer.concat(chunks),
   });
   await btn("Resume coding").click();

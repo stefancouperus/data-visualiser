@@ -1,3 +1,4 @@
+import { backupContents } from "./backup-helpers.js";
 import { test, expect } from "@playwright/test";
 import { fresh } from "../../src/project.js";
 import { corpus, texts } from "../../src/import.js";
@@ -59,7 +60,7 @@ async function save(page) {
   const chunks = [];
   for await (const chunk of await (await download).createReadStream())
     chunks.push(chunk);
-  return JSON.parse(Buffer.concat(chunks));
+  return backupContents(Buffer.concat(chunks));
 }
 
 function match(p) {

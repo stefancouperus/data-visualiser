@@ -1,3 +1,4 @@
+import { canImport, workingDatasets, methodLabels } from "./project-method.js";
 import { includedInterview } from "./coding-passages.js";
 import { optionLevels, isSingleAnswerField } from "./survey-answers.js";
 import { roleChoices } from "./variable-roles.js";
@@ -17,34 +18,43 @@ import {
   patternModes,
   selectionLimit,
 } from "./patterns.js";
-export function landing(local) {
-  return `<div class="hero"><h1>Data visualiser</h1><p>visualising and interpreting your survey or interview data</p></div>
+export function landing(local, method = "") {
+  const choices = [
+    ["table", "table", "Table or spreadsheet", "CSV, TSV or Excel"],
+    [
+      "coded",
+      "check",
+      "Coded or annotated text",
+      "Documents and spreadsheets with your own labels",
+    ],
+    [
+      "text",
+      "text",
+      "Written responses or documents",
+      "Uncoded text, Word documents or a column of answers",
+    ],
+  ].filter(([route]) => canImport(method, route));
+  return `<div class="hero"><h1>${method ? "Add files to this " + methodLabels[method].toLowerCase() + " project" : "Data visualiser"}</h1><p>${method ? "Return to Home to start a different project." : "visualising and interpreting your survey or interview data"}</p></div>
     <section class="project-open" id="project-drop" aria-label="Open a saved project">
       <div class="action-row">${b("open", icon("project") + " Open a saved project")}${local ? b("deviceOpen", "Resume on this device", "plain") : ""}</div>
-      <small>Choose your downloaded project (.json), or drop it here.</small></section>
+      <small>Choose your project ZIP or an earlier JSON file. You can also drop it here.</small></section>
     <section class="card" id="coding-copies" hidden></section>
     <div class="choices">
-      <section class="choice" aria-labelledby="survey-upload-heading">${pict("survey")}<h2 id="survey-upload-heading">Survey data</h2>
+      ${
+        canImport(method, "survey")
+          ? `<section class="choice" aria-labelledby="survey-upload-heading">${pict("survey")}<h2 id="survey-upload-heading">Survey data</h2>
         <p>Read questions, scales and responses from your survey.</p>
-        <div class="action-row">${b("upload", "Upload Qualtrics export", "", 'data-route="survey"')}</div></section>
-      <section class="choice" aria-labelledby="interview-upload-heading">${pict("text")}<h2 id="interview-upload-heading">Interview data</h2>
+        <div class="action-row">${b("upload", "Upload Qualtrics export", "", 'data-route="survey"')}</div></section>`
+          : ""
+      }
+      ${
+        canImport(method, "interview")
+          ? `<section class="choice" aria-labelledby="interview-upload-heading">${pict("text")}<h2 id="interview-upload-heading">Interview data</h2>
         <p>Build a shared codebook or check labels you already applied.</p>
-        <div class="action-row">${b("upload", "Upload uncoded transcripts", "", 'data-route="interview"')}${b("upload", "Upload coded interviews", "", 'data-route="coded"')}${b("upload", "Choose a transcript folder", "plain", 'data-route="interview-folder"')}</div></section>
-    </div><details class="other-files"><summary>Other file types</summary><div class="list">${[
-      ["table", "table", "Table or spreadsheet", "CSV, TSV or Excel"],
-      [
-        "coded",
-        "check",
-        "Coded or annotated text",
-        "Documents and spreadsheets with your own labels",
-      ],
-      [
-        "text",
-        "text",
-        "Written responses or documents",
-        "Uncoded text, Word documents or a column of answers",
-      ],
-    ]
+        <div class="action-row">${b("upload", "Upload uncoded transcripts", "", 'data-route="interview"')}${b("upload", "Upload coded interviews", "", 'data-route="coded"')}${b("upload", "Choose a transcript folder", "plain", 'data-route="interview-folder"')}${method === "interview" ? b("upload", "Add participant information", "plain", 'data-route="participant-information"') : ""}</div></section>`
+          : ""
+      }
+    </div><details class="other-files"><summary>Other file types</summary><div class="list">${choices
       .map(([r, i, t, s]) =>
         b(
           "upload",
@@ -61,9 +71,10 @@ export function landing(local) {
       .join("")}</div></details>`;
 }
 export function datasetSelect(p) {
-  if (p.datasets.length === 1) return "";
+  const choices = workingDatasets(p);
+  if (choices.length < 2) return "";
   return `<label>Current dataset<select id="dataset">${opts(
-    p.datasets.map((d) => [d.id, d.name + " · " + dataCount(d)]),
+    choices.map((d) => [d.id, d.name + " · " + dataCount(d)]),
     p.active,
   )}</select></label>`;
 }
@@ -497,10 +508,17 @@ export function panel(
  </section>`;
 }
 export function readingDownloads(interview) {
-  return '<div class="action-row">'+b("report","Download readable report")+(interview ? b("codedword","Download coded interviews (.docx)") : "")+'</div><small>The report opens in a browser and can be printed. It includes your research question, data overview and figures.</small>';
+  return (
+    '<div class="action-row">' +
+    b("worklog", "View project log") +
+    b("wordreport", "Download Word report") +
+    b("report", "Download readable report") +
+    (interview ? b("codedword", "Download coded interviews (.docx)") : "") +
+    "</div><small>The Word report includes the activity log and saved findings. The printable HTML report also shows the figures.</small>"
+  );
 }
 export function saveScreen(p) {
-  const saveProject = `<section class="card save-task" aria-labelledby="save-project-heading"><h2 id="save-project-heading">Save your project</h2><p>Download your data and work together. Choose <strong>Open a saved project</strong> to continue later.</p><details data-chart-options="save-options"><summary>Other save options</summary><label class="tick"><input id="includeBotChat" type="checkbox" ${p.includeBotChat ? "checked" : ""}>Include full Data bot conversations</label><small>Chat is saved in this browser. Tick this box to include it in the downloaded project too.</small><div class="bar">${b("device", "Save on this device")}${b("settings", "Download settings only")}</div><small>A settings-only file requires matching datasets to be imported first.</small></details><div class="action-row step-actions">${b("download", "Download project with data", "primary")}</div>${readingDownloads(isInterview(p.datasets.find(d => d.id === p.active)))}</section>`;
+  const saveProject = `<section class="card save-task" aria-labelledby="save-project-heading"><h2 id="save-project-heading">Save your project</h2><p>The ZIP includes your editable data and a Word report of your work and findings. Choose <strong>Open a saved project</strong> to reopen the ZIP directly.</p><details data-chart-options="save-options"><summary>Other save options</summary><label class="tick"><input id="includeBotChat" type="checkbox" ${p.includeBotChat ? "checked" : ""}>Include full Data bot conversations</label><small>Chat is saved in this browser. Tick this box to include it in the downloaded project too.</small><div class="bar">${b("device", "Save on this device")}${b("settings", "Download settings only")}</div><small>A settings-only file requires matching datasets to be imported first.</small></details><div class="action-row step-actions">${b("download", "Download project with data", "primary")}</div>${readingDownloads(isInterview(p.datasets.find((d) => d.id === p.active)))}</section>`;
   const exportFigure = `<section class="card save-task" aria-labelledby="export-figure-heading"><h2 id="export-figure-heading">Export a figure</h2><div class="export-main">${form(
     "figure-format",
     "Image format",

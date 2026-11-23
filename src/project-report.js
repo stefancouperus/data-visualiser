@@ -4,6 +4,7 @@ import { transcriptIndex } from "./transcript-index.js";
 import { sharedBook } from "./interviews.js";
 import { labelAppearance } from "./label-appearance.js";
 import { labelKey } from "./coding.js";
+import { logTimestamp } from "./project-word-report.js";
 
 function listing(headings, rows) {
   if (!rows.length) return "";
@@ -138,6 +139,29 @@ export function projectReport(project, drawFigure) {
     }
     sections.push(
       "<section><h2>" + esc(d.name) + "</h2>" + body.join("") + "</section>",
+    );
+  }
+  if (project.workLog?.length) {
+    sections.push(
+      "<section><h2>Activity and findings</h2>" +
+        project.workLog
+          .map(
+            (entry) =>
+              "<h3>" +
+              esc(entry.title) +
+              "</h3><p>" +
+              esc(
+                [logTimestamp(entry.at), entry.source]
+                  .filter(Boolean)
+                  .join(" · "),
+              ) +
+              "</p>" +
+              entry.details
+                .map((detail) => "<p>" + esc(detail) + "</p>")
+                .join(""),
+          )
+          .join("") +
+        "</section>",
     );
   }
   return (

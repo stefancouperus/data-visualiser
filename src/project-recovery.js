@@ -1,3 +1,4 @@
+import { projectMethods } from "./project-method.js";
 // Keep the original database name so interview drafts from earlier releases remain available.
 // A local resume restores the conversation. Its inclusion in shared downloads is optional.
 
@@ -47,6 +48,53 @@ function tracker(project) {
   return copies.get(project);
 }
 export const recoveryId = (p) => tracker(p).id;
+// A completed download clears the project from Recent projects. Browser
+// navigation and the transcript reading position do not create new work.
+export function downloadedContent(p) {
+  return JSON.stringify({
+    ...p,
+    mode: undefined,
+    figurePanels: undefined,
+    comparisonStarted: undefined,
+    puzzleSkipped: undefined,
+    datasets: p.datasets.map((d) =>
+      d.interviews
+        ? {
+            ...d,
+            interviews: {
+              ...d.interviews,
+              source: undefined,
+              passage: undefined,
+            },
+          }
+        : d,
+    ),
+  });
+}
+export function preserveDownloadAcrossNavigation(p, change) {
+  const copy = copies.get(p);
+  const before = copy && JSON.stringify(p);
+  const sameWork =
+    copy && (before === copy.committed || before === copy.navigationBody);
+  const archived =
+    copy?.downloaded != null && copy.downloaded === downloadedContent(p);
+  change();
+  if (sameWork) copy.navigationBody = JSON.stringify(p);
+  if (archived) copy.downloaded = downloadedContent(p);
+}
+export function archiveDownload(p, workspace, exported) {
+  tracker(p).downloaded = exported;
+  return saveRecovery(p, workspace);
+}
+export function isDownloaded(p) {
+  const copy = copies.get(p);
+  return copy?.downloaded != null && copy.downloaded === downloadedContent(p);
+}
+export function keepInRecents(p) {
+  const copy = tracker(p);
+  copy.downloaded = undefined;
+  copy.pin = true;
+}
 export function resumeRecovery(p, entry, position) {
   // Verification may upgrade an older saved project. Initialise the baseline
   // after that upgrade so opening a second tab does not create a second project.
@@ -55,6 +103,8 @@ export function resumeRecovery(p, entry, position) {
     revision: entry.revision,
     committed: JSON.stringify(p),
     position: JSON.stringify(position),
+    hidden: !!entry.hidden,
+    downloaded: entry.hidden ? downloadedContent(p) : undefined,
   });
 }
 async function commit(record) {
@@ -91,6 +141,12 @@ async function commit(record) {
     ) {
       write(record.id, previous);
     } else {
+      // Reading in a second tab must not republish work already downloaded
+      // in the first, or overwrite a newer archived version with stale data.
+      if (previous?.hidden && record.navigationOnly && !record.pin) {
+        summary = { ...previous, archivedElsewhere: true };
+        return;
+      }
       // Two tabs edited the same revision. Keep the second writer's version separately.
       const target =
         record.fork !== record.id ? record.fork : crypto.randomUUID();
@@ -109,9 +165,21 @@ function snapshot(p, workspace) {
   const copy = tracker(p);
   const body = JSON.stringify(p),
     position = JSON.stringify(workspace);
-  if (copy.latest?.body === body && copy.latest.position === position)
+  const hidden = isDownloaded(p);
+  if (
+    copy.latest?.body === body &&
+    copy.latest.position === position &&
+    !!copy.latest.info.hidden === hidden &&
+    (!copy.pin || copy.latest.pin)
+  )
     return copy.latest;
-  if (!copy.latest && copy.committed === body && copy.position === position)
+  if (
+    !copy.latest &&
+    copy.committed === body &&
+    copy.position === position &&
+    !!copy.hidden === hidden &&
+    !copy.pin
+  )
     return null;
   const d = p.datasets.find((d) => d.id === p.active);
   return (copy.latest = {
@@ -120,12 +188,16 @@ function snapshot(p, workspace) {
     writer: copy.writer,
     fork: copy.fork,
     seq: ++copy.seq,
+    navigationOnly: body === copy.committed || body === copy.navigationBody,
+    pin: !!copy.pin,
     saved: Date.now(),
     body,
     workspace,
     position,
     info: {
+      hidden,
       name: p.name,
+      methods: projectMethods(p),
       source: d?.interviews?.source || d?.name || "",
       kind:
         d?.interviews ||
@@ -180,13 +252,19 @@ export async function saveRecovery(p, workspace, verifyPresence = false) {
     record.fork = copy.fork;
     record.revision = copy.revision;
     const entry = await commit(record);
-    if (entry.id !== record.id) copy.fork = crypto.randomUUID();
+    if (entry.archivedElsewhere) {
+      // Keep our original revision so subsequent edits fork safely.
+      copy.downloaded = downloadedContent(JSON.parse(record.body));
+    } else {
+      if (entry.id !== record.id) copy.fork = crypto.randomUUID();
+      Object.assign(copy, { id: entry.id, revision: entry.revision });
+    }
     Object.assign(copy, {
-      id: entry.id,
-      revision: entry.revision,
+      hidden: !!entry.hidden,
       committed: record.body,
       position: record.position,
     });
+    if (record.pin) copy.pin = false;
     if (copy.latest === record) copy.latest = null;
     clearJournal(record);
   };
@@ -230,7 +308,9 @@ export async function listRecoveries() {
   await restoreJournals();
   return (
     await read(db.transaction("summaries").objectStore("summaries").getAll())
-  ).sort((a, b) => b.saved - a.saved);
+  )
+    .filter((entry) => !entry.hidden)
+    .sort((a, b) => b.saved - a.saved);
 }
 export async function loadRecovery(id) {
   const db = await openDatabase();

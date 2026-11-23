@@ -1,3 +1,4 @@
+import { backupContents, openBackup } from "./backup-helpers.js";
 import { test, expect } from "@playwright/test";
 
 const requestUrl = "https://tutor.example.test/ask";
@@ -26,13 +27,14 @@ async function upload(page) {
     file("Travel.txt", "Mijn trein was te laat. Een taxi kostte meer."),
   );
 }
-async function savedProject(page) {
+async function savedProject(page, asFile = false) {
   const pending = page.waitForEvent("download");
   await button(page, "Save coding project").click();
   const chunks = [];
   for await (const chunk of await (await pending).createReadStream())
     chunks.push(chunk);
-  return JSON.parse(Buffer.concat(chunks));
+  const bytes = Buffer.concat(chunks);
+  return asFile ? bytes : backupContents(bytes);
 }
 
 test("extraction finishes after closing, drafts survive recovery and approval exposes the exact edited labels", async ({
@@ -70,13 +72,14 @@ test("extraction finishes after closing, drafts survive recovery and approval ex
   await page.locator("[data-label]").first().fill("Delay");
   await page.keyboard.press("Escape");
   await expect(sidebar).toContainText("Delay");
-  const backup = await savedProject(page);
+  const archive = await savedProject(page, true);
+  const backup = backupContents(archive);
   const draft = backup.datasets[0].coding.bookDraft;
   expect(draft.name).toBe("Codes.txt");
   expect(draft.entries.map((e) => e.label)).toEqual(["Delay", "Cost"]);
   expect(backup.datasets[0].coding.book).toBeUndefined();
   await page.reload();
-  await button(page, "Resume coding project").click();
+  await openBackup(page, archive);
   await expect(sidebar).toContainText("Delay");
   await page.locator("[data-act=iv-reviewbook]").click();
   await expect(page.locator("#book-original pre")).toHaveText(sampleBook);

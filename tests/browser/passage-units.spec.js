@@ -1,3 +1,4 @@
+import { backupContents } from "./backup-helpers.js";
 import { test, expect } from "@playwright/test";
 import { fresh } from "../../src/project.js";
 import { corpus } from "../../src/import.js";
@@ -142,7 +143,7 @@ test("passage percentages, supporting text and saved edits agree for manual and 
   const chunks = [];
   for await (const chunk of await (await downloaded).createReadStream())
     chunks.push(chunk);
-  const saved = JSON.parse(Buffer.concat(chunks)).datasets[0];
+  const saved = backupContents(Buffer.concat(chunks)).datasets[0];
   expect(saved.passages.map((p) => [p.id, p.codes])).toEqual([
     ["north", ["Change"]],
     ["quote", ["Housing"]],

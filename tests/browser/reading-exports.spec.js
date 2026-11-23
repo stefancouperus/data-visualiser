@@ -1,3 +1,4 @@
+import { backupContents } from "./backup-helpers.js";
 import { test, expect } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -105,7 +106,7 @@ test("a shared coloured Word interview reopens with overlapping comment labels a
   await expect(page.locator(".iv-text")).toContainText("the bus to work");
   const save = page.waitForEvent("download");
   await button("Save coding project").click();
-  const saved = JSON.parse((await downloadBytes(await save)).toString());
+  const saved = backupContents(await downloadBytes(await save));
   const entries = saved.datasets[0].passages,
     root = entries.filter((p) => !p.parent);
   expect(root).toHaveLength(1);

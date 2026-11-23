@@ -1,3 +1,12 @@
+import {
+  canImport,
+  currentMethod,
+  datasetMethod,
+  methodLabels,
+  projectMethods,
+  separateMethod,
+  workingDatasets,
+} from "./project-method.js";
 import { includedInterview } from "./coding-passages.js";
 import { editFigure } from "./figure-editor.js";
 import {
@@ -21,6 +30,11 @@ import {
   listRecoveries,
   loadRecovery,
   removeRecovery,
+  archiveDownload,
+  downloadedContent,
+  isDownloaded,
+  keepInRecents,
+  preserveDownloadAcrossNavigation,
   saveRecovery,
   recoveryId,
   resumeRecovery,
@@ -89,6 +103,23 @@ import { importFiles } from "./import-ui.js";
 import { transcriptFolder } from "./transcript-folder.js";
 import { codedInterviewDownload, fileStem } from "./coded-docx.js";
 import { projectReport } from "./project-report.js";
+import {
+  projectWordReport,
+  scheduleWordReport,
+} from "./project-word-report.js";
+import {
+  projectBackup,
+  readProjectFile,
+  reportFilename,
+} from "./project-backup.js";
+import { docxMime } from "./word-package.js";
+import {
+  syncProjectLog,
+  startProjectLog,
+  recordWork,
+  recordFigure,
+  describeFigure,
+} from "./work-log.js";
 import {
   fresh,
   verifyProject,
@@ -336,8 +367,10 @@ function activate(id) {
   pendingSelections.clear();
   selectionConfirmed = false;
   undoViews = [];
-  switchDataset(project, id, newView);
-  resetTutor();
+  preserveDownloadAcrossNavigation(project, () => {
+    switchDataset(project, id, newView);
+    resetTutor();
+  });
 }
 const botURL = (import.meta.env.VITE_BOT_URL || "").replace(/\/$/, "");
 const puzzleDrafts = new WeakMap();
@@ -503,6 +536,7 @@ function saveMessage(p, state) {
 async function checkpointProject(p, verifyPresence = false) {
   if (!p.datasets.length) return true;
   clearTimeout(saveTimers.get(p));
+  syncProjectLog(p);
   const state = {
     needsSave: true,
     short: "Saving…",
@@ -514,7 +548,9 @@ async function checkpointProject(p, verifyPresence = false) {
     const before = recoveryId(p);
     await saveRecovery(p, workspacePosition(p), verifyPresence);
     state.needsSave = false;
-    state.short = "Saved on this device";
+    state.short = isDownloaded(p)
+      ? "Project downloaded"
+      : "Saved on this device";
     state.message = isInterview(p.datasets.find((d) => d.id === p.active))
       ? "Coding progress saved on this device."
       : "Project saved on this device.";
@@ -528,6 +564,50 @@ async function checkpointProject(p, verifyPresence = false) {
   saveMessage(p, state);
   return !state.needsSave;
 }
+const prepareProjectDownload = downloadedContent;
+function clearDownloadedShortcut(p, id) {
+  try {
+    if (localStorage.getItem("dv-device-project-id") === id)
+      localStorage.removeItem("dv-device-project-id");
+    const old = localStorage.getItem("dv-project");
+    if (old) {
+      const backup = verifyProject(JSON.parse(old));
+      if (
+        downloadedContent(projectPackage(backup)) ===
+        downloadedContent(projectPackage(p))
+      )
+        localStorage.removeItem("dv-project");
+    }
+  } catch {
+    /* Downloading works without a local shortcut. */
+  }
+}
+async function afterProjectDownload(p, exported) {
+  const id = recoveryId(p);
+  const position = workspacePosition(p);
+  const archive = archiveDownload(p, position, exported);
+  if (isDownloaded(p)) clearDownloadedShortcut(p, id);
+  try {
+    await archive;
+  } catch {
+    // The completed download also works in browsers with restricted storage.
+    protectDeparture(p, position);
+  }
+  const current = isDownloaded(p);
+  if (current && recoveryId(p) !== id)
+    clearDownloadedShortcut(p, recoveryId(p));
+  if (p === project && current) {
+    const state = {
+      needsSave: false,
+      short: "Project downloaded",
+      message: "Project downloaded. New edits will be saved on this device.",
+    };
+    codingSaveStatus.set(p, state);
+    saveMessage(p, state);
+    if (step === 0 && get("coding-copies"))
+      showRecentProjects(get("coding-copies"));
+  }
+}
 const checkpointInterview = (p) => checkpointProject(p);
 function scheduleSave() {
   if (!project.datasets.length || !step) return;
@@ -540,6 +620,7 @@ function scheduleSave() {
 }
 function protectOpenProject() {
   if (!project.datasets.length) return true;
+  syncProjectLog(project);
   return protectDeparture(project, workspacePosition(project));
 }
 window.addEventListener("beforeunload", (event) => {
@@ -554,15 +635,39 @@ document.addEventListener("visibilitychange", () => {
 });
 async function showRecentProjects(container) {
   try {
-    const entries = await listRecoveries();
-    if (!container.isConnected || !entries.length) return;
+    let entries = await listRecoveries();
+    const method = currentMethod(project);
+    if (method) {
+      const matches = await Promise.all(
+        entries.map(async (entry) => {
+          // Older summaries recorded the current file type, which cannot
+          // distinguish coded written survey answers from an interview.
+          try {
+            const methods =
+              entry.methods ||
+              projectMethods((await loadRecovery(entry.id)).project);
+            return methods.length === 1 && methods[0] === method;
+          } catch {
+            return false;
+          }
+        }),
+      );
+      entries = entries.filter((_, i) => matches[i]);
+    }
+    if (!container.isConnected) return;
+    if (!entries.length) {
+      container.replaceChildren();
+      container.hidden = true;
+      return;
+    }
     container.innerHTML =
       "<h2>Recent projects</h2><p>Saved automatically in this browser. Resume where you left off.</p>" +
       entries
         .map((entry) => {
           const attributes = 'data-copy="' + esc(entry.id) + '"';
           const coding =
-            !entry.kind || ["interview", "coding"].includes(entry.kind);
+            entry.methods?.[0] !== "survey" &&
+            (!entry.kind || ["interview", "coding"].includes(entry.kind));
           const source =
             entry.source && entry.source !== entry.name
               ? esc(entry.source) + " · "
@@ -571,6 +676,9 @@ async function showRecentProjects(container) {
             '<div class="recent-project"><div><strong>' +
             esc(entry.name) +
             "</strong><small>" +
+            (entry.methods?.length === 1
+              ? methodLabels[entry.methods[0]] + " · "
+              : "") +
             source +
             esc(new Date(entry.saved).toLocaleString()) +
             '</small></div><div class="bar">' +
@@ -603,15 +711,17 @@ async function showRecentProjects(container) {
 }
 async function checkpointBeforeSwitch() {
   if (!project.datasets.length) return true;
-  if (await checkpointProject(project, true)) return true;
+  if ((await checkpointProject(project, true)) || isDownloaded(project))
+    return true;
   return !!(await askForm(
     "Keep a copy before leaving",
     "<p>This browser could not autosave your latest changes. Download a copy to continue on another screen, or close this message to keep working here.</p>",
-    () => {
-      download(projectPackage(project), projectFilename(project));
+    () => true,
+    "Download project and continue",
+    async () => {
+      await downloadProjectBackup(project);
       return true;
     },
-    "Download project and continue",
   ));
 }
 function home() {
@@ -700,7 +810,7 @@ function documentCodebook(d) {
     ${b("makeinterview", "Use the interview coding workspace")}
     <small>Review your labels, code a passage yourself or choose interviews for the bot.</small></section>`;
 }
-function render() {
+function render(figureLog) {
   // A student may reopen a visual or change an existing question into an open one.
   const dataset = getData();
   if (dataset?.kind === "table") {
@@ -763,10 +873,12 @@ function render() {
   const coverageNote = coverage
     ? `<p class="review"><strong>${esc(coverage.question)}</strong><br>${coverage.answered} of ${coverage.eligible} included respondents wrote an answer. ${coverage.eligible - coverage.answered} had no recorded answer. Theme comparisons use respondents who wrote an answer.</p>`
     : "";
-  let content = step === 0 ? landing(hasDeviceCopy()) : "";
+  const method = currentMethod(project);
+  let content = step === 0 ? landing(!method && hasDeviceCopy(), method) : "";
   if (step !== 0 && d) {
     content = `<div class="hero"><h1>${headers[step]}</h1></div>${datasetSelect(project)}${coverageNote}`;
     if (
+      method !== "survey" &&
       d.textPurpose === "documents" &&
       !d.openAnswers &&
       step <= 3 &&
@@ -780,7 +892,7 @@ function render() {
         check(d) +
         "</details>";
     } else if (step === 1)
-      content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (d.kind === "text" ? "coded" : "table") + '"')}</div>${check(d)}${roleButton ? `<section class="card"><h2>Which questions help answer your research question?</h2><p>Identify the outcome, groups and possible explanations. Mark questions with written answers too.</p>${roleButton}</section>` : ""}${openRoute}<div class="bar step-actions">${b("confirm", "Confirm and explore", "primary")}</div>`;
+      content += `<div class="bar">${b("upload", "Add files", "", 'data-route="' + (method === "text" ? "text" : method === "interview" ? "coded" : "table") + '"')}</div>${check(d)}${roleButton ? `<section class="card"><h2>Which questions help answer your research question?</h2><p>Identify the outcome, groups and possible explanations. Mark questions with written answers too.</p>${roleButton}</section>` : ""}${openRoute}<div class="bar step-actions">${b("confirm", "Confirm and explore", "primary")}</div>`;
     else if (step === 2 || step === 3)
       content += `${step === 2 ? openRoute : ""}<div class="bar view-actions">${step === 2 ? b("compare", "Compare two views") : b("savecompare", "Save comparison", "primary")}${step === 3 ? b("askboth", icon("bot") + " Compare findings") : ""}${step === 3 ? `<label class="tick"><input id="linked" type="checkbox" ${project.linked ? "checked" : ""}>Link filters</label>` : ""}</div>${step === 3 ? '<p class="caption" id="comparisonNote"></p>' : ""}<div class="${step === 3 ? "pair" : ""}">${project.views
         .slice(0, step === 3 ? 2 : 1)
@@ -799,7 +911,7 @@ function render() {
         )}</div> ${undoViews.length ? b("undo", "Undo view change", "plain") : ""}<div id="hint"></div>`;
     else if (interview && !confirmed)
       content +=
-        '<section class="card"><h2>Save your coding progress</h2><p>Reopen the project to continue with your shared codebook, interviews and any coding draft.</p><div class="bar action-row">' +
+        '<section class="card"><h2>Save your coding progress</h2><p>Your ZIP includes the editable project and its Word report. Reopen the ZIP to continue coding.</p><div class="bar action-row">' +
         b("download", "Download project with data", "primary") +
         b("device", "Save on this device") +
         "</div>" +
@@ -819,7 +931,7 @@ function render() {
     "Save",
   ];
   get("app").innerHTML =
-    `<div class="shell ${compact ? "compact" : ""}"><aside class="rail"><div class="brand">${mark}<span>Data<br>visualiser</span></div><nav class="nav" aria-label="Workflow">${labels.map((s, i) => `<button title="${s}" aria-label="${s}" data-short="${shortSteps[i]}" data-act="nav" data-i="${i}" ${step === i ? 'aria-current="step"' : ""} ${(i > 0 && !d) || (i > 1 && !confirmed && !(interview && i === 4)) ? "disabled" : ""}>${icon(icons[i])}<span>${s}</span></button>`).join("")}${b("bot", icon("bot") + "<span>Data bot</span>", "botnav", 'aria-label="Data bot" title="Data bot" data-short="Data bot" aria-expanded="' + bot + '"')}</nav><div class="rail-bottom">${b("compact", icon("menu") + "<span>Collapse sidebar</span>", "plain", 'aria-label="Toggle sidebar"')}<small class="app-version">0.1 beta</small></div></aside><main class="main" id="workspace"><header class="top"><div class="project-path">${d ? b("home", "Home", "plain") + " / " : ""}<span>${esc(project.name)} &nbsp; / &nbsp; ${labels[step]}</span></div>${d ? '<small id="autosave-status" role="status">' + esc(codingSaveStatus.get(project)?.short || "Saving…") + "</small>" : ""}</header><div class="content"><div class="${asideBot ? "withbot" : ""}"><div>${content}</div>${asideBot ? botBox() : ""}</div>${bot && !asideBot ? botBox() : ""}</div></main></div>`;
+    `<div class="shell ${compact ? "compact" : ""}"><aside class="rail">${b("home", mark + "<span>Data<br>visualiser</span>", "brand", 'aria-label="Data visualiser home" title="Home"')}<nav class="nav" aria-label="Workflow">${labels.map((s, i) => `<button title="${s}" aria-label="${s}" data-short="${shortSteps[i]}" data-act="nav" data-i="${i}" ${step === i ? 'aria-current="step"' : ""} ${(i > 0 && !d) || (i > 1 && !confirmed && !(interview && i === 4)) ? "disabled" : ""}>${icon(icons[i])}<span>${s}</span></button>${i === 0 && method ? '<div class="workflow-method">' + methodLabels[method] + "<span> project</span></div>" : ""}`).join("")}${b("bot", icon("bot") + "<span>Data bot</span>", "botnav", 'aria-label="Data bot" title="Data bot" data-short="Data bot" aria-expanded="' + bot + '"')}</nav><div class="rail-bottom">${b("compact", icon("menu") + "<span>Collapse sidebar</span>", "plain", 'aria-label="Toggle sidebar"')}<small class="app-version">0.1 beta</small></div></aside><main class="main" id="workspace"><header class="top"><div class="project-path">${d ? b("home", "Home", "plain") + " / " : ""}<span>${esc(project.name)} &nbsp; / &nbsp; ${labels[step]}</span></div>${d ? '<small id="autosave-status" role="status">' + esc(codingSaveStatus.get(project)?.short || "Saving…") + "</small>" : ""}</header><div class="content"><div class="${asideBot ? "withbot" : ""}"><div>${content}</div>${asideBot ? botBox() : ""}</div>${bot && !asideBot ? botBox() : ""}</div></main></div>`;
   if (
     previousSource &&
     previousSource === document.querySelector(".iv-paper h2")?.textContent
@@ -845,7 +957,7 @@ function render() {
   if (d && (step === 2 || step === 3)) {
     for (let i = 0; i < (step === 3 ? 2 : 1); i++) {
       try {
-        draw(i);
+        draw(i, figureLog?.panel === i ? figureLog.title : "");
       } catch (e) {
         get("graphic" + i).textContent = e.message;
       }
@@ -871,6 +983,8 @@ function render() {
             : "";
     if (hint) get("hint").innerHTML = `<p class="review">${esc(hint)}</p>`;
   }
+  syncProjectLog(project);
+  scheduleWordReport(project, reportFigure);
 }
 function summary(
   i,
@@ -928,10 +1042,11 @@ function modelSummary(d, v) {
     records: [],
   };
 }
-function draw(i) {
+function draw(i, logTitle) {
   const a = summary(i),
     v = project.views[i];
   get("graphic" + i).replaceChildren(figure(a, v, { interactive: true }));
+  if (logTitle) recordFigure(project, getData(), logTitle, v, a);
   if (a.coefficients)
     get("modeldetails" + i).innerHTML =
       "<details><summary>Coefficients and model details</summary>" +
@@ -1107,25 +1222,27 @@ function goto(i, restorePosition) {
   const d = getData();
   if (i > 0 && !d) return;
   if (i > 1 && !analysisReady(d) && !(isInterview(d) && i === 4)) i = 1;
-  if (i === 2 || i === 3) project.figurePanels = i === 3 ? "both" : "left";
-  if (i === 3 && !project.comparisonStarted) {
-    const right = structuredClone(project.views[0]);
-    right.chart =
-      {
-        bars: "dots",
-        dots: "bars",
-        small: "bars",
-        grid: "table",
-        box: right.task === "one" ? "hist" : "box",
-        gap: "stack",
-      }[right.chart] || right.chart;
-    project.views[1] = right;
-    project.comparisonStarted = true;
-  }
-  if (i === 3 && project.linked) {
-    const { filter, value } = project.views[0];
-    Object.assign(project.views[1], { filter, value });
-  }
+  preserveDownloadAcrossNavigation(project, () => {
+    if (i === 2 || i === 3) project.figurePanels = i === 3 ? "both" : "left";
+    if (i === 3 && !project.comparisonStarted) {
+      const right = structuredClone(project.views[0]);
+      right.chart =
+        {
+          bars: "dots",
+          dots: "bars",
+          small: "bars",
+          grid: "table",
+          box: right.task === "one" ? "hist" : "box",
+          gap: "stack",
+        }[right.chart] || right.chart;
+      project.views[1] = right;
+      project.comparisonStarted = true;
+    }
+    if (i === 3 && project.linked) {
+      const { filter, value } = project.views[0];
+      Object.assign(project.views[1], { filter, value });
+    }
+  });
   if (step && !i && d) {
     workspacePosition(project);
     checkpointProject(project).then(() => {
@@ -1151,19 +1268,61 @@ function goto(i, restorePosition) {
   render();
   window.scrollTo(0, 0);
 }
-function setProject(p, saved, target) {
+async function methodForOpening(p) {
+  const available = projectMethods(p);
+  const method = currentMethod(project);
+  if (method && available.length && !available.includes(method))
+    throw Error(
+      "Return to Home to open this " +
+        methodLabels[available[0]].toLowerCase() +
+        " project.",
+    );
+  if (available.length <= 1 || method) return method || available[0] || "";
+  return (
+    (await askForm(
+      "Choose a workspace for this older project",
+      "<p>This project contains both survey and interview data. Open one method as a separate project. You can return to the original from Home to open the other method.</p>" +
+        formselect(
+          "legacy-method",
+          "Which work would you like to open?",
+          available.map((key) => [key, methodLabels[key] + " project"]),
+          datasetMethod(
+            p.datasets.find((d) => d.id === p.active) || p.datasets[0],
+          ),
+        ),
+      () => val("legacy-method"),
+      "Open workspace",
+    )) || null
+  );
+}
+function setProject(p, saved, target, selectedMethod) {
   pendingSelections.clear();
   selectionConfirmed = false;
-  project = verifyProject(p);
+  const checked = verifyProject(p);
+  const methods = projectMethods(checked);
+  if (methods.length > 1) {
+    const active = checked.datasets.find((d) => d.id === checked.active);
+    const preferred = selectedMethod || (active && datasetMethod(active));
+    project = separateMethod(
+      checked,
+      methods.includes(preferred) ? preferred : methods[0],
+    );
+    // A fresh recovery identity leaves the historic combined copy intact.
+    saved = undefined;
+    target = undefined;
+  } else project = checked;
   project.mode = readHelpMode();
   project.comparisonStarted ??=
     project.figurePanels === "both" ||
     (project.views.length === 2 &&
       JSON.stringify(project.views[0]) !== JSON.stringify(project.views[1]));
   undoViews = [];
-  if (!getData() && project.datasets.length) activate(project.datasets[0].id);
+  const choices = workingDatasets(project);
+  if (choices.length && !choices.some((d) => d.id === project.active))
+    activate(choices[0].id);
   if (getData() && project.views.length !== 2) activate(project.active);
   resetTutor();
+  startProjectLog(project);
   if (saved) {
     lastPosition.set(project, saved.workspace);
     resumeRecovery(project, saved.entry, saved.workspace);
@@ -1182,17 +1341,16 @@ function setProject(p, saved, target) {
   );
 }
 async function openProjectFile(file) {
-  let data;
-  try {
-    data = JSON.parse(await file.text());
-  } catch {
-    throw Error(
-      "Choose a downloaded Data visualiser project (.json). For a survey or transcript, use an upload option.",
-    );
-  }
-  const saved = verifyProject(data);
+  const saved = verifyProject(await readProjectFile(file));
+  const method = await methodForOpening(saved);
+  if (method === null) return;
   const restored = saved.settingsOnly
-    ? reattach(saved, project.datasets)
+    ? reattach(
+        projectMethods(saved).length > 1
+          ? separateMethod(saved, method)
+          : saved,
+        project.datasets,
+      )
     : saved;
   if (
     !saved.settingsOnly &&
@@ -1206,8 +1364,8 @@ async function openProjectFile(file) {
   )
     return;
   if (!(await checkpointBeforeSwitch())) return;
-  setProject(restored);
-  notice("Opened " + restored.name + ".");
+  setProject(restored, undefined, undefined, method);
+  notice("Opened " + project.name + ".");
 }
 function chooseFiles(accept, multiple, handler, folder = false) {
   const p = get("picker");
@@ -1645,6 +1803,13 @@ function applyProposal(explanation) {
   snapshotViews();
   pendingSelections.delete(candidate.panel);
   project.views[candidate.panel] = candidate.view;
+  recordFigure(
+    project,
+    getData(),
+    "Created a visual with the Data bot",
+    candidate.view,
+    chart,
+  );
   let linkedMessage = "";
   if (step === 3 && project.linked && candidate.view.task === "words") {
     const other = project.views[1 - candidate.panel];
@@ -2560,12 +2725,16 @@ async function ask(question, skill, intent = "") {
     render();
   }
 }
-function projectFilename(p) {
-  const name = p.name
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
-    .trim()
-    .slice(0, 100);
-  return (name || "Data visualiser") + " - project.json";
+function reportFigure(dataset, view, index, views) {
+  return describeFigure(summary(index, view, dataset, views), view);
+}
+async function downloadProjectBackup(owner) {
+  syncProjectLog(owner);
+  const report = projectWordReport(owner, reportFigure);
+  const downloadedState = prepareProjectDownload(owner);
+  const { blob, name } = projectBackup(projectPackage(owner), report);
+  blobSave(blob, name);
+  await afterProjectDownload(owner, downloadedState);
 }
 function download(p, name) {
   blobSave(new Blob([JSON.stringify(p)], { type: "application/json" }), name);
@@ -2763,10 +2932,13 @@ async function reviewAction(act, d, el) {
   }
   if (act === "link") {
     const tables = project.datasets.filter((x) => x.kind === "table");
-    if (!tables.length)
-      throw Error(
-        "Upload the metadata table first, then return to this collection in Check.",
-      );
+    if (!tables.length) {
+      if (isInterview(d))
+        return action("upload", {
+          dataset: { route: "participant-information" },
+        });
+      throw Error("Add the related table on Upload first.");
+    }
     const tid = await askForm(
       "Choose related table",
       formselect(
@@ -3020,7 +3192,9 @@ function evidence(i, match, codingPrompt = "") {
       : "") +
       (d.openAnswers
         ? `<p>${d.openAnswers.answered} of ${d.openAnswers.eligible} included respondents answered. Select an answer, give the idea a short label, or ask the bot to suggest labels for your selection.</p>`
-        : `<div id="apply-book-collection" hidden><button type="button" class="primary" id="apply-book-interviews">Apply codebook to ${d.sources.length === 1 ? "interview" : "interviews"}</button><small>Choose the transcripts you want the bot to code.</small></div>`) +
+        : currentMethod(project) === "survey"
+          ? ""
+          : `<div id="apply-book-collection" hidden><button type="button" class="primary" id="apply-book-interviews">Apply codebook to ${d.sources.length === 1 ? "interview" : "interviews"}</button><small>Choose the transcripts you want the bot to code.</small></div>`) +
       `<label>Find a passage<input id="searchPass"></label><div id="passlist">${list()}</div><div class="bar"><button type="button" id="shortpass">Use highlighted words as a passage</button><button type="button" id="discusspass" data-i="${i}">Discuss selected passages</button>${isInterview(d) && !codingPrompt ? '<button type="button" id="iv-open-passage">Open passage in transcript</button>' : ""}</div><label>Code to apply<input id="applycode" list="knowncodes"></label><datalist id="knowncodes">${opts(allCodes(d), "")}</datalist>${codingControls(d)}`,
     () => {
       if (codingPrompt) {
@@ -3217,6 +3391,7 @@ function evidence(i, match, codingPrompt = "") {
     const panel = get("document-codebook");
     if (panel) panel.innerHTML = documentCodebook(d);
     else if (
+      currentMethod(project) !== "survey" &&
       d.textPurpose === "documents" &&
       !d.openAnswers &&
       (d.coding?.bookDraft || d.coding?.book?.length)
@@ -3241,7 +3416,12 @@ function evidence(i, match, codingPrompt = "") {
   const applyBook = get("apply-book-interviews");
   if (applyBook) {
     applyBook.onclick = async () => {
-      if (getData() !== d || !d.coding?.book?.length) return;
+      if (
+        getData() !== d ||
+        currentMethod(project) === "survey" ||
+        !d.coding?.book?.length
+      )
+        return;
       delete d.textPurpose;
       const state = interviews(d);
       get("dialog").close();
@@ -3404,6 +3584,8 @@ async function action(act, el) {
   const d = getData(),
     i = Number(el.dataset.i || 0);
   if (act === "makeinterview") {
+    if (currentMethod(project) === "survey")
+      throw Error("These written answers belong to your survey.");
     delete d.textPurpose;
     activate(d.id);
     goto(1);
@@ -3473,7 +3655,10 @@ async function action(act, el) {
         document
           .querySelector(`[data-chart-options="edit-${i}"]`)
           ?.removeAttribute("open");
-      render();
+      render({
+        panel: i,
+        title: "Confirmed the questions or themes for a visual",
+      });
       get("figure-heading" + i)?.focus();
       get("figure-heading" + i)?.scrollIntoView({ block: "center" });
       notice(
@@ -3505,6 +3690,7 @@ async function action(act, el) {
             );
           }
           project.savedVisuals.push({ name, dataset: d.id, view });
+          recordFigure(project, d, "Saved a visual", view, result, name);
           render();
           notice(
             "Visual saved in this project. Find it under Save and export.",
@@ -3625,7 +3811,7 @@ async function action(act, el) {
       editFigure(summary(i, { ...view, title: "" }), view, (draft) => {
         snapshotViews();
         Object.assign(view, draft);
-        render();
+        render({ panel: i, title: "Edited a visual" });
         document
           .querySelector(`[data-panel="${i}"] [data-act="editfigure"]`)
           ?.focus();
@@ -3651,7 +3837,7 @@ async function action(act, el) {
       if (step === 3) focusBot(i ? "right" : "left");
       proposal = captionDraft = queuedShortcut = null;
       view.chart = el.dataset.chart;
-      render();
+      render({ panel: i, title: "Changed the chart type" });
       document
         .querySelector(`[data-panel="${i}"] .chart-picker summary`)
         ?.focus({ preventScroll: true });
@@ -3668,9 +3854,14 @@ async function action(act, el) {
     case "upload": {
       const uploadProject = project;
       let route = el.dataset.route;
+      const method = currentMethod(project);
+      if (!canImport(method, route))
+        throw Error(
+          "Return to Home to start a project with a different method.",
+        );
       const folderMode = route === "interview-folder";
       chooseFiles(
-        route === "survey" || route === "table"
+        ["survey", "table", "participant-information"].includes(route)
           ? ".csv,.tsv,.xlsx"
           : ".docx,.txt,.csv,.tsv,.xlsx",
         true,
@@ -3685,9 +3876,32 @@ async function action(act, el) {
           }
           let datasets = await importFiles(
             files,
-            route === "interview" ? "text" : route,
+            route === "interview"
+              ? "text"
+              : route === "participant-information"
+                ? "table"
+                : route,
           );
-          if (!datasets?.length || project !== uploadProject) return;
+          if (!datasets?.length || project !== uploadProject || getData() !== d)
+            return;
+          if (!canImport(currentMethod(project), route))
+            throw Error(
+              "The open project changed. Choose the files again in the intended project.",
+            );
+          if (route === "participant-information") {
+            if (!isInterview(d) || getData() !== d) return;
+            for (const t of datasets) t.purpose = "participant-information";
+            project.datasets.push(...datasets);
+            goto(1);
+            await reviewAction("link", d);
+            return;
+          }
+          if (["interview", "coded"].includes(route) && isInterview(d)) {
+            appendInterviews(d, datasets);
+            resetTutor();
+            goto(1);
+            return;
+          }
           if (["interview", "coded"].includes(route)) {
             if (datasets.length > 1)
               appendInterviews(datasets[0], datasets.slice(1));
@@ -3826,6 +4040,10 @@ async function action(act, el) {
         throw Error("The figure changed. Draft a new caption.");
       snapshotViews();
       project.views[draft.panel].annotation = draft.text;
+      recordWork(project, d, "Accepted a figure caption", [
+        viewName(d, project.views[draft.panel]),
+        "Caption: " + draft.text,
+      ]);
       tutorRecord(project).activity.push(
         "Added a caption to " + viewName(d, project.views[draft.panel]) + ".",
       );
@@ -4307,6 +4525,25 @@ async function action(act, el) {
             views: structuredClone(project.views),
             linked: project.linked,
           });
+          const details = [];
+          for (const [panel, view] of project.views.entries()) {
+            try {
+              const analysis = summary(panel, view);
+              details.push(
+                (panel ? "Right: " : "Left: ") + analysis.title,
+                ...describeFigure(analysis, view),
+              );
+            } catch {
+              details.push(
+                (panel ? "Right" : "Left") +
+                  " panel had no displayable result.",
+              );
+            }
+            if (view.annotation) details.push("Caption: " + view.annotation);
+          }
+          if (val("compnote").trim())
+            details.push("Student interpretation: " + val("compnote").trim());
+          recordWork(project, d, "Saved comparison " + name, details);
           notice("Comparison saved in the project.");
           render();
         },
@@ -4329,6 +4566,7 @@ async function action(act, el) {
       break;
     }
     case "device": {
+      keepInRecents(project);
       // Point the explicit device shortcut at the live autosave so it cannot
       // silently reopen an older snapshot after subsequent edits.
       try {
@@ -4337,14 +4575,16 @@ async function action(act, el) {
       } catch {
         /* Recent projects also works without the shortcut. */
       }
-      const stored = await checkpointProject(project);
+      const owner = project;
+      const stored = await checkpointProject(owner);
+      if (isDownloaded(owner)) return;
       try {
         if (stored)
-          localStorage.setItem("dv-device-project-id", recoveryId(project));
+          localStorage.setItem("dv-device-project-id", recoveryId(owner));
         else {
           localStorage.setItem(
             "dv-project",
-            JSON.stringify(projectPackage(project)),
+            JSON.stringify(projectPackage(owner)),
           );
           localStorage.removeItem("dv-device-project-id");
         }
@@ -4381,19 +4621,24 @@ async function action(act, el) {
       }
       return;
     case "recoverCoding": {
+      const saved = await loadRecovery(el.dataset.copy);
+      const method = await methodForOpening(saved.project);
+      if (method === null) return;
       if (
         project.datasets.length &&
         !(await askForm(
           "Switch projects?",
           "<p>Your current project will stay in Recent projects.</p>",
           () => true,
-          "Resume coding project",
+          method === "interview" ||
+            (saved.entry.kind === "coding" && method !== "survey")
+            ? "Resume coding project"
+            : "Resume project",
         ))
       )
         return;
       if (!(await checkpointBeforeSwitch())) return;
-      const saved = await loadRecovery(el.dataset.copy);
-      setProject(saved.project, saved);
+      setProject(saved.project, saved, undefined, method);
       return;
     }
     case "deviceOpen":
@@ -4418,25 +4663,73 @@ async function action(act, el) {
               ? 3
               : 2
             : 1;
-          setProject(p, saved, target);
-        } else setProject(JSON.parse(localStorage.getItem("dv-project")));
+          const method = await methodForOpening(p);
+          if (method !== null) setProject(p, saved, target, method);
+        } else {
+          const p = verifyProject(
+            JSON.parse(localStorage.getItem("dv-project")),
+          );
+          const method = await methodForOpening(p);
+          if (method !== null) setProject(p, undefined, undefined, method);
+        }
       }
       return;
     case "download":
+      return downloadProjectBackup(project);
     case "settings":
-      download(
-        act === "settings" ? settingsProject(project) : projectPackage(project),
-        act === "settings"
-          ? "visualiser-settings.json"
-          : projectFilename(project),
-      );
-      if (act === "download" && codingSaveStatus.has(project))
-        codingSaveStatus.get(project).needsSave = false;
+      download(settingsProject(project), "visualiser-settings.json");
       return;
     case "open":
-      chooseFiles(".json", false, ([file]) => openProjectFile(file));
+      chooseFiles(".zip,.json", false, ([file]) => openProjectFile(file));
+      return;
+    case "worklog": {
+      const entries = syncProjectLog(project);
+      const list = entries
+        .slice()
+        .reverse()
+        .map(
+          (e) =>
+            "<li><strong>" +
+            esc(e.title) +
+            "</strong><small> · " +
+            esc(new Date(e.at).toLocaleString()) +
+            (e.source ? " · " + esc(e.source) : "") +
+            "</small>" +
+            e.details.map((s) => "<p>" + esc(s) + "</p>").join("") +
+            "</li>",
+        )
+        .join("");
+      modal(
+        "Project log",
+        b("logfinding", "Add a finding or note") + "<ol>" + list + "</ol>",
+      );
+      return;
+    }
+    case "logfinding":
+      modal(
+        "Add a finding or note",
+        '<label>What did you observe?<textarea id="finding-text" maxlength="4000" required></textarea></label><p>Give the question or theme and the evidence behind your interpretation.</p>',
+        () => {
+          const finding = val("finding-text").trim();
+          if (!finding) throw Error("Write a finding or note first.");
+          recordWork(project, d, "Student finding or note", [finding]);
+          render();
+          action("worklog", el);
+        },
+        "Save finding",
+      );
+      return;
+    case "wordreport":
+      syncProjectLog(project);
+      blobSave(
+        new Blob([projectWordReport(project, reportFigure)], {
+          type: docxMime,
+        }),
+        reportFilename(project),
+      );
       return;
     case "report": {
+      syncProjectLog(project);
       const html = projectReport(project, (dataset, v, i, views) =>
         new XMLSerializer().serializeToString(
           figure(summary(i, v, dataset, views), v, { width: 760 }),
@@ -4711,7 +5004,11 @@ document.addEventListener("change", (e) => {
     v.items = t.checked
       ? [...new Set([...v.items, id])].slice(0, selectionLimit)
       : v.items.filter((x) => x !== id);
-    render();
+    render(
+      draft
+        ? undefined
+        : { panel: i, title: "Explored a selection of questions or themes" },
+    );
     const panel = document.querySelector(`[data-panel="${i}"]`);
     if (search) {
       const find = panel.querySelector("[data-find-items]");
@@ -4739,7 +5036,18 @@ document.addEventListener("change", (e) => {
     )
       Object.assign(project.views[1 - i], { filter: v.filter, value: v.value });
   } else return;
-  render();
+  const presentationOnly = [
+    "style",
+    "palette",
+    "highlight",
+    "annotation",
+    "title",
+  ].includes(t.dataset.key);
+  render(
+    draft || presentationOnly
+      ? undefined
+      : { panel: i, title: "Explored a visual" },
+  );
   if (["task", "patternMode"].includes(t.dataset.key))
     document
       .querySelector(`[data-panel="${i}"] select[data-key="${t.dataset.key}"]`)

@@ -10,7 +10,10 @@ import { applyAnswerLabels } from "./survey-labels.js";
 import { interviews, sharedBook, pruneEmptyQuotations } from "./interviews.js";
 import { approvedBook, labelKey } from "./coding.js";
 
+import { readWorkLog } from "./work-log.js";
+
 export const fresh = () => ({
+  workLog: [],
   tutorHistory: Object.create(null),
   includeBotChat: false,
   researchFocus: "",
@@ -238,6 +241,7 @@ export function verifyProject(p) {
   return {
     ...fresh(),
     ...p,
+    workLog: readWorkLog(p.workLog),
     researchFocus: readFocus(p.researchFocus),
     includeBotChat: p.includeBotChat === true,
     tutorHistory: readTutorHistory(
@@ -247,7 +251,7 @@ export function verifyProject(p) {
   };
 }
 export function settingsProject(p) {
-  const { tutorHistory, includeBotChat, datasets, ...settings } = p;
+  const { tutorHistory, includeBotChat, workLog, datasets, ...settings } = p;
   const copy = { ...settings };
   copy.settingsOnly = true;
   copy.datasets = datasets.map((d) =>
@@ -257,6 +261,7 @@ export function settingsProject(p) {
           name: d.name,
           kind: d.kind,
           unit: d.unit,
+          ...(d.purpose ? { purpose: d.purpose } : {}),
           rules: d.rules,
           explanation: d.explanation,
           fields: d.fields.map(({ levels, ...f }) => ({
@@ -271,6 +276,7 @@ export function settingsProject(p) {
           unit: d.unit,
           ...(d.textPurpose ? { textPurpose: d.textPurpose } : {}),
           ...(d.openAnswers ? { openAnswers: d.openAnswers } : {}),
+          ...(d.surveySource ? { surveySource: d.surveySource } : {}),
         },
   );
   return structuredClone(copy);
@@ -293,6 +299,8 @@ export function reattach(settings, actual) {
     seen.add(d.id);
     d.id = saved.id;
     d.unit = saved.unit;
+    if (saved.purpose) d.purpose = saved.purpose;
+    if (saved.surveySource) d.surveySource = saved.surveySource;
     if (saved.textPurpose) d.textPurpose = saved.textPurpose;
     if (saved.openAnswers) d.openAnswers = structuredClone(saved.openAnswers);
     if (d.kind === "table") {

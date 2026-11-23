@@ -68,6 +68,7 @@ export function writtenAnswerSet(project, survey, key, id, openOnly) {
     );
   const data = corpus(survey.name + " · " + question.label, passages, sources);
   data.textPurpose = "documents";
+  data.surveySource = survey.id;
   data.metadata = metadata;
   if (openOnly) {
     data.unit = "respondent";

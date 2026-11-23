@@ -1,3 +1,4 @@
+import { backupContents } from "./backup-helpers.js";
 import { test, expect } from "@playwright/test";
 import { fresh } from "../../src/project.js";
 import { corpus, texts } from "../../src/import.js";
@@ -32,7 +33,7 @@ async function download(page) {
   const bytes = [];
   for await (const chunk of await (await event).createReadStream())
     bytes.push(chunk);
-  return JSON.parse(Buffer.concat(bytes));
+  return backupContents(Buffer.concat(bytes));
 }
 function example() {
   const d = corpus(
