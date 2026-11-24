@@ -60,15 +60,26 @@ function groupField(d, v) {
   return d.fields.find((f) => f.id === id);
 }
 
-export function combinedAnswerTotals(d, v, selections, byGroup = false) {
+export function combinedAnswerTotals(
+  d,
+  v,
+  selections,
+  byGroup = false,
+  mode = "separate",
+) {
+  const joint = mode === "all" || mode === "any";
+  if (joint && new Set(selections.map((s) => s.field)).size < 2)
+    throw Error(
+      "Choose answers for at least two questions to count the same respondents across questions.",
+    );
   const displayed = combinationFields(d, v);
   const fields = selections.map(({ field, answers }) => {
     const f = displayed.find((f) => f.id === field);
     const options = f && new Set(answerOptions(f));
     const labels = new Set(answers);
-    if (!f || labels.size < 2 || [...labels].some((s) => !options.has(s)))
+    if (!f || !labels.size || [...labels].some((s) => !options.has(s)))
       throw Error(
-        "Choose at least two recorded response options for each question you want to include.",
+        "Choose a recorded response option for each question you want to include.",
       );
     return { f, labels };
   });
@@ -82,13 +93,15 @@ export function combinedAnswerTotals(d, v, selections, byGroup = false) {
       ? surveyGroupReader(group)
       : (row) => String(row[group.id] ?? "");
   const empty = () =>
-    fields.map(({ f, labels }) => ({
-      question: f.label,
-      field: f.id,
-      labels: [...labels],
-      n: 0,
-      den: 0,
-    }));
+    joint
+      ? [{ n: 0, den: 0, incomplete: 0, mode }]
+      : fields.map(({ f, labels }) => ({
+          question: f.label,
+          field: f.id,
+          labels: [...labels],
+          n: 0,
+          den: 0,
+        }));
   const buckets = new Map();
   if (!byGroup) buckets.set("", empty());
   for (const row of filteredRows(d, v)) {
@@ -97,33 +110,68 @@ export function combinedAnswerTotals(d, v, selections, byGroup = false) {
     const key = byGroup ? level : "";
     if (!buckets.has(key)) buckets.set(key, empty());
     const counts = buckets.get(key);
-    for (const [i, { f, labels }] of fields.entries()) {
+    const picked = ({ f, labels }) =>
+      choicesIn(row[f.id], f).some((value) => labels.has(value));
+    if (joint) {
+      const result = counts[0];
+      if (fields.some(({ f }) => !hasAnswer(row, f))) {
+        result.incomplete++;
+        continue;
+      }
+      result.den++;
+      if (mode === "all" ? fields.every(picked) : fields.some(picked))
+        result.n++;
+      continue;
+    }
+    for (const [i, { f }] of fields.entries()) {
       if (!hasAnswer(row, f)) continue;
       counts[i].den++;
-      if (choicesIn(row[f.id], f).some((value) => labels.has(value)))
-        counts[i].n++;
+      if (picked(fields[i])) counts[i].n++;
     }
   }
   const results = [...buckets].flatMap(([group, entries]) =>
     entries.map((r) => ({ ...r, group })),
   );
-  const lines = results.map(
-    (r) =>
-      quoted(r.question) +
-      (r.group ? " · " + quoted(r.group) : "") +
-      " — " +
-      (r.den
-        ? r.n +
-          " of " +
-          r.den +
-          " (" +
-          format.format((100 * r.n) / r.den) +
-          "%) chose " +
-          r.labels.map(quoted).join(" or ") +
-          "."
-        : "No valid answers in this selection."),
-  );
-  const scope = ["The denominator is the number who answered each question."];
+  const relation =
+    mode === "all"
+      ? "every selected question"
+      : "at least one selected question";
+  const lines = results.map((r) => {
+    const name = joint
+      ? "Same respondents across questions"
+      : quoted(r.question);
+    const subject = name + (r.group ? " · " + quoted(r.group) : "") + " — ";
+    if (!r.den)
+      return (
+        subject +
+        (joint
+          ? "No respondents answered every selected question."
+          : "No valid answers in this selection.")
+      );
+    const value =
+      r.n + " of " + r.den + " (" + format.format((100 * r.n) / r.den) + "%)";
+    return (
+      subject +
+      value +
+      (joint
+        ? " chose a matching answer on " + relation + "."
+        : " chose " + r.labels.map(quoted).join(" or ") + ".")
+    );
+  });
+  const scope = joint
+    ? [
+        "Each respondent counts once. The denominator includes people who answered every selected question. " +
+          results.reduce((n, r) => n + r.incomplete, 0) +
+          " had a missing answer and were left out.",
+        ...fields.map(
+          ({ f, labels }) =>
+            quoted(f.label) +
+            " — " +
+            [...labels].map(quoted).join(" or ") +
+            ".",
+        ),
+      ]
+    : ["The denominator is the number who answered each question."];
   if (fields.some(({ f }) => f.type === "multiple"))
     scope.push("A response that ticked several matching options counts once.");
   if (group)
@@ -193,7 +241,7 @@ function namedSets(text, labels) {
         end: m.index + m[0].length,
       });
   }
-  return sets.filter((set) => set.values.length > 1);
+  return sets;
 }
 
 // If a model ignores the tool request and starts pooling figures in prose,
@@ -208,10 +256,34 @@ export function claimsCombinedCount(d, v, reply) {
     )
   )
     return false;
-  return (
-    namedSets(text, new Set(combinationFields(d, v).flatMap(answerOptions)))
-      .length > 0
+  return namedSets(
+    text,
+    new Set(combinationFields(d, v).flatMap(answerOptions)),
+  ).some((set) => set.values.length > 1);
+}
+
+// Recognise the relationship between questions separately from "or" between answer options.
+function questionRelation(text) {
+  const target = String.raw`(?:the |these |those |my |our )?(?:(?:two|three|four|five|six|[2-9]) )?(?:(?:selected|displayed|current|survey|closed) )?(?:questions?|items?|statements?|\[question\]|them)`;
+  const every = new RegExp(
+    String.raw`\b(?:both|all)(?: of)? ${target}|\b(?:on|to|in|for) (?:both|all)(?=$|[?.!,])`,
+    "u",
   );
+  const any = new RegExp(
+    String.raw`\b(?:at least one(?: of)?|any(?: of)?|either(?: of)?) ${target}|\b(?:on|to|in|for) (?:either|at least one)(?=$|[?.!,])`,
+    "u",
+  );
+  const allMatch = every.test(text),
+    anyMatch = any.test(text);
+  if (
+    (allMatch && anyMatch) ||
+    ((anyMatch || allMatch) &&
+      /\b(?:separately|for each question)\b/u.test(text))
+  )
+    return "clarify";
+  if (allMatch) return "all";
+  if (anyMatch) return "any";
+  return "separate";
 }
 
 export function combinedAnswerRequest(d, v, question, force = false) {
@@ -240,8 +312,18 @@ export function combinedAnswerRequest(d, v, question, force = false) {
     (q, f) => q.replace(literal(f.label), "[question]"),
     text,
   );
-  const sets = namedSets(masked, new Set(fields.flatMap(answerOptions)));
-  if (!force && !sets.length && !explicit && !alternatives) return;
+  const mode = questionRelation(masked);
+  if (mode === "clarify")
+    return {
+      message:
+        "Should I count responses separately for each question, or count the same respondents across questions? " +
+        pickerHint,
+    };
+  const joint = mode !== "separate";
+  const sets = namedSets(masked, new Set(fields.flatMap(answerOptions))).filter(
+    (set) => joint || set.values.length > 1,
+  );
+  if (!force && !joint && !sets.length && !explicit && !alternatives) return;
   if (!fields.length)
     return {
       message:
@@ -255,7 +337,7 @@ export function combinedAnswerRequest(d, v, question, force = false) {
   const labels = [...new Set(set.values)];
   // Do not silently turn an incomplete list into a smaller union.
   if (
-    labels.length < 2 ||
+    (!joint && labels.length < 2) ||
     /^\s*(?:,?\s+or\b|,?\s+plus\b|\/)/u.test(masked.slice(set.end)) ||
     /\bor\s*$/u.test(masked.slice(0, set.start))
   )
@@ -264,12 +346,30 @@ export function combinedAnswerRequest(d, v, question, force = false) {
         "I couldn't identify every requested response option. " + pickerHint,
     };
   const chosen = requestedFields.length ? requestedFields : fields;
+  const countingClause =
+    masked.slice(0, set.start) + " [answers] " + masked.slice(set.end);
+  const declared = countingClause.match(
+    /\b(two|three|four|five|six|[2-9]) (?:(?:selected|displayed|current|survey|closed) )?(?:questions?|items?|statements?)\b/u,
+  );
+  const namedNumber = { two: 2, three: 3, four: 4, five: 5, six: 6 };
+  const expected = declared
+    ? namedNumber[declared[1]] || Number(declared[1])
+    : /\bboth\b/u.test(countingClause)
+      ? 2
+      : undefined;
+  if (joint && (chosen.length < 2 || (expected && chosen.length !== expected)))
+    return {
+      message:
+        "Choose the questions you mean in the figure, then try again. " +
+        pickerHint,
+    };
   const byGroup =
     /\b(?:by (?:each )?group|(?:in|for|within) each group|per group|group by group)\b/u.test(
       text,
     );
-  let remainder =
-    masked.slice(0, set.start) + " [answers] " + masked.slice(set.end);
+  let remainder = declared
+    ? countingClause.replace(declared[0], "questions")
+    : countingClause;
   remainder = remainder.replace(
     /\b(?:by (?:each )?group|(?:in|for|within) each group|per group|group by group|(?:across|among) (?:all |the )?(?:displayed |selected )?groups|in (?:this|the current) (?:view|figure|selection|sample))\b/gu,
     "",
@@ -292,9 +392,9 @@ export function combinedAnswerRequest(d, v, question, force = false) {
     after.split(/[?!.;]/u)[0]
   ).replaceAll("[question]", " ");
   const genericWords =
-    /\b(?:a|an|the|me|my|our|we|i|you|this|these|those|both|two|three|four|five|six|all|each|selected|current|displayed|same|closed|survey|sample|data|dataset|figure|chart|view|project|across|of|for|on|to|from|in|and|or|at|least|one|more|either|any|these|question[s]?|statement[s]?|item[s]?|option[s]?|choice[s]?|answer[s]?|response[s]?|category|categories|people|persons?|participants?|respondents?|records?|students?|who|what|which|how|when|can|could|would|do|did|has|have|is|are|were|was|many|much|often|common|number[s]?|count[s]?|percentage[s]?|pct|percent|proportion[s]?|share[s]?|fraction|total[s]?|overall|together|combined?|combining|add|up|pooled?|altogether|majority|denominator[s]?|valid|out|answered|answering|responded|responding|say|said|select|selecting|choose|chosen|choosing|chose|pick(?:ed)?|ticked|endorsed|indicated|reported|gave|give|with|show|tell|calculate|please|as)\b/gu;
+    /\b(?:a|an|the|me|my|our|we|i|you|this|these|those|them|both|two|three|four|five|six|all|each|selected|current|displayed|same|closed|survey|sample|data|dataset|figure|chart|view|project|across|of|for|on|to|from|in|and|or|at|least|one|more|either|any|these|question[s]?|statement[s]?|item[s]?|option[s]?|choice[s]?|answer[s]?|response[s]?|category|categories|people|persons?|participants?|respondents?|records?|students?|who|what|which|how|when|can|could|would|do|did|has|have|is|are|were|was|many|much|often|common|number[s]?|count[s]?|percentage[s]?|pct|percent|proportion[s]?|share[s]?|fraction|total[s]?|overall|together|combined?|combining|add|up|pooled?|altogether|majority|denominator[s]?|valid|out|answered|answering|responded|responding|say|said|select|selecting|choose|chosen|choosing|chose|pick(?:ed)?|ticked|endorsed|indicated|reported|gave|give|with|show|tell|calculate|please|as)\b/gu;
   if (
-    /\b(?:only|excluding|except|weighted|among|within|where|instead|not|didn.t|neither|intersection|simultaneously|at the same time|in both questions|to both questions|on both questions|in group|from group)\b/u.test(
+    /\b(?:only|excluding|except|weighted|among|within|where|instead|not|didn.t|neither|intersection|simultaneously|at the same time|in group|from group)\b/u.test(
       remainder,
     ) ||
     /[\p{L}\p{N}]/u.test(clause.replace(genericWords, ""))
@@ -318,7 +418,7 @@ export function combinedAnswerRequest(d, v, question, force = false) {
         answers: resolved.map((names) => names[0]),
       });
   }
-  if (!selections.length)
+  if (!selections.length || (joint && missing.length))
     return {
       message:
         "I couldn't verify those response options for the selected questions. " +
@@ -329,7 +429,7 @@ export function combinedAnswerRequest(d, v, question, force = false) {
       message:
         "Choose a grouping question in the figure first, then ask for a total in each group.",
     };
-  const result = combinedAnswerTotals(d, v, selections, byGroup);
+  const result = combinedAnswerTotals(d, v, selections, byGroup, mode);
   if (missing.length)
     result.message +=
       "\n\nThe available answer labels do not establish the same options for " +

@@ -277,6 +277,19 @@ export function verifyProject(p) {
           d.rows.some((r) => !r || typeof r !== "object"))
       )
         throw Error("Missing table data.");
+      if (
+        d.excludedWrittenPassages != null &&
+        (!d.openAnswers ||
+          !Array.isArray(d.excludedWrittenPassages) ||
+          d.excludedWrittenPassages.some(
+            (item) =>
+              !safeID(item?.id) ||
+              typeof item.source !== "string" ||
+              typeof item.text !== "string" ||
+              !Array.isArray(item.codes),
+          ))
+      )
+        throw Error("Missing excluded written-answer data.");
       if (d.kind === "table") restoreLegacyCheckboxes(d);
       if (
         d.kind === "text" &&
@@ -313,6 +326,7 @@ export function settingsProject(p) {
           unit: d.unit,
           ...(d.purpose ? { purpose: d.purpose } : {}),
           rules: d.rules,
+          ...(d.previewDecision && { previewDecision: d.previewDecision }),
           explanation: d.explanation,
           fields: d.fields.map(({ levels, ...f }) => ({
             ...f,
@@ -357,6 +371,7 @@ export function reattach(settings, actual) {
     if (saved.textPurpose) d.textPurpose = saved.textPurpose;
     if (saved.openAnswers) d.openAnswers = structuredClone(saved.openAnswers);
     if (d.kind === "table") {
+      if (saved.previewDecision) d.previewDecision = saved.previewDecision;
       // Settings can include checkbox fields derived after the original import.
       for (const field of saved.fields.slice(d.fields.length)) {
         if (
@@ -475,7 +490,9 @@ function rewriteThemeReferences(project, d, changes, undoViews) {
         : [];
     });
   }
-  for (const p of d.passages) {
+  for (const p of d.excludedWrittenPassages
+    ? [...d.passages, ...d.excludedWrittenPassages]
+    : d.passages) {
     p.codes = [...new Set(p.codes.map(rename).filter(Boolean))];
     if (Array.isArray(p.declinedCoding))
       p.declinedCoding = p.declinedCoding.flatMap((entry) => {

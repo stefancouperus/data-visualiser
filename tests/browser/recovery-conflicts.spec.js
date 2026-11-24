@@ -20,11 +20,15 @@ async function saveVisual(page, name) {
   await button(page, "Save to project").click();
 }
 
-test("three tabs retain independent edits when a previously forked project has another conflict", async ({
-  page: first,
-  context,
-}) => {
-  const survey = makeTable([["Answer"], ["Yes"], ["No"]], "Cohort");
+async function openSharedSurvey(first, context) {
+  const survey = makeTable(
+    [
+      ["Answer", "Second question"],
+      ["Yes", "Often"],
+      ["No", "Sometimes"],
+    ],
+    "Cohort",
+  );
   const view = newView(survey);
   const project = {
     ...fresh(),
@@ -51,7 +55,52 @@ test("three tabs retain independent edits when a previously forked project has a
   const second = await context.newPage();
   await second.goto("/");
   await openRecent(second, initial);
+  return { second, initial };
+}
 
+test("navigation in an idle tab keeps the edited project first on Home", async ({
+  page: first,
+  context,
+}) => {
+  const { second, initial } = await openSharedSurvey(first, context);
+  await saveVisual(first, "Finding from the first tab");
+  await button(first, "Home").click();
+  await expect(recent(first)).toHaveCount(1);
+
+  await button(second, "Save and export").click();
+  await button(second, "Home").click();
+  await expect(recent(second)).toHaveCount(1);
+  await expect(recent(second)).toHaveAttribute("data-copy", initial);
+  await recent(second).click();
+  await button(second, "Save and export").click();
+  await expect(
+    second.getByText("Finding from the first tab", { exact: true }),
+  ).toBeVisible();
+});
+
+test("navigation before another tab's edit does not fork a project or erase the later edit", async ({
+  page: first,
+  context,
+}) => {
+  const { second } = await openSharedSurvey(first, context);
+  await button(second, "Save and export").click();
+  await button(second, "Home").click();
+  await expect(recent(second)).toHaveCount(1);
+  await saveVisual(first, "A subsequent finding");
+  await button(first, "Home").click();
+  await expect(recent(first)).toHaveCount(1);
+  await recent(first).click();
+  await button(first, "Save and export").click();
+  await expect(
+    first.getByText("A subsequent finding", { exact: true }),
+  ).toBeVisible();
+});
+
+test("three tabs retain independent edits when a previously forked project has another conflict", async ({
+  page: first,
+  context,
+}) => {
+  const { second, initial } = await openSharedSurvey(first, context);
   await saveVisual(first, "First tab’s decision");
   await button(first, "Home").click(); // Flush the first version to IndexedDB.
   await saveVisual(second, "Second tab’s decision");
@@ -92,4 +141,28 @@ test("three tabs retain independent edits when a previously forked project has a
     await expect(names).toHaveText(expected);
     await button(second, "Home").click();
   }
+});
+
+test("an unconfirmed survey selection in a stale tab remains recoverable", async ({
+  page: first,
+  context,
+}) => {
+  const { second, initial } = await openSharedSurvey(first, context);
+  await saveVisual(first, "Saved separately");
+  await button(first, "Home").click();
+  await expect(recent(first)).toHaveCount(1);
+  await second.getByText("Chart settings", { exact: true }).click();
+  await second.getByLabel("Update the visual as I select").uncheck();
+  await second.getByLabel("Choose a question or column").selectOption("c1");
+  await expect
+    .poll(() => second.evaluate(() => history.state?.id))
+    .not.toBe(initial);
+  await second.reload();
+  await expect(recent(second)).toHaveCount(2);
+  await recent(second).first().click();
+  await expect(second.getByLabel("Choose a question or column")).toHaveValue(
+    "c1",
+  );
+  await button(second, "Apply selection to visual").click();
+  await expect(second.locator("#graphic0")).toContainText("Second question");
 });

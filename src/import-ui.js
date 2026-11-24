@@ -40,6 +40,46 @@ export function taguette(doc) {
   }
   return list;
 }
+// Reserve identifiers before matching broader headings such as “Interview text”.
+function suggestInterviewColumns(fields) {
+  const available = new Map(
+    fields.map((f) => [
+      f.id,
+      f.label
+        .trim()
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .toLowerCase()
+        .replace(/[_-]+/g, " "),
+    ]),
+  );
+  function choose(...patterns) {
+    for (const pattern of patterns) {
+      const matches = [...available].filter(([, name]) => pattern.test(name));
+      if (!matches.length) continue;
+      if (matches.length > 1) return "";
+      const [id] = matches[0];
+      available.delete(id);
+      return id;
+    }
+    return "";
+  }
+  const pid = choose(
+    /^(?:passage|excerpt|highlight|segment)\s*(?:id|identifier|number|no\.?)$/,
+  );
+  const source = choose(
+    /^(?:source|document|interview|interviewee|participant|respondent|transcript)(?:\s*(?:id|identifier|code|name|number|file))?$/,
+    /^(?:source|document|interview|transcript) file ?name$/,
+  );
+  const passage = choose(
+    /^(?:text|excerpt|content|passage|highlight|quotation|quote|answer|response)$/,
+    /\b(?:text|excerpt|content|passage|highlight|quotation|quote|written answer)\b/,
+  );
+  const codes = choose(
+    /^(?:codes?|tags?|labels?|themes?)$/,
+    /\b(?:applied|assigned|coding|thematic) (?:codes?|tags?|labels?|themes?)\b/,
+  );
+  return { pid, source, passage, codes };
+}
 async function sheet(doc, route, current) {
   const auto = doc.sheets.length === 1 && qualtricsHeaders(doc.sheets[0].grid);
   const choice = auto
@@ -61,53 +101,81 @@ async function sheet(doc, route, current) {
   if (!choice || !current()) return null;
   if (route !== "coded" && route !== "text") return choice;
   const fields = choice.fields.map((f) => [f.id, f.label]),
-    guess = (re) => choice.fields.find((f) => re.test(f.label))?.id || "";
+    columns = suggestInterviewColumns(choice.fields);
+  function readMapping() {
+    const m = {
+      text: val("passage"),
+      source: val("source"),
+      codes: val("codes"),
+      passage: val("pid"),
+      separator: val("sep"),
+    };
+    if (!m.text) throw Error("Choose the column containing the passage text.");
+    if (route === "coded" && !m.codes) {
+      m.markers = readIndicators(choice.fields, "codecol");
+      m.columns = choice.fields.filter((f) => m.markers.has(f.id));
+      if (!m.columns.length)
+        throw Error("Select a code column or tick its yes/no columns.");
+    }
+    const roles = [
+      m.text,
+      m.source,
+      m.codes,
+      m.passage,
+      ...(m.columns || []).map((f) => f.id),
+    ].filter(Boolean);
+    if (new Set(roles).size !== roles.length)
+      throw Error(
+        "A column has two roles. Choose a different column for each of the passage text, interview identifier, passage ID and codes.",
+      );
+    return m;
+  }
   const pendingMap = askForm(
     "Which columns contain your material?",
-    table(
-      choice.fields.map((f) => f.label),
-      choice.rows.slice(0, 3).map(Object.values),
-    ) +
-      `<div class="formgrid">${formselect("passage", "Passage or written answer", fields, guess(/text|excerpt|content|passage|highlight/i))}${formselect("source", "Interview or source", [["", "Use filename"], ...fields], guess(/source|document|interview/i))}${route === "coded" ? formselect("codes", "Code or tags", [["", "Separate yes/no columns"], ...fields], guess(/codes?|tags?/i)) : ""}${formselect("pid", "Passage ID (if repeated)", [["", "Each row is a passage"], ...fields], guess(/highlight.?id|passage.?id/i))}${route === "coded" ? '<label>Separator between codes<input id="sep"><small>Leave blank for one code per cell.</small></label>' : ""}</div>${route === "coded" ? "<details><summary>Separate yes/no code columns</summary>" + indicatorColumns(choice.fields, "codecol") + "</details>" : ""}`,
-    () => {
-      const m = {
-        text: val("passage"),
-        source: val("source"),
-        codes: val("codes"),
-        passage: val("pid"),
-        separator: val("sep"),
-      };
-      if (route === "coded" && !m.codes) {
-        m.markers = readIndicators(choice.fields, "codecol");
-        m.columns = choice.fields.filter((f) => m.markers.has(f.id));
-        if (!m.columns.length)
-          throw Error("Select a code column or tick its yes/no columns.");
-      }
-      if (
-        m.codes === m.text ||
-        m.source === m.text ||
-        m.columns?.some((f) => f.id === m.text)
-      )
-        throw Error(
-          "Use separate columns for the passage text, interview identifier and codes.",
-        );
-      return codedSheet(choice, m);
-    },
+    `<div class="formgrid">${formselect("passage", "Passage or written answer", [["", "Choose the passage column"], ...fields], columns.passage)}${formselect("source", "Interview or source", [["", "Use filename"], ...fields], columns.source)}${route === "coded" ? formselect("codes", "Code or tags", [["", "Separate yes/no columns"], ...fields], columns.codes) : ""}${formselect("pid", "Passage ID (if repeated)", [["", "Each row is a passage"], ...fields], columns.pid)}${route === "coded" ? '<label>Separator between codes<input id="sep"><small>Leave blank for one code per cell. If a comma separates your labels, enter it here.</small></label>' : ""}</div>${route === "coded" ? "<details><summary>Separate yes/no code columns</summary>" + indicatorColumns(choice.fields, "codecol") + "</details>" : ""}<h3>Preview of the first three rows</h3><div id="passage-preview"></div>`,
+    () => codedSheet(choice, readMapping()),
   );
+  const preview = document.getElementById("passage-preview");
+  const showPreview = () => {
+    try {
+      const { passages } = codedSheet(
+        { ...choice, rows: choice.rows.slice(0, 3) },
+        readMapping(),
+      );
+      preview.innerHTML = table(
+        [
+          "Interview or source",
+          "Passage",
+          ...(route === "coded" ? ["Codes"] : []),
+        ],
+        passages.map((p) => [
+          p.source,
+          p.text,
+          ...(route === "coded" ? [p.codes.join("; ") || "No label"] : []),
+        ]),
+      );
+    } catch (err) {
+      preview.textContent = err.message;
+    }
+  };
+  preview.closest("form").addEventListener("change", showPreview);
   if (route === "coded") {
     const codes = document.getElementById("codes"),
       sep = document.getElementById("sep");
     const suggestSeparator = () => {
       const values = choice.rows.map((row) => row[codes.value] || "");
-      const separators = [";", "|", ","].filter((delimiter) =>
+      const separators = [";", "|"].filter((delimiter) =>
         values.some((value) => value.includes(delimiter)),
       );
       sep.value = separators.length === 1 ? separators[0] : "";
     };
+    // A comma often belongs to a label, e.g. a list of examples in brackets.
     codes.addEventListener("change", suggestSeparator);
+    sep.addEventListener("input", showPreview);
     suggestSeparator();
   }
   bindIndicatorColumns(choice, "codecol");
+  showPreview();
   const map = await pendingMap;
   if (!map || !current()) return null;
   const { passages, sources } = map;
@@ -122,15 +190,47 @@ async function documents(docs, route, current) {
       docs.flatMap(documentPassages),
       docs.map((d) => d.name),
     );
-  const tagged = docs.map(taguette);
-  if (tagged.every((v) => v.length)) {
-    const passages = tagged.flat();
-    const result = corpus("Taguette highlights", passages, [
-      ...new Set(passages.map((p) => p.source)),
-    ]);
-    result.excerptSources = [...result.sources];
-    return result;
-  }
+  // Taguette stores its interview names and tags inside the export. Only the
+  // other documents need the student's mapping from Word or inline markings.
+  const inputs = docs.map((doc) => ({ doc, highlights: taguette(doc) }));
+  const transcripts = inputs
+    .filter(({ highlights }) => !highlights.length)
+    .map(({ doc }) => doc);
+  const excerptSources = new Set(
+    inputs.flatMap(({ highlights }) => highlights.map((p) => p.source)),
+  );
+  const collision = transcripts.find((doc) => excerptSources.has(doc.name));
+  if (collision)
+    throw Error(
+      "A Taguette interview and a transcript both use the name “" +
+        collision.name +
+        "”. Give them distinct source names before importing.",
+    );
+  const mapping = transcripts.length
+    ? await matchTranscriptMarkings(transcripts, current)
+    : null;
+  if ((transcripts.length && !mapping) || !current()) return null;
+  const result = corpus(
+    !transcripts.length
+      ? "Taguette highlights"
+      : docs.length === 1
+        ? docs[0].name
+        : "Coded interviews",
+    inputs.flatMap(({ doc, highlights }) =>
+      highlights.length ? highlights : annotatedPassages(doc, mapping),
+    ),
+    inputs.flatMap(({ doc, highlights }) =>
+      highlights.length ? highlights.map((p) => p.source) : [doc.name],
+    ),
+  );
+  if (excerptSources.size) result.excerptSources = [...excerptSources];
+  if (transcripts.length)
+    result.originals = Object.fromEntries(
+      transcripts.map((doc) => [doc.name, doc.paragraphs.join("\n\n")]),
+    );
+  return result;
+}
+async function matchTranscriptMarkings(docs, current) {
   const markers = [
       ...new Set(docs.flatMap((d) => d.marked.flatMap((p) => p.markers))),
     ],
@@ -176,7 +276,7 @@ async function documents(docs, route, current) {
       .filter((doc) => doc.codedWordExport)
       .flatMap((doc) => doc.marked.flatMap((p) => p.markers)),
   );
-  const mapped = await askForm(
+  return askForm(
     "Match markings to codes",
     `<p>Check the labels for each marking. Enter one label per line. Leave the box empty to ignore a note or highlight.</p>` +
       chosen
@@ -222,20 +322,9 @@ async function documents(docs, route, current) {
       close: val("closemark"),
     }),
   );
-  if (!mapped) return null;
-  const passages = docs.flatMap((doc) => annotatedPassages(doc, mapped));
-  const result = corpus(
-    docs.length === 1 ? docs[0].name : "Coded interviews",
-    passages,
-    docs.map((d) => d.name),
-  );
-  result.originals = Object.fromEntries(
-    docs.map((d) => [d.name, d.paragraphs.join("\n\n")]),
-  );
-  return result;
 }
 function documentPassages(doc) {
-  const originals = texts(doc.name, doc.paragraphs);
+  const originals = texts(doc.name, doc.paragraphs, doc.codedWordExport);
   for (const [i, included] of (doc.paragraphScope || []).entries())
     if (included !== undefined) originals[i].codingIncluded = included;
   return originals;

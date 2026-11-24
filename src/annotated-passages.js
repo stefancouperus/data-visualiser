@@ -3,23 +3,22 @@ import { texts, uid } from "./import.js";
 // Inline tags disappear from the displayed paragraph. Keep the original offsets
 // so native Word comments still attach to the same words in a mixed document.
 function inlineTags(raw, open, close) {
+  if (!open || !close) return { text: raw, codes: [], offset: (pos) => pos };
   const removed = [];
   const codes = [];
   let text = "",
     from = 0;
-  if (open && close) {
-    let start = raw.indexOf(open);
-    while (start >= 0) {
-      const closing = raw.indexOf(close, start + open.length);
-      if (closing < 0) break;
-      const end = closing + close.length;
-      const code = raw.slice(start + open.length, closing).trim();
-      if (code) codes.push(code);
-      removed.push({ start, end });
-      text += raw.slice(from, start);
-      from = end;
-      start = raw.indexOf(open, end);
-    }
+  let start = raw.indexOf(open);
+  while (start >= 0) {
+    const closing = raw.indexOf(close, start + open.length);
+    if (closing < 0) break;
+    const end = closing + close.length;
+    const code = raw.slice(start + open.length, closing).trim();
+    if (code) codes.push(code);
+    removed.push({ start, end });
+    text += raw.slice(from, start);
+    from = end;
+    start = raw.indexOf(open, end);
   }
   text += raw.slice(from);
   const leading = text.length - text.trimStart().length;
@@ -46,7 +45,7 @@ export function annotatedPassages(doc, mapped) {
   for (const [i, raw] of doc.paragraphs.entries()) {
     const { text, codes, offset } = inlineTags(raw, mapped.open, mapped.close);
     if (!text) continue;
-    const [original] = texts(doc.name, [text]);
+    const [original] = texts(doc.name, [text], doc.codedWordExport);
     const scope = doc.paragraphScope?.[i];
     if (scope !== undefined) original.codingIncluded = scope;
     original.codes = codes;

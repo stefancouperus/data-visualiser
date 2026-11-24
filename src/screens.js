@@ -1,3 +1,4 @@
+import { qualtricsPreviews } from "./qualtrics-previews.js";
 import { canImport, workingDatasets, methodLabels } from "./project-method.js";
 import { includedInterview } from "./coding-passages.js";
 import { optionLevels, isSingleAnswerField } from "./survey-answers.js";
@@ -89,7 +90,11 @@ export function check(d) {
         .map((p) => [p.source, p.text, p.codes.join("; ")]),
     )}<div class="bar">${b("sources", "Check source list")}${d.originals ? b("original", "Read original transcript") : ""}${b("renamecode", "Rename or merge a code")}${b("link", "Link source information")}</div></section>`;
   }
-  return `<section class="card"><div class="topline"><h2>${d.qual ? "Review your questionnaire" : "Review your table"}</h2></div><p>${d.rows.length} ${esc(d.unit)} records · ${d.fields.length} columns. Check a few questions below, then continue.</p>${table(
+  const previews = qualtricsPreviews(d);
+  const previewNotice = previews
+    ? `<fieldset class="check-item"><legend>Qualtrics preview responses</legend><p>Qualtrics marked ${previews.count} of ${d.rows.length} records as survey previews. ${previews.decision === "exclude" ? "These previews are excluded from your analysis." : previews.decision === "keep" ? "These previews are kept, subject to your other filters." : "Choose whether these practice responses belong in your analysis."}</p><div class="action-row">${b("qualtrics-previews", "Exclude previews", "", 'data-choice="exclude" aria-pressed="' + (previews.decision === "exclude") + '"')}${b("qualtrics-previews", "Keep previews", "", 'data-choice="keep" aria-pressed="' + (previews.decision === "keep") + '"')}</div></fieldset>`
+    : "";
+  return `<section class="card"><div class="topline"><h2>${d.qual ? "Review your questionnaire" : "Review your table"}</h2></div><p>${d.rows.length} ${esc(d.unit)} records · ${d.fields.length} columns. Check a few questions below, then continue.</p>${previewNotice}${table(
     ["Question", "Sample answers"],
     d.fields
       .filter((f) => f.type !== "metadata" && f.levels.length > 0)

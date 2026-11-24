@@ -230,15 +230,18 @@ export function wordDocument(bytes, name) {
     }
     const raw = txt(p);
     if (raw.trim()) {
-      paragraphs.push(raw.trim());
+      const text = transcript.size ? raw : raw.trim();
+      paragraphs.push(text);
       if (transcript.size) paragraphScope.push(transcript.get(p));
-      const start = paragraphStart + raw.length - raw.trimStart().length;
+      const start =
+        paragraphStart +
+        (transcript.size ? 0 : raw.length - raw.trimStart().length);
       paragraphStarts.push(start);
       for (const { code, quote } of evidenceNotes.get(p) || [])
         all.push({
-          ...segment(name, raw.trim(), ["comment: CODE: " + code]),
+          ...segment(name, text, ["comment: CODE: " + code]),
           start,
-          end: start + raw.trim().length,
+          end: start + text.length,
           evidenceQuote: quote,
         });
     }
@@ -255,8 +258,10 @@ export function wordDocument(bytes, name) {
     codedWordExport: transcript.size > 0,
   };
 }
-export function texts(name, paragraphs) {
-  return paragraphs.filter((s) => s.trim()).map((t) => segment(name, t.trim()));
+export function texts(name, paragraphs, preserveSpacing = false) {
+  return paragraphs
+    .filter((s) => s.trim())
+    .map((t) => segment(name, preserveSpacing ? t : t.trim()));
 }
 export function parseLines(s) {
   return s

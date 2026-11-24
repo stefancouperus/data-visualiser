@@ -18,6 +18,7 @@ import {
   readHelpMode,
   saveHelpMode,
 } from "./bot-help.js";
+import { qualtricsPreviews, setPreviewDecision } from "./qualtrics-previews.js";
 import { structuredAnswer } from "./bot-response.js";
 import {
   answerOptions,
@@ -74,7 +75,12 @@ import {
 import { transcriptEndpoint } from "./interview-manual.js";
 import { showSharedPassages, showThemePassages } from "./theme-passages.js";
 import { passageUnits } from "./transcript-index.js";
-import { writtenAnswerSet, isOpenQuestion } from "./open-answers.js";
+import {
+  writtenAnswerSet,
+  isOpenQuestion,
+  refreshWrittenAnswers,
+  copyWrittenAnswers,
+} from "./open-answers.js";
 import { wordPassages } from "./word-counts.js";
 import { confirmedRoles, editRoles } from "./variable-roles.js";
 import { termHelp, bindTermHelp, termMeaning } from "./term-help.js";
@@ -986,6 +992,7 @@ function render(figureLog) {
   // A student may reopen a visual or change an existing question into an open one.
   const dataset = getData();
   if (dataset?.kind === "table") {
+    refreshWrittenAnswers(project, dataset);
     for (const v of project.views) {
       if (
         v.task === "one" &&
@@ -1553,6 +1560,8 @@ function setProject(p, saved, target, selectedMethod) {
     saved = undefined;
     target = undefined;
   } else project = checked;
+  for (const survey of project.datasets.filter((d) => d.kind === "table"))
+    refreshWrittenAnswers(project, survey);
   projectSession.abort();
   projectSession = new AbortController();
   pendingSelections.clear();
@@ -2459,8 +2468,23 @@ async function chooseCombinedAnswers(dataset, view) {
     view.task === "patterns" ? view.groupBy : view.task !== "one" && view.y;
   const result = await askForm(
     "Combine answers",
-    "<p>Tick two or more answers for each question you want to count. Anyone who chose at least one of those answers counts once for that question.</p>" +
+    "<p>Tick the answers you want to count for each question. Leave a question blank to skip it.</p>" +
       controls +
+      (fields.length > 1
+        ? formselect(
+            "combined-mode",
+            "How should I count respondents?",
+            [
+              ["separate", "A separate total for each question"],
+              ["all", "The same respondents matched on every chosen question"],
+              [
+                "any",
+                "The same respondents matched on at least one chosen question",
+              ],
+            ],
+            "separate",
+          )
+        : "") +
       (grouped
         ? '<label class="tick"><input type="checkbox" id="combined-by-group">Show a total for each group</label>'
         : ""),
@@ -2480,6 +2504,7 @@ async function chooseCombinedAnswers(dataset, view) {
         view,
         selections,
         !!get("combined-by-group")?.checked,
+        get("combined-mode")?.value || "separate",
       );
     },
     "Calculate totals",
@@ -3415,6 +3440,32 @@ async function reviewAction(act, d, el) {
     );
     return;
   }
+  if (act === "qualtrics-previews") {
+    const decision = el.dataset.choice;
+    const count = setPreviewDecision(d, decision);
+    if (count) {
+      recordWork(
+        project,
+        d,
+        decision === "exclude"
+          ? "Excluded Qualtrics preview responses"
+          : "Kept Qualtrics preview responses",
+        [
+          count +
+            " of " +
+            d.rows.length +
+            " imported records were marked as previews.",
+        ],
+      );
+    }
+    render();
+    document
+      .querySelector(
+        '[data-act="qualtrics-previews"][data-choice="' + decision + '"]',
+      )
+      ?.focus();
+    return;
+  }
   if (act === "exclude") {
     modal(
       "Exclude matching records",
@@ -3804,7 +3855,7 @@ function evidence(i, match, codingPrompt = "") {
       ? `<p>The first ${selected.size} of ${ps.length} matching passages are selected. Choose up to ten to share with the bot for label suggestions.</p>`
       : "") +
       (d.openAnswers
-        ? `<p>${d.openAnswers.answered} of ${d.openAnswers.eligible} included respondents answered. Select an answer, give the idea a short label, or ask the bot to suggest labels for your selection.</p>`
+        ? `<p>${d.openAnswers.answered} of ${d.openAnswers.eligible} included respondents answered. Select an answer, give the idea a short label, or ask the bot to suggest labels for your selection.</p>${d.openAnswers.snapshot ? "<p>This earlier selection keeps its original respondents. Open the question from the survey for the current selection.</p>" : d.openAnswers.hasEarlierSelections ? "<p>Earlier selections are still available under Current dataset. Where reviews differed, the matching selection was preferred.</p>" : ""}`
         : currentMethod(project) === "survey"
           ? ""
           : `<div id="apply-book-collection" hidden><button type="button" class="primary" id="apply-book-interviews">Apply codebook to ${d.sources.length === 1 ? "interview" : "interviews"}</button><small>Choose the transcripts you want the bot to code.</small></div>`) +
@@ -4091,6 +4142,7 @@ function evidence(i, match, codingPrompt = "") {
 }
 const reviewActs = [
   "combinetables",
+  "qualtrics-previews",
   "field",
   "exclude",
   "delrule",
@@ -4676,6 +4728,7 @@ async function action(act, el) {
               result.copy.id = uid();
               result.copy.name += " (labelled)";
               project.datasets.push(result.copy);
+              copyWrittenAnswers(project, d, result.copy);
             }
             activate(result.copy.id);
             goto(1);
@@ -4686,6 +4739,13 @@ async function action(act, el) {
       return;
     case "confirm":
       if (!project.confirmed.includes(d.id)) {
+        const previews = qualtricsPreviews(d);
+        if (previews && !previews.decision) {
+          document.querySelector('[data-act="qualtrics-previews"]')?.focus();
+          throw Error(
+            "Choose whether to exclude or keep the Qualtrics preview responses first.",
+          );
+        }
         project.confirmed.push(d.id);
         activate(d.id);
       }

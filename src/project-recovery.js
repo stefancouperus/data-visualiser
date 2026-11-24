@@ -118,10 +118,19 @@ async function commit(record) {
       summary = previous;
       return;
     }
+    const revision = (previous?.revision || 0) + 1;
+    const onlyMoved =
+      previous &&
+      record.navigationOnly &&
+      !record.pin &&
+      !!previous.hidden === !!record.info.hidden;
     summary = {
       ...record.info,
       id,
-      revision: (previous?.revision || 0) + 1,
+      revision,
+      contentRevision: onlyMoved
+        ? (previous.contentRevision ?? previous.revision)
+        : revision,
       writer: record.writer,
       seq: record.seq,
       saved: record.saved,
@@ -136,15 +145,15 @@ async function commit(record) {
   found.onsuccess = () => {
     const previous = found.result;
     if (
-      (previous?.revision || 0) === record.revision ||
+      (previous?.contentRevision ?? previous?.revision ?? 0) <=
+        record.revision ||
       previous?.writer === record.writer
     ) {
       write(record.id, previous);
     } else {
-      // Reading in a second tab must not republish work already downloaded
-      // in the first, or overwrite a newer archived version with stale data.
-      if (previous?.hidden && record.navigationOnly && !record.pin) {
-        summary = { ...previous, archivedElsewhere: true };
+      // A tab that only navigated has no new work to save over a later edit.
+      if (record.navigationOnly && !record.pin) {
+        summary = { ...previous, skippedNavigation: true };
         return;
       }
       // Two tabs edited the same revision. Keep the second writer's version separately.
@@ -188,7 +197,13 @@ function snapshot(p, workspace) {
     writer: copy.writer,
     fork: copy.fork,
     seq: ++copy.seq,
-    navigationOnly: body === copy.committed || body === copy.navigationBody,
+    navigationOnly:
+      (body === copy.committed || body === copy.navigationBody) &&
+      (!workspace.selections?.length ||
+        JSON.stringify(workspace.selections) ===
+          JSON.stringify(
+            copy.position && JSON.parse(copy.position).selections,
+          )),
     pin: !!copy.pin,
     saved: Date.now(),
     body,
@@ -252,9 +267,11 @@ export async function saveRecovery(p, workspace, verifyPresence = false) {
     record.fork = copy.fork;
     record.revision = copy.revision;
     const entry = await commit(record);
-    if (entry.archivedElsewhere) {
+    if (entry.skippedNavigation) {
       // Keep our original revision so subsequent edits fork safely.
-      copy.downloaded = downloadedContent(JSON.parse(record.body));
+      copy.downloaded = entry.hidden
+        ? downloadedContent(JSON.parse(record.body))
+        : undefined;
     } else {
       if (entry.id !== record.id) copy.fork = crypto.randomUUID();
       Object.assign(copy, { id: entry.id, revision: entry.revision });
