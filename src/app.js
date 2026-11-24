@@ -90,6 +90,7 @@ import {
   selectedBinaryEvent,
   directComparison,
   namedSurveyComparison,
+  namedLinearModel,
   patternRequest,
   groupingRequest,
   namedChartRequest,
@@ -2407,7 +2408,8 @@ async function ask(question, skill, intent = "") {
       dataset.sources,
     ) ||
       (dataset.kind === "table" &&
-        (namedSurveyComparison(dataset.fields, question) ||
+        (namedLinearModel(dataset.fields, question) ||
+          namedSurveyComparison(dataset.fields, question) ||
           directComparison(dataset.fields, question))));
   if (direct?.chart === "gap" && !proposedChart(direct))
     direct = {

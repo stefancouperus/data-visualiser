@@ -8,6 +8,7 @@ import {
 import {
   chartFields,
   selectedBinaryEvent,
+  namedLinearModel,
   namedSurveyComparison,
 } from "../src/question-matching.js";
 import { researchCatalogue } from "../src/research-focus.js";
@@ -145,4 +146,25 @@ test("a count request binds the named answer to its actual subgroup denominator"
   assert.doesNotMatch(renderChartReading(readings, {}), /West/);
   const absent = chartReadingOptions([v], "count", "How many said Maybe?");
   assert.match(renderChartReading(absent, {}), /could not verify/);
+});
+
+test("an explicitly named linear model preserves the student's outcome and predictor roles", () => {
+  const fields = [
+    { id: "h", label: "Hours available", type: "number" },
+    { id: "s", label: "Shifts taken", type: "number" },
+  ];
+  const request =
+    "Please fit a linear regression with Shifts taken as the outcome and Hours available as the only predictor. Draw it for me.";
+  assert.deepEqual(namedLinearModel(fields, request), {
+    action: "draw",
+    task: "model",
+    chart: "model",
+    outcome: "s",
+    predictors: ["h"],
+  });
+  assert.equal(namedLinearModel(fields, request + " Exclude weekends."), null);
+  assert.equal(
+    namedLinearModel([...fields, { ...fields[0], id: "unrelated" }], request),
+    null,
+  );
 });

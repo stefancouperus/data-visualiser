@@ -106,6 +106,45 @@ function axisChoices(fields, phrase) {
   return exact.length ? exact : candidates(fields, phrase);
 }
 
+// Both roles and the model family must be explicit. Leave qualified requests
+// (extra predictors, interactions, filters) to the normal model workflow.
+export function namedLinearModel(fields, request) {
+  const parts = request
+    .trim()
+    .match(
+      /^(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:fit|draw|run) (?:a |the )?linear regression with (.+?) as (?:the )?outcome and (.+?) as (?:the )?(?:only |sole )?predictor[.!?]?(?:\s+(?:please )?draw it(?: for me)?[.!?]?)?$/i,
+    );
+  if (!parts) return null;
+  // Match field names alone. The text of an answer cannot define a model role.
+  const matches = parts
+    .slice(1)
+    .map((part) =>
+      fields.filter(
+        (f) =>
+          !f.roles?.includes("open") &&
+          [f.label, f.id].some(
+            (name) => name?.toLowerCase() === part.trim().toLowerCase(),
+          ),
+      ),
+    );
+  if (matches.some((options) => options.length !== 1)) return null;
+  const outcome = matches[0][0],
+    predictor = matches[1][0];
+  if (
+    outcome.id === predictor.id ||
+    outcome.type !== "number" ||
+    !["number", "category", "ordered"].includes(predictor.type)
+  )
+    return null;
+  return {
+    action: "draw",
+    task: "model",
+    chart: "model",
+    outcome: outcome.id,
+    predictors: [predictor.id],
+  };
+}
+
 // A coordinate request specifies the direction on each axis. Match those roles
 // directly so a scatterplot cannot be replaced by a categorical comparison.
 function coordinateComparison(fields, question, chosen) {
