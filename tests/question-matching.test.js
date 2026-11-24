@@ -4,6 +4,7 @@ import {
   chartFields,
   directComparison,
   resolveAxis,
+  requestsChartAdvice,
   wordTableRequest,
 } from "../src/question-matching.js";
 test("the word table uses the requested source or theme and clarifies unresolved names", () => {
@@ -474,5 +475,19 @@ test("explicit numerical axes use actual project fields in their requested orien
       "Draw a scatterplot of Travel time on the x-axis and Travel distance on the y-axis only among cyclists.",
     ),
     null,
+  );
+});
+
+test("chart recommendations require a preview and explicit drawing commands can be applied immediately", () => {
+  assert.equal(
+    requestsChartAdvice(
+      "Please recommend a dot plot of my selected themes. Keep the groups and the share of each theme’s passages as they are.",
+    ),
+    true,
+  );
+  assert.equal(requestsChartAdvice("Which chart should I use?"), true);
+  assert.equal(
+    requestsChartAdvice("Draw a dot plot of these themes by group."),
+    false,
   );
 });

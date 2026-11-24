@@ -386,3 +386,72 @@ test("long interview and theme names stay inside the grid and every cell has key
     await last.getAttribute("data-theme"),
   );
 });
+
+for (const action of ["draw", "restyleChart"]) {
+  test(
+    "asking for a dot plot recommendation keeps the grouped contribution chart until acceptance with model action " +
+      action,
+    async ({ page }) => {
+      const request =
+        "Please recommend a dot plot of my selected themes. Keep the groups and the share of each theme’s passages as they are.";
+      const received = [];
+      await page.route("**/ask", (route) => {
+        received.push(route.request().postDataJSON().question);
+        const response = {
+          action,
+          chart: "dots",
+          ...(action === "draw" && {
+            task: "patterns",
+            patternMode: "sources",
+            items: ["Kosten", "Wachttijd"],
+            groupBy: "Halte",
+          }),
+          explanation:
+            "A dot plot makes the two groups’ shares easy to compare.",
+        };
+        return route.fulfill({ json: { answer: JSON.stringify(response) } });
+      });
+      await page.route("https://tutor.example.test/session", (route) =>
+        route.fulfill({ json: { token: "local-test" } }),
+      );
+      await open(page);
+      await button(page, "Compare themes").click();
+      for (const name of ["Kosten", "Wachttijd"]) {
+        await page.getByRole("checkbox", { name, exact: true }).check();
+      }
+      const group = page.getByLabel("Compare by group");
+      const unit = page.getByLabel("Show for each group");
+      await group.selectOption("Halte");
+      await unit.selectOption("themeShare");
+      const figure = page.locator("#graphic0");
+      const stack = figure.locator('[data-theme-view="stack"]');
+      const dots = figure.locator('[data-theme-view="dots"]');
+      await expect(stack).toBeVisible();
+      await button(page, "Data bot").click();
+      const bot = page.locator("#data-bot");
+      await bot.locator("#course").fill("test");
+      await button(bot, "Unlock the bot").click();
+      await bot.locator("#question").fill(request);
+      await button(bot, "Send").click();
+      const make = button(bot, "Make this chart");
+      await expect(make).toBeVisible();
+      expect(received).toEqual([request]);
+      await expect(stack).toBeVisible();
+      await expect(dots).toHaveCount(0);
+      await expect(group).toHaveValue("Halte");
+      await expect(unit).toHaveValue("themeShare");
+
+      await make.click();
+      await expect(dots).toBeVisible();
+      await expect(stack).toHaveCount(0);
+      await expect(group).toHaveValue("Halte");
+      await expect(unit).toHaveValue("themeShare");
+      await expect(dots.locator("[data-pattern-row]")).toHaveCount(4);
+      await cell(figure, "Kosten", "Pier").click();
+      await expect(page.getByRole("dialog")).toContainText(
+        "2 of the 2 original passages coded with this theme across the displayed groups",
+      );
+      expect(received).toEqual([request]);
+    },
+  );
+}

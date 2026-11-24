@@ -468,6 +468,25 @@ export function resolveAxis(fields, value) {
   return results.length === 1 ? results[0].id : value;
 }
 
+// A recommendation leaves the student's current figure in place until accepted.
+export function requestsChartAdvice(question) {
+  const text = question.trim();
+  if (
+    /\band (?:then )?(?:draw|create|make|apply) (?:it|that|the (?:chart|visual|figure))\b/iu.test(
+      text,
+    )
+  )
+    return false;
+  return (
+    /^(?:(?:could|can|would) you\s+)?(?:please\s+)?(?:suggest|recommend|advise)\b/iu.test(
+      text,
+    ) ||
+    /^(?:which|what)\b[^?!.]*\b(?:chart|visual|visualisation|visualization|figure|plot)\b[^?!.]*\b(?:recommend|suggest|best|should|would|could)\b/iu.test(
+      text,
+    )
+  );
+}
+
 // Enforce an explicitly requested visual in a draw instruction. Recommendations
 // and comparative questions about several chart types still go to the tutor.
 export function namedChartRequest(question) {

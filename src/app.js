@@ -112,6 +112,7 @@ import {
   patternRequest,
   groupingRequest,
   namedChartRequest,
+  requestsChartAdvice,
   wordTableRequest,
   resolveAxis,
 } from "./question-matching.js";
@@ -3119,14 +3120,24 @@ async function ask(question, skill, intent = "") {
           });
         } else {
           proposal = candidate;
-          if (["draw", "restyleChart"].includes(pick.action)) applyProposal();
-          else
+          const previewOnly =
+            intent === "suggest" || (!intent && requestsChartAdvice(question));
+          if (["draw", "restyleChart"].includes(pick.action) && !previewOnly) {
+            applyProposal();
+          } else {
+            const previewText =
+              previewOnly && pick.action !== "suggest"
+                ? "Suggested " +
+                  kinds[candidate.view.chart].toLowerCase() +
+                  " · " +
+                  summary(candidate.panel, candidate.view).title +
+                  ". Choose Make this chart to use it."
+                : pick.explanation || "This view is ready to draw.";
             history.push({
               role: "assistant",
-              content: String(
-                pick.explanation || "This view is ready to draw.",
-              ),
+              content: String(previewText),
             });
+          }
         }
       } else {
         if (pick.action === "answer")
