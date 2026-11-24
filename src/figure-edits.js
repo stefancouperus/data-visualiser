@@ -1,6 +1,10 @@
 // Presentation stays attached to the selected variables. The analysis and its
 // evidence keys always retain the original responses, themes and quantities.
 export function figureScope(v) {
+  // Older saved views used the unqualified scope for interview counts/coverage.
+  const measure = v.groupBy ? v.themeUnit : v.sourceMeasure;
+  const themeProfile = v.task === "patterns" && v.patternMode === "sources";
+  const withinPassages = measure === (v.groupBy ? "passages" : "percent");
   return JSON.stringify(
     [
       v.task,
@@ -12,6 +16,8 @@ export function figureScope(v) {
       v.patternMode,
       v.outcome,
       v.predictors,
+      ...(themeProfile && measure === "themeShare" ? ["themeShare"] : []),
+      ...(themeProfile && withinPassages ? ["passageShare"] : []),
       ...(v.groupBy &&
       v.patternMode === "separate" &&
       v.percentBase === "answer"

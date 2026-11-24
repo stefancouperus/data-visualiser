@@ -1,3 +1,5 @@
+import { interpolateRgb } from "d3";
+
 export const figureStyles = {
   workshop: {
     label: "Workshop",
@@ -180,6 +182,8 @@ export function highlightChoices(a, v) {
   )
     return [];
   if (v.task === "words" && v.chart === "table") return [];
+  if (a.themeComparison && v.chart === "stack")
+    return a.groupSizes.map(({ group }) => group);
   if (v.task === "patterns" && a.groupLabel)
     return [...new Set(a.records.map((r) => r.groupValue))];
   const groups = [...new Set(a.records.map((r) => r.group).filter(Boolean))];
@@ -188,4 +192,17 @@ export function highlightChoices(a, v) {
     groups.length > 1
     ? groups
     : [...new Set(a.records.map((r) => r.label))];
+}
+
+// Extend the chosen palette for longer lists. Strips and legends share the same
+// index even if a filter removes earlier groups or the display order is edited.
+export function seriesColour(palette, index) {
+  const base = palette[index % palette.length];
+  const cycle = Math.floor(index / palette.length);
+  if (!cycle) return base;
+  const level = Math.ceil(cycle / 2);
+  return interpolateRgb(
+    base,
+    cycle % 2 ? "#ffffff" : "#000000",
+  )(level / (level + 2.5));
 }

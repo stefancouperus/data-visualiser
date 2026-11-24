@@ -581,6 +581,115 @@ export function wordTableRequest(question, current, codes, sources) {
   return null;
 }
 
+// Resolve a request about the selected themes only. Named themes, filters
+// or more complex qualifications still go through the project-aware planner.
+export function interviewContributionRequest(question, current, groups) {
+  if (current?.task !== "patterns" || !current.items?.length) return;
+  const text = question
+    .trim()
+    .replace(/[’‘]/gu, "'")
+    .replace(/[.!?]+$/u, "")
+    .replace(/^(?:(?:could|would|can) you\s+)?(?:please\s+)?/iu, "");
+  const draw = /^(?:show|draw|plot|make|create)\b/iu.test(text);
+  const request = text.replace(
+    /^(?:show|draw|plot|make|create)(?: me)?\s+(?:(?:a |the )?(?:stacked bar chart|chart|plot|figure) (?:of|showing) )?/iu,
+    "",
+  );
+  const from = request.match(
+    /^(who|which (?:individual )?(?:interviews|interviewees|participants|groups)) (?:contributed|supplied|provided|accounted for)\s+(.+)$/iu,
+  );
+  const genericMaterial = from?.[2].replace(
+    /^(?:the most |most of |most )?(?:to )?(?:the )?/iu,
+    "",
+  );
+  const pooled =
+    /^(?:(?:each|every|these|the selected|our selected|my selected) themes?(?:'s|')?(?: (?:coded )?passages?)?|(?:coded )?passages (?:coded (?:with|under|as) |(?:to|for|under|in) )(?:each|every|these|the selected) themes?)$/iu;
+  const where =
+    /^where did (?:each theme's (?:coded )?passages|the (?:coded )?passages for each theme) come from$/iu.test(
+      request,
+    );
+  const share = request.match(
+    /^what (?:share|proportion|percentage) of (?:each theme's (?:coded )?passages|the (?:coded )?passages for each theme) (?:came|comes) from each (interview|interviewee|participant|group)$/iu,
+  );
+  if (!(from && pooled.test(genericMaterial)) && !where && !share) return;
+  const subject =
+    from?.[1].toLowerCase() ||
+    (share && "which " + share[1].toLowerCase() + "s") ||
+    "who";
+  let groupBy = current.groupBy || "";
+  if (/interviews|interviewees|participants/u.test(subject)) groupBy = "";
+  if (subject === "which groups" && !groupBy) {
+    if (groups.length !== 1)
+      return {
+        action: "answer",
+        explanation: groups.length
+          ? "Which grouping would you like to use? Choose one under Compare by group, then ask me again."
+          : "Choose Add interview groups first so I can compare the groups recorded for these interviews.",
+      };
+    groupBy = groups[0][0];
+  }
+  return {
+    action: draw ? "draw" : "suggest",
+    task: "patterns",
+    patternMode: "sources",
+    items: current.items,
+    groupBy,
+    ...(groupBy
+      ? { themeUnit: "themeShare" }
+      : { sourceMeasure: "themeShare" }),
+    chart: "stack",
+  };
+}
+
+// Draw unambiguous requests for codes and groupings supplied by this project.
+// More qualified questions can go through the ordinary chart-planning flow.
+export function namedInterviewThemeComparison(
+  question,
+  codes,
+  groups,
+  current,
+) {
+  const match = question
+    .trim()
+    .replace(/[.!?]+$/, "")
+    .match(
+      /^(?:(?:could|would|can) you\s+)?(?:please\s+)?(?:compare|show|plot)\s+(?:me\s+)?(.+?)\s+(?:across|by|between)\s+(.+)$/iu,
+    );
+  if (!match) return;
+  const normal = (s) => s.trim().normalize("NFKC").toLowerCase();
+  const group = groups.find(([, name]) => normal(name) === normal(match[2]));
+  const individuals =
+    /^(?:(?:the |individual )?interview(?:ee)?s?|participants?)$/iu.test(
+      match[2],
+    );
+  if (!group && !individuals) return;
+  const lookup = (term) => {
+    const matches = codes.filter((c) => normal(c) === normal(term));
+    if (matches.length === 1) return matches[0];
+  };
+  const names = match[1].replace(
+    /^(?:the )?(?:themes?|codes?|labels?)\s+/iu,
+    "",
+  );
+  const whole = lookup(names);
+  const items = whole
+    ? [whole]
+    : /^(?:these|my selected|the selected) (?:themes|codes|labels)$/iu.test(
+          names,
+        ) && current?.task === "patterns"
+      ? current.items
+      : names.split(/\s*,\s*(?:and\s+)?|\s+and\s+/iu).map(lookup);
+  if (!items?.length || !items.every((c) => codes.includes(c))) return;
+  return {
+    action: "draw",
+    task: "patterns",
+    patternMode: "sources",
+    items,
+    groupBy: group?.[0] || "",
+    chart: "grid",
+  };
+}
+
 // Recognise a student's stated unit before the model chooses a display. Resolve
 // a list locally only when every named item has exactly one match.
 export function patternRequest(question, text, choices, current) {

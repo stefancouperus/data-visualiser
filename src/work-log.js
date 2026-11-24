@@ -260,7 +260,42 @@ export function describeFigure(a, view = {}, legacy = false) {
     legacy ? { ...view, figureEdits: undefined } : view,
   );
   const coefficient = legacy ? number : modelNumber;
-  if (a.largestDisplayedDifference) {
+  if (a.themeComparison?.unit === "themePassageShare") {
+    for (const r of rows.filter((r) => r.n > 0).slice(0, 3)) {
+      const grouped = a.themeComparison.grouped;
+      lines.push(
+        quote(named(grouped ? "subgroups" : "groups", r.groupValue)) +
+          " contributed " +
+          r.n +
+          " of the " +
+          r.den +
+          " included passages coded with " +
+          quote(named(grouped ? "groups" : "labels", r.label)) +
+          " (" +
+          number(r.value) +
+          "%).",
+      );
+    }
+  } else if (a.themeComparison && !a.themeComparison.grouped) {
+    for (const r of rows.filter((r) => !r.undefinedShare).slice(0, 3)) {
+      const share =
+        a.themeComparison.unit === "passageShare" && r.den
+          ? " (" + number(r.value) + "%)"
+          : "";
+      lines.push(
+        quote(named("labels", r.label)) +
+          " was coded in " +
+          r.n +
+          " of " +
+          r.den +
+          " included passages" +
+          share +
+          " in " +
+          quote(named("groups", r.group)) +
+          ".",
+      );
+    }
+  } else if (a.largestDisplayedDifference) {
     const { pattern, high, low, percentagePoints } =
       a.largestDisplayedDifference;
     lines.push(

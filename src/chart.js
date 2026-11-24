@@ -10,6 +10,10 @@ import { drawWordTable } from "./word-table.js";
 import { drawGap } from "./survey-gap.js";
 import { drawBoxPlot } from "./box-plot.js";
 import { drawSurveyDistribution } from "./survey-distribution.js";
+import {
+  drawThemeComparison,
+  themeTextWrapper,
+} from "./theme-comparison-chart.js";
 export const esc = (s) =>
   String(s ?? "").replace(
     /[&<>"']/g,
@@ -181,13 +185,28 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
       .attr("font-weight", bold ? 650 : 400)
       .text(t);
   }
+  const wrapText = a.themeComparison
+    ? themeTextWrapper(root.node().ownerDocument)
+    : null;
   function block(s, n, size = 14, bold = false) {
-    for (const t of wrap(s, Math.max(8, Math.floor(n / theme.scale)))) {
+    const lines = wrapText
+      ? wrapText(
+          s,
+          w - 2 * margin,
+          size * theme.scale,
+          bold ? 650 : 400,
+          theme.font,
+        )
+      : wrap(s, Math.max(8, Math.floor(n / theme.scale)));
+    for (const t of lines) {
       line(t, margin, pos, size, bold);
       pos += size * theme.scale + 6;
     }
   }
-  for (const t of wrap(a.title, Math.floor((w - 48) / (theme.title * 0.55)))) {
+  const titleLines = wrapText
+    ? wrapText(a.title, w - 2 * margin, theme.title, 650, theme.headingFont)
+    : wrap(a.title, Math.floor((w - 48) / (theme.title * 0.55)));
+  for (const t of titleLines) {
     line(t, margin, pos, theme.title / theme.scale, true)
       .attr("font-family", theme.headingFont)
       .attr(
@@ -286,7 +305,28 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
       pos += theme.row;
     }
   }
-  if (
+  if (a.themeComparison) {
+    pos = drawThemeComparison({
+      root,
+      analysis: a,
+      records,
+      chart: v.chart,
+      width: w,
+      margin,
+      pos,
+      theme,
+      style,
+      scheme,
+      paper,
+      highlighted,
+      named,
+      wrapText,
+      interactive: inspectable,
+      pointMark,
+      horizontalMark,
+      readableText,
+    });
+  } else if (
     a.surveyDistribution &&
     ["grid", "table", "dots", "stack"].includes(v.chart)
   ) {

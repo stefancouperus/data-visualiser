@@ -19,6 +19,49 @@ function project(d) {
   p.views = [newView(d), newView(d)];
   return p;
 }
+test("saved interview comparisons describe the selected passage denominator without copying transcript text", () => {
+  const d = corpus(
+    "Repair project",
+    [
+      { id: "p1", source: "East", text: "private phrase", codes: ["Delay"] },
+      { id: "p2", source: "East", text: "other private phrase", codes: [] },
+      {
+        id: "p3",
+        source: "West",
+        text: "another private phrase",
+        codes: ["Delay"],
+      },
+      {
+        id: "p4",
+        source: "West",
+        text: "last private phrase",
+        codes: ["Delay"],
+      },
+    ],
+    ["East", "West"],
+  );
+  const view = {
+    task: "patterns",
+    patternMode: "sources",
+    items: ["Delay"],
+    sourceMeasure: "percent",
+    chart: "table",
+  };
+  const within = describeFigure(analyse(d, view), view).join(" ");
+  assert.match(
+    within,
+    /“Delay” was coded in 1 of 2 included passages \(50%\) in “East”/,
+  );
+  const contribution = { ...view, sourceMeasure: "themeShare", chart: "stack" };
+  const pooled = describeFigure(analyse(d, contribution), contribution).join(
+    " ",
+  );
+  assert.match(
+    pooled,
+    /“East” contributed 1 of the 3 included passages coded with “Delay” \(33.33%\)/,
+  );
+  assert.doesNotMatch(within + pooled, /private phrase/);
+});
 test("the survey work log records changed decisions and actual values, with no activity on navigation or reload", () => {
   const d = makeTable(
     [

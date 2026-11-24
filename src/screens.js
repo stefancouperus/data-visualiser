@@ -108,6 +108,16 @@ export function available(d, v) {
         !d.fields.some((f) => chosen.has(f.id) && f.type === "multiple"));
     return ["grid", "table", "dots", ...(stackable ? ["stack"] : []), "bars"];
   }
+  if (themeMatrix(d, v)) {
+    const measure = v.groupBy ? v.themeUnit : v.sourceMeasure;
+    return [
+      ...(measure === "themeShare" ? ["stack"] : []),
+      "grid",
+      "table",
+      "dots",
+      "bars",
+    ];
+  }
   if (v.task === "patterns")
     return d.kind === "text" && v.patternMode === "sources" && !v.groupBy
       ? ["grid", "bars", "table"]
@@ -141,6 +151,9 @@ function answerMatrix(d, v) {
     v.patternMode === "separate"
   );
 }
+function themeMatrix(d, v) {
+  return isInterview(d) && v.task === "patterns" && v.patternMode === "sources";
+}
 export function adaptChart(d, view, options = available(d, view)) {
   if (options.includes(view.chart)) return "";
   if (
@@ -170,24 +183,54 @@ function patternPicker(d, v, i, staged) {
   const choices = withRoles(rawChoices, "outcome");
   const noun = text ? "themes" : "questions";
   const groups = withRoles(groupChoices(d, items), "grouping");
+  const comparingThemes = themeMatrix(d, v);
   const grouping = select(
     "groupBy",
     "Compare by group",
-    [["", "Everyone together"], ...groups],
+    [
+      ["", comparingThemes ? "Individual interviews" : "Everyone together"],
+      ...groups,
+    ],
     v.groupBy || "",
   );
   const units =
     text && v.groupBy && v.patternMode === "sources"
       ? select(
           "themeUnit",
-          "Count a theme once per",
+          comparingThemes ? "Show for each group" : "Count a theme once per",
           [
-            ["interviews", d.openAnswers ? "Respondent" : "Interview"],
-            ["passages", "Passage"],
+            [
+              "interviews",
+              comparingThemes
+                ? "Percentage of interviews mentioning the theme"
+                : d.openAnswers
+                  ? "Respondent"
+                  : "Interview",
+            ],
+            [
+              "passages",
+              comparingThemes
+                ? "Percentage of passages carrying the theme"
+                : "Passage",
+            ],
+            ...(comparingThemes
+              ? [["themeShare", "Share of each theme’s passages"]]
+              : []),
           ],
           v.themeUnit || "interviews",
         )
-      : "";
+      : comparingThemes
+        ? select(
+            "sourceMeasure",
+            "Show for each interview",
+            [
+              ["count", "Number of matching passages"],
+              ["percent", "Percentage of its passages"],
+              ["themeShare", "Share of each theme’s passages"],
+            ],
+            v.sourceMeasure || "count",
+          )
+        : "";
   const itemPicker = `<fieldset class="pick-items"><legend>${text ? "Tick the themes you want to see together" : "Which questions do you want to compare?"}</legend>
     <small>${items.length} of ${selectionLimit} selected. ${text && items.length === 1 ? "Tick another to see a pattern across them." : staged ? "Apply your selection when ready." : "The figure updates as you tick."}</small>
     ${choices.length > 8 ? `<input type="search" aria-label="Find ${noun}" data-find-items="${i}" placeholder="Find ${noun}…">` : ""}
@@ -215,6 +258,14 @@ function patternPicker(d, v, i, staged) {
           v.patternMode,
         );
     return `<div class="pattern-setup survey-setup">${itemPicker}${grouping}${termHelp("group", d, v)}${reading}</div>`;
+  }
+  if (isInterview(d)) {
+    const modes = [
+      ["sources", "Compare how often each theme appears"],
+      ["passages", "Which themes occur together in a passage?"],
+      ["interviews", "Which themes occur in the same interview?"],
+    ];
+    return `<div class="pattern-setup">${itemPicker}${grouping}${termHelp("group", d, v)}${b("addgroups", "Add interview groups", "plain", 'data-i="' + i + '"')}${units}${select("patternMode", "What would you like the figure to show?", modes, v.patternMode)}</div>`;
   }
   return `<div class="pattern-setup">${itemPicker}${select(
     "patternMode",
@@ -257,14 +308,29 @@ const surveyChartHints = {
   stack: "See how all the answers add up within each group.",
   bars: "Read each answer as a horizontal bar.",
 };
-function surveyChartTools(options, view, i) {
-  return `<div class="survey-chart-tools" role="group" aria-label="Change visualisation">${options
+const interviewChartHints = {
+  grid: "Read across each theme to compare interviews or groups.",
+  table: "Read the counts behind each comparison.",
+  dots: "Compare each theme on a shared scale.",
+  bars: "Compare theme values using horizontal bars.",
+  stack:
+    "Each horizontal bar shows which interviews or groups contributed passages carrying one theme.",
+};
+function comparisonChartTools(options, view, i, interview) {
+  return `<div class="comparison-chart-tools" role="group" aria-label="Change visualisation">${options
     .map((key) => {
-      const groupMix = key === "stack" && view.percentBase === "answer";
-      const label = groupMix ? "Group mix" : surveyChartLabels[key];
+      const groupMix =
+        !interview && key === "stack" && view.percentBase === "answer";
+      const label = interview
+        ? key === "stack"
+          ? "Theme sources"
+          : kinds[key]
+        : groupMix
+          ? "Group mix"
+          : surveyChartLabels[key];
       const hint = groupMix
         ? "See which groups make up the people who chose each answer."
-        : surveyChartHints[key];
+        : (interview ? interviewChartHints : surveyChartHints)[key];
       return b(
         "charttype",
         icon(key) + " " + label,
@@ -492,7 +558,8 @@ export function panel(
     readingHint =
       "Try Box plot under Chart type to see the middle answer and how widely the answers vary.";
   if (changedChart) readingHint = changedChart;
-  const matrix = answerMatrix(d, v);
+  const interviewMatrix = themeMatrix(d, v);
+  const matrix = answerMatrix(d, v) || interviewMatrix;
   const questions =
     !text && (draft || v).task !== "patterns" ? patternChoices(d) : [];
   const canCompare =
@@ -501,8 +568,12 @@ export function panel(
       ([id]) => questions.length > 1 || questions[0][0] !== id,
     );
   const compareEntry = canCompare
-    ? `<div class="survey-compare-entry">${b("surveycompare", icon("grid") + " Compare questions by group", "", 'data-i="' + i + '"')}<small>Choose one or more questions and see how each group answered.</small></div>`
-    : "";
+    ? `<div class="compare-entry">${b("surveycompare", icon("grid") + " Compare questions by group", "", 'data-i="' + i + '"')}<small>Choose one or more questions and see how each group answered.</small></div>`
+    : isInterview(d) &&
+        (draft || v).task !== "patterns" &&
+        patternChoices(d).length
+      ? `<div class="compare-entry">${b("themecompare", icon("grid") + " Compare themes", "", 'data-i="' + i + '"')}<small>Choose themes to compare across individual interviews or groups.</small></div>`
+      : "";
   const chartPicker =
     !matrix && options.length > 1
       ? `<details class="chart-picker"><summary aria-label="Chart type · ${esc(kinds[v.chart])}">${icon(v.chart)} Chart type · ${esc(chartLabels[v.chart])}</summary>${chartTools(options, v.chart, i)}</details>`
@@ -511,7 +582,7 @@ export function panel(
   <div class="selection-editor">${compareEntry}${confirmedName ? `<div class="topline"><p><strong>Confirmed selection</strong><br>${esc(confirmedName)}</p>${b("editselection", "Change selection", "", "data-i=" + i)}</div>` : selectionControls(d, draft || v, i, !!draft)}</div>
   ${comparing ? "</details>" : ""}
   <div class="live-figure"><div class="figure-toolbar"><strong tabindex="-1" id="figure-heading${i}">Current visual</strong><div class="figure-actions">${chartPicker}${b("editfigure", icon("edit") + " Edit visual", "", 'data-i="' + i + '"')}${b("savevisual", icon("save") + " Save visual", "", 'data-i="' + i + '"')}</div>
-  </div>${matrix ? surveyChartTools(options, v, i) : ""}<div class="figure-stage"><div class="graphic" id="graphic${i}"></div></div>${readingHint ? "<small>" + readingHint + "</small>" : ""}<div id="modeldetails${i}"></div><div class="figure-evidence action-row">${matrix && v.items?.length ? b("botpatterns", icon("bot") + " Spot patterns", "", 'data-i="' + i + '"') : ""}${b("describechart", icon("bot") + " Ask about this visual", "", 'data-i="' + i + '"')}${text ? b("passages", d.openAnswers ? "Read and code written answers" : "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></div>
+  </div>${matrix ? comparisonChartTools(options, v, i, interviewMatrix) : ""}<div class="figure-stage"><div class="graphic" id="graphic${i}"></div></div>${readingHint ? "<small>" + readingHint + "</small>" : ""}<div id="modeldetails${i}"></div><div class="figure-evidence action-row">${matrix && v.items?.length ? b("botpatterns", icon("bot") + " Spot patterns", "", 'data-i="' + i + '"') : ""}${b("describechart", icon("bot") + " Ask about this visual", "", 'data-i="' + i + '"')}${text ? b("passages", d.openAnswers ? "Read and code written answers" : "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></div>
   <details data-chart-options="${i}"><summary>Chart settings</summary><div class="selection-mode"><label class="tick"><input type="checkbox" data-stage-selection="${i}" ${draft ? "" : "checked"}>Update the visual as I select</label></div>${b("figurestyle", "Figure style · " + figureStyles[styleFor(v.style)].label, "", 'data-i="' + i + '"')}${!text ? b("variables", d.fields.some((f) => f.roles?.length) ? "Review question roles" : "Choose question roles") : ""}${termHelp("percent", d, v)}<div class="formgrid">
  ${
    v.task !== "patterns" &&

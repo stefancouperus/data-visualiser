@@ -4,6 +4,8 @@ import { hasAnswer, choicesIn, optionLevels } from "./survey-answers.js";
 import { allCodes } from "./coding.js";
 import { passageUnits } from "./transcript-index.js";
 import { filteredRows } from "./import.js";
+import { isInterview } from "./interviews.js";
+import { themeComparison } from "./theme-comparison.js";
 import {
   numberBands,
   orderedGroups,
@@ -76,8 +78,21 @@ export function groupValue(d, key, record) {
     : "";
 }
 export function patternSummary(d, v) {
+  const sourceView =
+    isInterview(d) && (v.patternMode || "sources") === "sources";
+  // Use the project vocabulary even when a code's only quotation is excluded.
+  // Inclusion controls which original passages can contribute to a result.
+  const knownThemes = sourceView ? new Set(allCodes(d)) : null;
   d = includedInterview(d);
   if (d.kind === "text") d = { ...d, passages: passageUnits(d.passages) };
+  if (sourceView) {
+    if (v.groupBy && !groupChoices(d).some(([id]) => id === v.groupBy))
+      throw Error("Choose a recorded interview detail to compare groups.");
+    const labels = [...new Set(v.items || [])]
+      .filter((id) => knownThemes.has(id))
+      .slice(0, selectionLimit);
+    return themeComparison(d, v, labels, groupValue);
+  }
   if (v.groupBy) return groupedSummary(d, v);
   return summarise(d, v);
 }

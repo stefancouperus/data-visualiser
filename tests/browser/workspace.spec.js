@@ -1318,7 +1318,7 @@ test("enter interview groups, compare theme coverage and retrieve only that grou
     await page.getByLabel(id, { exact: true }).fill(group);
   await btn("Show groups").click();
   await expect(page.locator("#graphic0")).toContainText("50% (1 of 2)");
-  await page.getByLabel("Count a theme once per").selectOption("passages");
+  await page.getByLabel("Show for each group").selectOption("passages");
   await expect(page.locator("#graphic0")).toContainText("66.67% (2 of 3)");
   await page
     .getByRole("button", { name: "Read evidence: Time · First" })

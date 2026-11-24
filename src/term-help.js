@@ -1,5 +1,6 @@
 import { esc } from "./chart.js";
 import { numberBands } from "./survey-grouping.js";
+import { isInterview } from "./interviews.js";
 
 export const terms = {
   group: "What is a group?",
@@ -12,6 +13,21 @@ export function termMeaning(term, d, view = {}) {
   if (term === "filter")
     return "A filter chooses which records go into this view. Comparing groups keeps several sets of records in the chart so you can see their results side by side. Filtering to one value shows just the records with that value. Your original data stay in the project.";
   if (term === "percent") {
+    if (
+      isInterview(d) &&
+      view.task === "patterns" &&
+      view.patternMode === "sources"
+    ) {
+      if ((view.groupBy ? view.themeUnit : view.sourceMeasure) === "themeShare")
+        return view.groupBy
+          ? "Take all included passages carrying one theme that have a recorded group. Each group’s percentage tells you what share of those passages came from its interviews. A group with more interviews or longer transcripts may contribute more passages."
+          : "Take all included passages carrying one theme. Each interview’s percentage tells you what share of those passages came from that interview. A longer interview may contribute more passages.";
+      if (view.groupBy && view.themeUnit !== "passages")
+        return "Count the interviews in the group with at least one passage carrying this theme. Divide that count by all the interviews in the group. An interview can mention several themes.";
+      return view.groupBy
+        ? "Count the original passages carrying this theme in the group, then divide by all included original passages in the group. A longer interview can contribute more passages."
+        : "A count shows how many included original passages carry the theme in one interview. A percentage divides this count by all included original passages in that interview. One passage can carry several themes.";
+    }
     if (
       d?.kind === "table" &&
       view.task === "patterns" &&
@@ -78,7 +94,11 @@ export function bindTermHelp(root) {
     let preview = false;
     const trigger = box.querySelector("summary");
     trigger.onpointerenter = (event) => {
-      if (event.pointerType === "mouse" && !box.open) {
+      if (
+        event.pointerType === "mouse" &&
+        !box.open &&
+        window.matchMedia("(any-hover: hover)").matches
+      ) {
         preview = true;
         box.open = true;
       }

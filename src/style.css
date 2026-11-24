@@ -846,37 +846,37 @@ dialog h2 {
 .content > div:first-child > div:first-child { container-type: inline-size; }
 .selection-tools, .live-figure, .figure-stage, .pattern-setup { min-width: 0; }
 .pattern-setup { grid-column: 1/-1; }
-.survey-compare-entry {
+.compare-entry {
   margin-bottom: 1.2rem;
   padding-bottom: .9rem;
   border-bottom: 1px solid var(--line);
 }
-.survey-compare-entry button {
+.compare-entry button {
   display: inline-flex;
   align-items: center;
   gap: .45rem;
   color: var(--blue);
   font-weight: 650;
 }
-.survey-compare-entry small {
+.compare-entry small {
   display: block;
   margin-top: .35rem;
   color: var(--muted);
 }
-.survey-chart-tools {
+.comparison-chart-tools {
   display: flex;
   flex-wrap: wrap;
   gap: .3rem;
   margin: .7rem 0;
 }
-.survey-chart-tools button {
+.comparison-chart-tools button {
   display: inline-flex;
   align-items: center;
   gap: .3rem;
   padding: .32rem .55rem;
   font-size: .85rem;
 }
-.survey-chart-tools button[aria-pressed="true"] {
+.comparison-chart-tools button[aria-pressed="true"] {
   color: var(--blue);
   border-color: var(--blue);
   background: var(--choice-tint);
@@ -884,6 +884,9 @@ dialog h2 {
 }
 .figure-stage .graphic svg.survey-distribution {
   min-width: max(100%, var(--survey-figure-width, 650px));
+}
+.figure-stage .graphic svg[data-theme-comparison] {
+  min-width: max(100%, var(--theme-figure-width, 600px));
 }
 .pick-items { min-width: 0; margin: 0 0 1rem; padding: 0; border: 0; }
 .pick-items legend { font-weight: 650; margin-bottom: .25rem; }

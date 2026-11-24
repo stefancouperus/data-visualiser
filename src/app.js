@@ -20,6 +20,12 @@ import {
 } from "./bot-help.js";
 import { structuredAnswer } from "./bot-response.js";
 import {
+  asksForThemePatterns,
+  interviewComparisonPick,
+  interviewInsights,
+  interviewPatternSuggestion,
+} from "./interview-insights.js";
+import {
   asksForSurveyPatterns,
   canSpotSurveyPatterns,
   surveyInsights,
@@ -58,6 +64,7 @@ import {
   interviewActivity,
 } from "./interview-workspace.js";
 import { transcriptEndpoint } from "./interview-manual.js";
+import { showThemePassages } from "./theme-passages.js";
 import { passageUnits } from "./transcript-index.js";
 import { writtenAnswerSet, isOpenQuestion } from "./open-answers.js";
 import { wordPassages } from "./word-counts.js";
@@ -99,6 +106,8 @@ import {
   selectedBinaryEvent,
   directComparison,
   namedSurveyComparison,
+  namedInterviewThemeComparison,
+  interviewContributionRequest,
   namedLinearModel,
   patternRequest,
   groupingRequest,
@@ -351,7 +360,27 @@ const selectionKeys = [
   "groupBy",
   "percentBase",
   "themeUnit",
+  "sourceMeasure",
 ];
+function showPatternComparison(i, settings, logTitle) {
+  const draft = pendingSelections.get(i);
+  const view = draft ? draft.view : project.views[i];
+  if (!draft) snapshotViews();
+  if (step === 3) focusBot(i ? "right" : "left");
+  proposal = captionDraft = queuedShortcut = null;
+  selectionConfirmed = false;
+  Object.assign(view, {
+    task: "patterns",
+    title: "",
+    annotation: "",
+    ...settings,
+  });
+  delete view.highlight;
+  render(draft ? undefined : { panel: i, title: logTitle });
+  document
+    .querySelector(`[data-panel="${i}"] .selection-editor [data-item]:checked`)
+    ?.focus({ preventScroll: true });
+}
 function beginSelection(i) {
   const base = structuredClone(project.views[i]);
   pendingSelections.set(i, { base, view: structuredClone(base) });
@@ -464,7 +493,7 @@ function botChat() {
   const spotPatterns =
     [2, 3].includes(step) &&
     !context.both &&
-    canSpotSurveyPatterns(dataset, context.view);
+    canSpotPatterns(dataset, context.view);
   const reviewReady = draft && draft.next === draft.total && draft.total > 0;
   const messages = history
     .map(
@@ -1273,6 +1302,18 @@ function chooseFigureStyle(i) {
   get("modalform").onchange = preview;
   preview();
 }
+function interviewMeasureFor(view, groupBy) {
+  const fallback = groupBy ? "interviews" : "count";
+  const inherited = (groupBy ? view.themeUnit : view.sourceMeasure) || fallback;
+  if (Boolean(view.groupBy) === Boolean(groupBy)) return inherited;
+  const current = view.groupBy ? view.themeUnit : view.sourceMeasure;
+  if (current === "themeShare") return "themeShare";
+  return inherited === "themeShare" ? fallback : inherited;
+}
+function changeThemeGrouping(view, key) {
+  view[key ? "themeUnit" : "sourceMeasure"] = interviewMeasureFor(view, key);
+  view.groupBy = key;
+}
 function tidy(v, key) {
   if (["task", "x", "y", "z", "outcome"].includes(key)) delete v.highlight;
   const d = getData(),
@@ -1341,6 +1382,18 @@ function tidy(v, key) {
     if (!v.items.length && choices.length) v.items = [choices[0]];
     v.patternMode ||= patternModes(d.kind === "text", !!d.openAnswers)[0][0];
     v.chart = available(d, v)[0];
+    return;
+  }
+  if (
+    isInterview(d) &&
+    v.task === "patterns" &&
+    ["groupBy", "patternMode", "themeUnit", "sourceMeasure"].includes(key)
+  ) {
+    v.title = v.annotation = "";
+    delete v.highlight;
+    if (["sourceMeasure", "themeUnit"].includes(key) && v[key] === "themeShare")
+      v.chart = "stack";
+    adaptChart(d, v);
     return;
   }
   if (key === "task") {
@@ -1704,6 +1757,7 @@ function botContext(question = "") {
           : null,
         availableCharts: available(d, project.views[i]),
         surveyInsights: surveyInsights(a),
+        interviewInsights: interviewInsights(a),
         chartListScope:
           "These options apply to restyling the current selection. For a new comparison, use the project chart options and choose the requested questions.",
         categoricalPattern:
@@ -1810,6 +1864,7 @@ function proposedChart(pick, question = "") {
     dataset: d.id,
     baseline: JSON.stringify(current),
   });
+  if (isInterview(d)) pick = interviewComparisonPick(pick, current);
   if (pick.action === "restyleChart") {
     if (
       !available(d, current).includes(pick.chart) ||
@@ -1875,14 +1930,37 @@ function proposedChart(pick, question = "") {
       if (exact.length !== 1) return null;
       groupBy = exact[0][0];
     }
-    const themeUnit = pick.themeUnit ?? current.themeUnit ?? "interviews";
-    if (!["interviews", "passages"].includes(themeUnit)) return null;
+    const interview = isInterview(d);
+    const themeUnit =
+      pick.themeUnit ??
+      (interview && groupBy
+        ? interviewMeasureFor(current, groupBy)
+        : (current.themeUnit ?? "interviews"));
+    if (
+      ![
+        "interviews",
+        "passages",
+        ...(interview ? ["themeShare"] : []),
+      ].includes(themeUnit)
+    )
+      return null;
+    const sourceMeasure =
+      pick.sourceMeasure ??
+      (interview && !groupBy
+        ? interviewMeasureFor(current, "")
+        : (current.sourceMeasure ?? "count"));
+    if (
+      interview &&
+      !["count", "percent", "themeShare"].includes(sourceMeasure)
+    )
+      return null;
     const percentBase = pick.percentBase ?? current.percentBase ?? "group";
     if (!text && !["group", "answer"].includes(percentBase)) return null;
     const view = {
       ...current,
       groupBy,
       themeUnit,
+      ...(isInterview(d) && { sourceMeasure }),
       ...(!text && { percentBase }),
       task: "patterns",
       items,
@@ -2001,11 +2079,12 @@ function applyProposal() {
   const chart = summary(candidate.panel, candidate.view);
   if (
     candidate.patternReading &&
-    candidate.patternReading !== JSON.stringify(surveyInsights(chart))
+    candidate.patternReading !==
+      JSON.stringify(interviewInsights(chart) || surveyInsights(chart))
   ) {
     render();
     throw Error(
-      "The answers behind this suggestion changed. Choose Spot patterns again.",
+      "The data behind this suggestion changed. Choose Spot patterns again.",
     );
   }
   if (
@@ -2060,8 +2139,10 @@ function applyProposal() {
       chart.note,
   );
   const contrast = chart.largestDisplayedDifference;
-  const groupInsight =
-    contrast?.percentagePoints > 0
+  const themeFact = interviewInsights(chart)?.facts[0];
+  const groupInsight = themeFact
+    ? " " + themeFact
+    : contrast?.percentagePoints > 0
       ? " For “" +
         contrast.pattern +
         "”, " +
@@ -2266,16 +2347,24 @@ async function checkGroupSuggestion() {
     worker.terminate();
   }
 }
-function suggestCurrentSurveyPatterns() {
+function canSpotPatterns(d, view) {
+  return (
+    canSpotSurveyPatterns(d, view) ||
+    (isInterview(d) &&
+      view?.task === "patterns" &&
+      (view.patternMode || "sources") === "sources" &&
+      !!view.items?.length)
+  );
+}
+function suggestCurrentPatterns() {
   proposal = captionDraft = null;
   const index = focusIndex(),
     view = project.views[index],
     selection = summary(index);
-  const result = surveyPatternSuggestion(
-    selection,
-    view.chart,
-    available(getData(), view),
-  );
+  const suggest = isInterview(getData())
+    ? interviewPatternSuggestion
+    : surveyPatternSuggestion;
+  const result = suggest(selection, view.chart, available(getData(), view));
   if (result?.chart) {
     proposal = proposedChart({ action: "restyleChart", chart: result.chart });
     if (proposal) proposal.patternReading = JSON.stringify(result.evidence);
@@ -2284,7 +2373,9 @@ function suggestCurrentSurveyPatterns() {
     role: "assistant",
     content:
       result?.message ||
-      "Choose the survey questions to compare, then choose a question to split the answers into groups.",
+      (isInterview(getData())
+        ? "Select the themes you want to compare across interviews or groups."
+        : "Choose the survey questions to compare, then choose a question to split the answers into groups."),
   });
 }
 function finishCodingBatch(question) {
@@ -2362,20 +2453,37 @@ async function ask(question, skill, intent = "") {
   const dataset = getData();
   const current =
     project.views[step === 3 && botFocus === "both" ? 1 : focusIndex()];
+  const contribution =
+    !intent &&
+    skill === "recommend" &&
+    [2, 3].includes(step) &&
+    isInterview(dataset)
+      ? interviewContributionRequest(question, current, groupChoices(dataset))
+      : undefined;
   if (
     skill === "recommend" &&
     [2, 3].includes(step) &&
     !(step === 3 && botFocus === "both") &&
-    canSpotSurveyPatterns(dataset, current) &&
-    (intent === "spotPatterns" || (!intent && asksForSurveyPatterns(question)))
+    canSpotPatterns(dataset, current) &&
+    (intent === "spotPatterns" ||
+      (!intent &&
+        (isInterview(dataset)
+          ? asksForThemePatterns(question)
+          : asksForSurveyPatterns(question))))
   ) {
     history.push({ role: "user", content: question });
     lastQuestion = "";
-    suggestCurrentSurveyPatterns();
+    suggestCurrentPatterns();
     render();
     return;
   }
-  if (!intent && skill === "recommend" && dataset && [2, 3].includes(step))
+  if (
+    !intent &&
+    !contribution &&
+    skill === "recommend" &&
+    dataset &&
+    [2, 3].includes(step)
+  )
     intent = chartReadingIntent(question);
   if (dataset && skill === "recommend" && !intent && [2, 3].includes(step)) {
     const requested = filterRequest(dataset, question);
@@ -2481,6 +2589,14 @@ async function ask(question, skill, intent = "") {
       dataset.kind === "text" ? allCodes(dataset) : [],
       dataset.sources,
     ) ||
+      (isInterview(dataset) &&
+        (contribution ||
+          namedInterviewThemeComparison(
+            question,
+            allCodes(dataset),
+            groupChoices(dataset),
+            current,
+          ))) ||
       (dataset.kind === "table" &&
         (namedLinearModel(dataset.fields, question) ||
           namedSurveyComparison(dataset.fields, question) ||
@@ -2524,12 +2640,29 @@ async function ask(question, skill, intent = "") {
     direct = selection;
   }
   if (direct) {
-    const candidate = direct.action === "draw" && proposedChart(direct);
+    const candidate =
+      ["draw", "suggest"].includes(direct.action) && proposedChart(direct);
     if (direct.action === "answer" || candidate) {
       lastQuestion = "";
       proposal = candidate || null;
       history.push({ role: "user", content: question });
-      if (candidate) applyProposal();
+      if (candidate && direct.action === "suggest") {
+        const chart = summary(candidate.panel, candidate.view);
+        const evidence = interviewInsights(chart);
+        proposal.patternReading = JSON.stringify(evidence);
+        history.push({
+          role: "assistant",
+          content: [
+            ...evidence.facts,
+            ...evidence.caveats,
+            chart.note,
+            "Use a stacked bar for each theme to see which interviews or groups supplied its passages.",
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        });
+        render();
+      } else if (candidate) applyProposal();
       else {
         history.push({ role: "assistant", content: direct.explanation });
         render();
@@ -2589,7 +2722,7 @@ async function ask(question, skill, intent = "") {
       namedChartRequest(question) ||
       ((dataset.kind === "text" &&
         pattern.patternMode === "sources" &&
-        !(pattern.groupBy || current?.groupBy)) ||
+        (isInterview(dataset) || !(pattern.groupBy || current?.groupBy))) ||
       (dataset.kind === "table" &&
         pattern.patternMode === "separate" &&
         (pattern.groupBy || current?.groupBy))
@@ -2881,9 +3014,9 @@ async function ask(question, skill, intent = "") {
         !intent &&
         [2, 3].includes(step) &&
         !(step === 3 && botFocus === "both") &&
-        canSpotSurveyPatterns(dataset, current)
+        canSpotPatterns(dataset, current)
       ) {
-        suggestCurrentSurveyPatterns();
+        suggestCurrentPatterns();
         return;
       }
       if (pick.action === "suggestGroups" && !intent && [2, 3].includes(step)) {
@@ -2910,6 +3043,10 @@ async function ask(question, skill, intent = "") {
           if (
             pick.chart === "grid" &&
             !namedChartRequest(question) &&
+            !(
+              isInterview(dataset) &&
+              (pick.patternMode || current?.patternMode) === "sources"
+            ) &&
             !(dataset.kind === "table" && pick.patternMode === "separate")
           )
             pick.chart = "bars";
@@ -3308,10 +3445,17 @@ async function reviewAction(act, d, el) {
   }
 }
 function patternEvidence(i, index) {
-  const d = includedInterview(getData()),
+  const dataset = getData(),
+    d = includedInterview(dataset),
     v = project.views[i],
-    cell = summary(i).records[index];
+    analysis = summary(i),
+    cell = analysis.records[index];
   if (!cell) return;
+  if (analysis.themeComparison && isInterview(dataset)) {
+    return showThemePassages(dataset, d, v, analysis, cell, (passage) =>
+      openOriginalPassage(dataset, passage),
+    );
+  }
   if (d.kind === "table") {
     const fields = v.items.map((id) => d.fields.find((f) => f.id === id));
     const groupField = d.fields.find((f) => f.id === v.groupBy);
@@ -3413,6 +3557,16 @@ function patternEvidence(i, index) {
           .map((p) => [p.source, p.text, p.codes.join(" · ")]),
       ),
   );
+}
+function openOriginalPassage(dataset, passage) {
+  const state = interviews(dataset);
+  state.source = passage.source;
+  state.passage = passage.id;
+  get("dialog").close();
+  goto(1);
+  const row = document.querySelector(".iv-text .iv-selected");
+  row?.scrollIntoView({ block: "nearest" });
+  row?.querySelector("button")?.focus({ preventScroll: true });
 }
 function evidence(i, match, codingPrompt = "") {
   const d = getData(),
@@ -3606,14 +3760,7 @@ function evidence(i, match, codingPrompt = "") {
           "Tick one passage to open it in the transcript.";
         return;
       }
-      const state = interviews(d);
-      state.source = passage.source;
-      state.passage = passage.id;
-      get("dialog").close();
-      goto(1);
-      const row = document.querySelector(".iv-text .iv-selected");
-      row?.scrollIntoView({ block: "nearest" });
-      row?.querySelector("button")?.focus({ preventScroll: true });
+      openOriginalPassage(d, passage);
     };
   }
   get("shortpass").onmousedown = (e) => e.preventDefault();
@@ -3985,6 +4132,28 @@ async function action(act, el) {
         ensureBotAccess,
       );
       return;
+    case "themecompare": {
+      if (!isInterview(d)) return;
+      const view = pendingSelections.get(i)?.view || project.views[i];
+      const codes = new Set(patternChoices(d).map(([id]) => id));
+      if (!codes.size) return;
+      const previous = view.task === "two" ? [view.x, view.y] : [view.x];
+      const items = [...new Set(previous.filter((id) => codes.has(id)))];
+      if (!items.length) items.push(codes.values().next().value);
+      showPatternComparison(
+        i,
+        {
+          items,
+          groupBy: "",
+          patternMode: "sources",
+          sourceMeasure: "count",
+          themeUnit: "interviews",
+          chart: "grid",
+        },
+        "Compared interview themes",
+      );
+      return;
+    }
     case "surveycompare": {
       const draft = pendingSelections.get(i);
       const view = draft ? draft.view : project.views[i];
@@ -4016,32 +4185,17 @@ async function action(act, el) {
           : markedGroups.length === 1
             ? markedGroups[0].id
             : "";
-      if (!draft) snapshotViews();
-      if (step === 3) focusBot(i ? "right" : "left");
-      proposal = captionDraft = queuedShortcut = null;
-      selectionConfirmed = false;
-      Object.assign(view, {
-        task: "patterns",
-        items: [outcome],
-        groupBy,
-        patternMode: "separate",
-        percentBase: "group",
-        chart: groupBy ? "grid" : "bars",
-        title: "",
-        annotation: "",
-      });
-      delete view.highlight;
-      render(
-        draft
-          ? undefined
-          : { panel: i, title: "Compared survey answers by group" },
+      showPatternComparison(
+        i,
+        {
+          items: [outcome],
+          groupBy,
+          patternMode: "separate",
+          percentBase: "group",
+          chart: groupBy ? "grid" : "bars",
+        },
+        "Compared survey answers by group",
       );
-      const editor = document.querySelector(
-        `[data-panel="${i}"] .selection-editor`,
-      );
-      editor
-        ?.querySelector("[data-item]:checked")
-        ?.focus({ preventScroll: true });
       return;
     }
     case "editselection":
@@ -4165,7 +4319,8 @@ async function action(act, el) {
       project.views = undoViews.pop();
       break;
     case "addgroups": {
-      const view = project.views[i];
+      const draft = pendingSelections.get(i);
+      const view = draft?.view || project.views[i];
       modal(
         "Add interview groups",
         '<p>Choose a detail you recorded about the people you interviewed. Interviews with the same value form one group.</p><label>Which detail will you use to form groups?<input id="group-name" required maxlength="100"></label><p>Enter the recorded value for each interview. Use the same wording for interviews that belong together. Leave the box blank if you do not know.</p>' +
@@ -4199,8 +4354,10 @@ async function action(act, el) {
           d.metadata = Object.assign(Object.create(null), d.metadata || {});
           for (const [source, value] of groups)
             d.metadata[source] = { ...d.metadata[source], [name]: value };
-          snapshotViews();
-          view.groupBy = name;
+          if (!draft) snapshotViews();
+          if (isInterview(d)) changeThemeGrouping(view, name);
+          else view.groupBy = name;
+          tidy(view, "groupBy");
           if (step === 3) focusBot(i ? "right" : "left");
           render();
         },
@@ -4247,7 +4404,7 @@ async function action(act, el) {
       render({ panel: i, title: "Changed the chart type" });
       document
         .querySelector(
-          `[data-panel="${i}"] .chart-picker summary, [data-panel="${i}"] .survey-chart-tools [aria-pressed="true"]`,
+          `[data-panel="${i}"] .chart-picker summary, [data-panel="${i}"] .comparison-chart-tools [aria-pressed="true"]`,
         )
         ?.focus({ preventScroll: true });
       return;
@@ -4498,7 +4655,9 @@ async function action(act, el) {
       const [intent, prompt] = {
         botpatterns: [
           "spotPatterns",
-          "What stands out in these answers across the selected groups, and which chart would help me see it?",
+          isInterview(d)
+            ? "What stands out in the coding of these themes, and which chart would help me see it?"
+            : "What stands out in these answers across the selected groups, and which chart would help me see it?",
         ],
         discusspass: [
           "excerpts",
@@ -5492,7 +5651,9 @@ document.addEventListener("change", (e) => {
       v.patternMode = "separate";
       v.percentBase = "group";
     }
-    v[t.dataset.key] = t.value;
+    if (t.dataset.key === "groupBy" && isInterview(getData()))
+      changeThemeGrouping(v, t.value);
+    else v[t.dataset.key] = t.value;
     tidy(v, t.dataset.key);
     if (
       step === 3 &&
@@ -5514,7 +5675,14 @@ document.addEventListener("change", (e) => {
       : { panel: i, title: "Explored a visual" },
   );
   if (
-    ["task", "patternMode", "surveyReading", "groupBy"].includes(t.dataset.key)
+    [
+      "task",
+      "patternMode",
+      "surveyReading",
+      "groupBy",
+      "themeUnit",
+      "sourceMeasure",
+    ].includes(t.dataset.key)
   )
     document
       .querySelector(`[data-panel="${i}"] select[data-key="${t.dataset.key}"]`)

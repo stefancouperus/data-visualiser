@@ -1,3 +1,5 @@
+import { themeCellReading } from "./interview-insights.js";
+
 // Send the choices that actually define the displayed chart. A saved view can
 // retain inactive model settings, edit dictionaries and earlier filter values.
 export function tutorViewSettings(v) {
@@ -21,6 +23,11 @@ export function tutorViewSettings(v) {
         : {}),
       groupBy: v.groupBy,
       themeUnit: v.themeUnit,
+      ...(!v.groupBy &&
+        v.patternMode === "sources" &&
+        v.sourceMeasure && {
+          sourceMeasure: v.sourceMeasure,
+        }),
     };
   if (v.x) settings.x = v.x;
   if (v.task !== "one" && v.y) settings.y = v.y;
@@ -62,6 +69,7 @@ const label = (value) => "“" + value + "”";
 // sentence, but neither its prose nor an unknown option enters a figure.
 function observations(v) {
   if (v.surveyInsights?.facts?.length) return v.surveyInsights.facts;
+  if (v.interviewInsights?.facts?.length) return v.interviewInsights.facts;
   const facts = [];
   const pattern = v.categoricalPattern;
   if (pattern?.largestObservedShareDifference) {
@@ -169,6 +177,15 @@ function countReadings(view, question) {
   const prompt = normalise(question);
   const named = (s) =>
     s && normalise(s).trim() && prompt.includes(normalise(s));
+  if (view.themeComparison && !view.themeComparison.written) {
+    if (view.recordsTotal > view.records.length) return [];
+    const themes = view.records.filter((r) => named(r.label));
+    const levels = themes.filter((r) => named(r.groupValue));
+    const rows = levels.length ? levels : themes;
+    return rows.length && rows.length <= 12
+      ? [rows.map((r) => themeCellReading(r, view.themeComparison)).join(" ")]
+      : [];
+  }
   const codes = view.calculatedForSelection?.codeCounts;
   if (codes) {
     const matches = codes.filter((c) => named(c.code));

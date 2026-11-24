@@ -1,5 +1,6 @@
 import { filteredRows } from "./import.js";
 import { surveyGroupReader } from "./survey-grouping.js";
+import { isInterview } from "./interviews.js";
 import {
   groupChoices,
   groupValue,
@@ -111,10 +112,10 @@ export function suggestGrouping(d, view) {
       items,
       patternMode: mode,
       groupBy: c.key,
-      themeUnit: view.themeUnit || "interviews",
+      themeUnit: view.themeUnit === "passages" ? "passages" : "interviews",
       ...(!text && mode === "separate"
         ? { chart: "grid", percentBase: "group" }
-        : { chart: "bars" }),
+        : { chart: isInterview(d) && mode === "sources" ? "grid" : "bars" }),
     };
     let a;
     try {
@@ -124,7 +125,12 @@ export function suggestGrouping(d, view) {
       throw error;
     }
     checked++;
-    const sizes = new Map(a.groupSizes.map((g) => [g.group, g.selected]));
+    const sizes = new Map(
+      a.groupSizes.map((g) => [
+        g.group,
+        a.themeComparison && !g.passages ? 0 : g.selected,
+      ]),
+    );
     const rows = new Map();
     for (const r of a.records) {
       if (r.den < 2 || sizes.get(r.groupValue) < 2) continue;

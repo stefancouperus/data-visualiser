@@ -1,4 +1,5 @@
-import { interpolateRgb, scaleLinear } from "d3";
+import { scaleLinear } from "d3";
+import { seriesColour } from "./figure-styles.js";
 
 const pct = (value) =>
   (value > 0 && value < 0.1
@@ -6,19 +7,6 @@ const pct = (value) =>
     : value < 100 && value > 99.9
       ? ">99.9"
       : String(+value.toFixed(1))) + "%";
-
-// Extend the chosen palette for longer lists. Strips and legends share the same
-// index even if a filter removes earlier groups or the display order is edited.
-function seriesColour(palette, index) {
-  const base = palette[index % palette.length];
-  const cycle = Math.floor(index / palette.length);
-  if (!cycle) return base;
-  const level = Math.ceil(cycle / 2);
-  return interpolateRgb(
-    base,
-    cycle % 2 ? "#ffffff" : "#000000",
-  )(level / (level + 2.5));
-}
 
 // Work from the calculated cells, including the original index for drill-down.
 // Layout also runs for downloaded SVGs, PNGs and saved side-by-side comparisons.
