@@ -10,6 +10,12 @@ export async function requestInterviewCoding(context, requestTutor) {
   if (guide.mode === "deductive")
     question +=
       " Copy each code exactly from guide.vocabulary, in the codebook language. An existing passage label or a word in the research focus is eligible only if it appears in that list.";
+  if (
+    guide.mode === "deductive" &&
+    guide.vocabulary?.some((entry) => entry.sourceLabel)
+  )
+    question +=
+      " Some sublabels occur under different categories. Match the passage to the category as well as the sublabel, then return the full label from that entry. If the passage does not establish which category fits, omit that assignment.";
   if (discovering) {
     question = `Your task is open label discovery. The student has already requested new labels for new ideas and will decide which proposals to accept after this response. Read each participant’s words against the research focus. A previously unseen, well-supported answer belongs in suggestions: give it a new concise name, definition and exact quotation now. The ${guide.vocabulary.length} existing labels are available for genuinely equivalent meanings. You can create up to ${guide.limits.newPerBatch} NEW labels in this request. If an otherwise relevant passage does not fit an existing label, that is precisely when to create a new label. Return the requested JSON immediately.`;
   }

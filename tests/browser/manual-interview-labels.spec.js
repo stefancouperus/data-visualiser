@@ -320,6 +320,67 @@ test("manual edits during a saved bot draft survive its review and the next proj
   ]);
 });
 
+test("adding a namesake through Manage labels keeps earlier coding on its original category", async ({
+  page,
+}) => {
+  const current = example();
+  const d = current.datasets[0];
+  d.coding.book = [
+    {
+      label: "Monthly",
+      category: "Newsletters",
+      definition: "A monthly publication",
+    },
+  ];
+  d.passages[0].text = "We publish a newsletter every month.";
+  d.passages[1].text = "The committee meets monthly.";
+  d.passages[0].codes = ["Monthly"];
+  const quote = "a newsletter every month";
+  d.passages[0].codingEvidence = [{ code: "Monthly", quote }];
+  await openProject(page, current);
+  await manage(page);
+  await dialog(page).getByLabel("Label name").fill("Monthly");
+  await dialog(page).getByLabel("Category (optional)").fill("Meetings");
+  await btn(page, "Save label").click();
+  await expect(dialog(page)).toBeHidden();
+  const stored = await download(page);
+  const approved = stored.datasets[0].coding.book;
+  expect(approved.map((entry) => entry.sourceLabel)).toEqual([
+    "Monthly",
+    "Monthly",
+  ]);
+  const newsletter = approved.find(
+    (entry) => entry.category === "Newsletters",
+  ).label;
+  const meeting = approved.find((entry) => entry.category === "Meetings").label;
+  expect(meeting).not.toBe(newsletter);
+  await openProject(page, stored);
+  await btn(page, "Passage 1").click();
+  await btn(page, "Code manually").click();
+  await expect(
+    dialog(page).getByRole("checkbox", { name: newsletter, exact: true }),
+  ).toBeChecked();
+  await expect(
+    dialog(page).getByRole("checkbox", { name: meeting, exact: true }),
+  ).not.toBeChecked();
+  await btn(page, "Close").click();
+  await btn(page, "Passage 2").click();
+  await btn(page, "Code manually").click();
+  await dialog(page)
+    .getByRole("checkbox", { name: meeting, exact: true })
+    .check();
+  await savePassage(page);
+  const restored = (await download(page)).datasets[0];
+  expect(restored.passages.map((p) => p.codes)).toEqual([
+    [newsletter],
+    [meeting],
+    [],
+  ]);
+  expect(restored.passages[0].codingEvidence).toEqual([
+    { code: newsletter, quote },
+  ]);
+});
+
 test("a cross-paragraph selection keeps existing bot evidence and can be corrected at quotation level", async ({
   page,
 }) => {

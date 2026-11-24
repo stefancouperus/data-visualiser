@@ -34,7 +34,23 @@ export function reviewVocabulary(book, rows) {
     throw Error(
       "Select at least one label to approve, or close this review to try another sample.",
     );
-  return bookEntries([...book, ...additions]);
+  const existingNames = new Set(
+    book.flatMap((entry) =>
+      [entry.label, entry.sourceLabel].filter(Boolean).map(labelKey),
+    ),
+  );
+  const duplicate = additions.find((row) =>
+    existingNames.has(labelKey(row.label)),
+  );
+  if (duplicate)
+    throw Error(
+      "The new label “" +
+        duplicate.label.trim() +
+        "” would duplicate an existing code. Choose a different name here, or use Manage labels to add it under another category.",
+    );
+  // An inductive review adds standalone labels. Keep the identities and
+  // assignments of the previously approved codebook, including older projects.
+  return additions.length ? [...book, ...bookEntries(additions)] : [...book];
 }
 
 export function sampleLabelEditor(rows, includeExamples, styles) {

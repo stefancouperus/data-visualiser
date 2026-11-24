@@ -142,6 +142,11 @@ function validateSuggestions(raw, passages, guide, newLabelLimit, excluded) {
   const known = new Map(
     guide.vocabulary.map((entry) => [key(entry.label), entry]),
   );
+  const scopedNames = new Set(
+    guide.vocabulary
+      .filter((entry) => entry.sourceLabel)
+      .map((entry) => key(entry.sourceLabel)),
+  );
   const withdrawn = new Set((guide.withdrawnLabels || []).map(key));
   const newLabels = new Map();
   const used = new Map(
@@ -191,7 +196,7 @@ function validateSuggestions(raw, passages, guide, newLabelLimit, excluded) {
     }
     let canonical = known.get(id) || newLabels.get(id);
     if (!canonical) {
-      if (guide.mode === "deductive") {
+      if (guide.mode === "deductive" || scopedNames.has(id)) {
         skip("label");
         continue;
       }
@@ -225,7 +230,9 @@ export function bookEntries(rows) {
     throw Error("Include at least one label before using this codebook.");
   const branches = new Map();
   const entries = rows.map((row) => {
-    const label = row.label.trim(),
+    // Approved entries keep their original sublabel alongside their passage
+    // tag. Both forms also feed the editor when an existing book is revised.
+    const label = (row.sourceLabel || row.label).trim(),
       definition = row.definition.trim(),
       category = (row.category || "")
         .split("›")
@@ -243,43 +250,49 @@ export function bookEntries(rows) {
           "”.",
       );
     parents.add(key(category));
-    const item = category
-      ? { label, definition, category }
-      : { label, definition };
-    // A shared inductive review can add entries to a previously approved
-    // deductive book; it supplies its already-qualified project codes.
-    if (row.sourceLabel && row.sourceLabel !== label)
-      item.sourceLabel = row.sourceLabel;
-    return item;
+    return category ? { label, definition, category } : { label, definition };
   });
   // Passage tags are strings in both existing projects and shared Word files.
   // Only homonyms need a qualified tag. Keep the exact leaf for the editor.
   const used = new Set(branches.keys());
   return entries.map((entry, index) => {
-    const previous = rows[index].previousLabel;
+    const row = rows[index];
+    const previous = row.sourceLabel ? row.label : row.previousLabel;
+    const parents = branches.get(key(entry.label));
+    const parent = entry.category || "Labels without a category";
+    const path = parent.split(" › ");
+    const uniqueQualifier = (qualifier) =>
+      ![...parents].some((other) => {
+        if (other === key(entry.category || "")) return false;
+        const otherPath = other || key("Labels without a category");
+        // A full path remains usable when it is the suffix of a longer one.
+        return (
+          otherPath === qualifier ||
+          (qualifier !== key(parent) && otherPath.endsWith(" › " + qualifier))
+        );
+      });
     if (
       typeof previous === "string" &&
-      entry.category &&
       previous.endsWith(" › " + entry.label) &&
-      !used.has(key(previous))
+      !used.has(key(previous)) &&
+      path.some((_, i) => {
+        const qualifier = path.slice(i).join(" › ");
+        return (
+          previous === qualifier + " › " + entry.label &&
+          uniqueQualifier(key(qualifier))
+        );
+      })
     ) {
       used.add(key(previous));
       return { ...entry, label: previous, sourceLabel: entry.label };
     }
-    const parents = branches.get(key(entry.label));
-    if (parents.size === 1 || !entry.category) return entry;
-    const path = entry.category.split(" › ");
+    if (parents.size === 1) return entry;
+    // A bare reply from the bot must never resolve to one branch of a
+    // repeated name, even when one of those branches is uncategorised.
     for (let depth = 1; depth <= path.length; depth++) {
-      const parent = path.slice(-depth).join(" › ");
-      const suffix = key(parent);
-      const ambiguous = [...parents].some(
-        (other) =>
-          other !== key(entry.category) &&
-          (other === suffix || other.endsWith(" › " + suffix)),
-      );
-      // A complete path is distinct even when another branch ends with it.
-      if (ambiguous && depth < path.length) continue;
-      const label = parent + " › " + entry.label;
+      const qualifier = path.slice(-depth).join(" › ");
+      if (!uniqueQualifier(key(qualifier))) continue;
+      const label = qualifier + " › " + entry.label;
       if (used.has(key(label))) continue;
       used.add(key(label));
       return { ...entry, label, sourceLabel: entry.label };

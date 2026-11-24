@@ -129,7 +129,9 @@ import {
   reattach,
   settingsProject,
   renameTheme,
+  rewriteInterviewLabelReferences,
   editInterviewLabel,
+  editInterviewCategory,
 } from "./project.js";
 import {
   reviewParticipantLinks,
@@ -3497,6 +3499,7 @@ function evidence(i, match, codingPrompt = "") {
     },
     refreshDocumentBook,
     ensureBotAccess,
+    (changes) => rewriteInterviewLabelReferences(owner, d, changes, undoViews),
   );
   syncPassageLabels();
   const applyBook = get("apply-book-interviews");
@@ -3597,10 +3600,22 @@ async function handleInterview(act, el, d) {
   return interviewAction(act, el, d, {
     current: getData,
     checkpoint,
+    remapPreviousLabels: (changes) =>
+      rewriteInterviewLabelReferences(owner, d, changes, undoViews),
     status: () => codingSaveStatus.get(owner)?.message || "",
     render,
     focus: () => project.researchFocus,
     changeLabel: (change) => changeInterviewLabel(d, change),
+    changeCategory: (old, name) => {
+      if (getData() !== d)
+        throw Error(
+          "Open this interview collection again to edit its categories.",
+        );
+      editInterviewCategory(project, d, old, name, undoViews);
+      suggestions = [];
+      proposal = captionDraft = queuedShortcut = null;
+      pendingSelections.clear();
+    },
     extract: extractCodebook,
     ensureAccess: ensureBotAccess,
     code: (context) => requestInterviewCoding(context, requestTutor),

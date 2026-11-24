@@ -149,6 +149,113 @@ test("reopening an in-flight extraction shows the same job and receives its resu
   ).toBeUndefined();
 });
 
+test("manual categories keep a shared sublabel distinct in student coding, bot review and a reopened project", async ({
+  page,
+}) => {
+  const passages = [
+    "We send a newsletter every month.",
+    "Our committee meets on the first Monday of every month.",
+    "We send a second bulletin to subscribers each month.",
+    "It usually happens about once a month.",
+  ];
+  await upload(page, passages.join("\n"));
+  await button(page, "Enter labels manually").click();
+  const dialog = page.getByRole("dialog");
+  await expect(button(dialog, "Add label")).toBeVisible();
+  const groups = dialog.locator(".book-category");
+  const groupsToCreate = [
+    ["Newsletters", "A newsletter is sent each month."],
+    ["Meetings", "The committee meets each month."],
+  ];
+  for (const [name, meaning] of groupsToCreate) {
+    await button(dialog, "Add category").click();
+    const group = groups.last();
+    await group.getByLabel("Category name").fill(name);
+    await button(group, "Add label to this category").click();
+    await group.getByLabel("Label", { exact: true }).fill("Monthly");
+    await group.getByLabel("Meaning and rules").fill(meaning);
+    if (name === "Newsletters") await button(dialog, "Add category").click();
+  }
+  await button(dialog, "Close").click();
+  const draft = await savedProject(page, true);
+  await page.reload();
+  await openBackup(page, draft);
+  await button(page, "Review draft labels").click();
+  await expect(groups).toHaveCount(3);
+  const unused = groups.nth(1);
+  await unused.locator("summary").click();
+  await expect(unused.getByLabel("Category name")).toHaveValue("");
+  await button(unused, "Remove category").click();
+  for (const [name, meaning] of groupsToCreate) {
+    const group = groups.filter({
+      has: page.getByText(name + " · 1 label", { exact: true }),
+    });
+    if (!(await group.getByLabel("Category name").isVisible()))
+      await group.locator("summary").click();
+    await expect(group.getByLabel("Label", { exact: true })).toHaveValue(
+      "Monthly",
+    );
+    await expect(group.getByLabel("Meaning and rules")).toHaveValue(meaning);
+  }
+  await button(dialog, "Use these labels").click();
+  await button(page, "Passage 1").click();
+  await button(page, "Code manually").click();
+  const newsletter = "Newsletters › Monthly",
+    meeting = "Meetings › Monthly";
+  await dialog.getByRole("checkbox", { name: newsletter, exact: true }).check();
+  await expect(
+    dialog.getByRole("checkbox", { name: meeting, exact: true }),
+  ).not.toBeChecked();
+  await button(dialog, "Save passage coding").click();
+
+  let guide;
+  await page.route(requestUrl, async (route) => {
+    const { context } = route.request().postDataJSON();
+    guide = context.guide;
+    const codes = new Map([
+      [passages[1], meeting],
+      [passages[2], newsletter],
+      [passages[3], "Monthly"],
+    ]);
+    const suggestions = context.passages
+      .filter((p) => codes.has(p.text))
+      .map((p) => ({
+        id: p.id,
+        code: codes.get(p.text),
+        quote: p.text,
+        reason: "Frequency stated in this answer.",
+      }));
+    await route.fulfill({ json: { answer: JSON.stringify({ suggestions }) } });
+  });
+  await button(page, "Code with the bot").click();
+  await button(dialog, "Send to bot for coding").click();
+  await button(page, "Review suggested coding").click();
+  expect(guide.vocabulary).toEqual(
+    groupsToCreate.map(([category, definition]) => ({
+      category,
+      definition,
+      label: category + " › Monthly",
+      sourceLabel: "Monthly",
+    })),
+  );
+  await expect(dialog.locator(".iv-match")).toHaveCount(2);
+  await button(dialog, "Apply reviewed coding").click();
+  const archive = await savedProject(page, true);
+  await page.reload();
+  await openBackup(page, archive);
+  const restored = (await savedProject(page)).datasets[0];
+  expect(restored.passages.map((p) => [p.text, p.codes])).toEqual([
+    [passages[0], [newsletter]],
+    [passages[1], [meeting]],
+    [passages[2], [newsletter]],
+    [passages[3], []],
+  ]);
+  expect(restored.passages.flatMap((p) => p.codingEvidence || [])).toEqual([
+    { code: meeting, quote: passages[1] },
+    { code: newsletter, quote: passages[2] },
+  ]);
+});
+
 test("category-based codebooks keep two same-named labels distinct from draft through approved coding and ZIP restore", async ({
   page,
 }) => {

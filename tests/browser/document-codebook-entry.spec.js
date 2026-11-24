@@ -1,11 +1,17 @@
 import { test, expect } from "@playwright/test";
+import { backupContents } from "./backup-helpers.js";
 import { fresh } from "../../src/project.js";
 import { corpus, texts } from "../../src/import.js";
 import { newView } from "../../src/analysis.js";
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 
-async function openDocuments(page, openAnswers = false, withBook = true) {
+async function openDocuments(
+  page,
+  openAnswers = false,
+  withBook = true,
+  prepare = () => {},
+) {
   const data = corpus(
     "Documents",
     [
@@ -29,6 +35,7 @@ async function openDocuments(page, openAnswers = false, withBook = true) {
       eligible: 2,
     };
   }
+  prepare(data);
   const view = newView(data);
   const project = {
     ...fresh(),
@@ -126,13 +133,11 @@ test("a document codebook stays visible outside the passage reader and survives 
   const modal = page.getByRole("dialog");
   await modal.getByText("Code with the Data bot", { exact: true }).click();
   await modal.locator("#coding-method").selectOption("deductive");
-  await modal
-    .locator("#book-file")
-    .setInputFiles({
-      name: "Book.txt",
-      mimeType: "text/plain",
-      buffer: Buffer.from("Travel: Making a journey"),
-    });
+  await modal.locator("#book-file").setInputFiles({
+    name: "Book.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("Travel: Making a journey"),
+  });
   await button(modal, "Extract labels").click();
   await expect(modal.locator("[data-label]")).toHaveValue("Travel");
   await modal.locator("[data-label]").fill("Travel decisions");
@@ -170,4 +175,76 @@ test("a document codebook stays visible outside the passage reader and survives 
   await expect(button(page, "Code manually")).toBeEnabled();
   await expect(button(page, "Code with the bot")).toBeEnabled();
   expect(calls).toEqual(["codebook"]);
+});
+
+test("renaming a category and removing an empty category update the approved category list", async ({
+  page,
+}) => {
+  await openDocuments(page, false, true, (data) => {
+    data.coding.categories = ["Old heading", "Empty heading"];
+    data.coding.book[0].category = "Old heading";
+    data.passages[0].codes = ["Travel"];
+  });
+  const modal = page.getByRole("dialog");
+  await modal.getByText("Code with the Data bot", { exact: true }).click();
+  await button(modal, "Review approved labels").click();
+  const groups = modal.locator(".book-category");
+  await groups.first().getByLabel("Category name").fill("New heading");
+  await groups.last().locator("summary").click();
+  await button(groups.last(), "Remove category").click();
+  await button(modal, "Use these labels").click();
+  await button(modal, "Review approved labels").click();
+  await expect(groups).toHaveCount(1);
+  await expect(groups.getByLabel("Category name")).toHaveValue("New heading");
+  await expect(groups.getByLabel("Label", { exact: true })).toHaveValue(
+    "Travel",
+  );
+});
+
+test("successive replacement codebooks keep an earlier passage tied to its original category", async ({
+  page,
+}) => {
+  await openDocuments(page, false, true, (data) => {
+    data.coding.categories = ["Newsletter"];
+    data.coding.book = [
+      {
+        label: "Frequency",
+        category: "Newsletter",
+        definition: "When newsletters go out.",
+      },
+    ];
+    data.passages[0].codes = ["Frequency"];
+  });
+  const modal = page.getByRole("dialog");
+  await modal.getByText("Code with the Data bot", { exact: true }).click();
+  for (const category of ["Meetings", "Outreach"]) {
+    await button(modal, "Enter labels manually").click();
+    await button(modal, "Add category").click();
+    await modal.getByLabel("Category name").fill(category);
+    await button(modal, "Add label to this category").click();
+    await modal.locator("[data-label]").fill("Frequency");
+    await button(modal, "Use these labels").click();
+    await expect(modal.locator("#applycode option")).toHaveText([
+      "Choose an approved label",
+      category + " › Frequency",
+    ]);
+  }
+  await button(modal, "Close").click();
+  await button(page, "Use the interview coding workspace").click();
+  const pending = page.waitForEvent("download");
+  await button(page, "Save coding project").click();
+  const chunks = [];
+  for await (const chunk of await (await pending).createReadStream())
+    chunks.push(chunk);
+  const data = backupContents(Buffer.concat(chunks)).datasets[0];
+  expect(data.passages[0].codes).toEqual(["Frequency"]);
+  expect(data.coding.book.map((entry) => entry.label)).toEqual([
+    "Outreach › Frequency",
+  ]);
+  expect(data.coding.meanings).toContainEqual({
+    label: "Frequency",
+    category: "Newsletter",
+    definition: "When newsletters go out.",
+  });
+  expect(data.coding.categories).toEqual(["Outreach", "Newsletter"]);
 });

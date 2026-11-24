@@ -562,7 +562,7 @@ export async function interviewAction(act, el, d, api) {
   }
   if (act === "iv-add") return api.add();
   if (act === "iv-establish") establish(d);
-  if (act === "iv-categories") return manageCategories(d, refresh);
+  if (act === "iv-categories") return manageCategories(d, api, refresh);
   if (act === "iv-editbook") return manageLabels(d, api, refresh);
   if (["iv-book", "iv-enterbook", "iv-reviewbook"].includes(act)) {
     const manual = d.coding?.bookDraft
@@ -598,6 +598,7 @@ export async function interviewAction(act, el, d, api) {
       },
       () => refresh(),
       api.ensureAccess,
+      api.remapPreviousLabels,
     );
     return;
   }

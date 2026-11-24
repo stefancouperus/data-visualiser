@@ -120,7 +120,7 @@ test("an approved hierarchical vocabulary keeps exact applied identities through
       "Clubs › Frequency › Monthly",
       "Councils › Frequency › Monthly",
       "Membership › No",
-      "No",
+      "Labels without a category › No",
       "Travel / leisure",
     ],
   );
@@ -137,6 +137,10 @@ test("an approved hierarchical vocabulary keeps exact applied identities through
   };
   assert.deepEqual(approvedBook(d), book);
   assert.deepEqual(bookEntries([...book, entry("New")]).slice(0, -1), book);
+  assert.throws(
+    () => bookEntries([...book, entry("No", "Membership")]),
+    /within a category/,
+  );
   assert.equal(
     bookEntries([{ ...raw[1], previousLabel: book[1].label }])[0].label,
     book[1].label,
@@ -146,6 +150,7 @@ test("an approved hierarchical vocabulary keeps exact applied identities through
     checkedSuggestions(
       [
         { ...proposal, code: "Monthly" },
+        { ...proposal, code: "No" },
         { ...proposal, code: book[0].label },
       ],
       d.passages,

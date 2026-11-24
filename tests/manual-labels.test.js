@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fresh, editInterviewLabel, verifyProject } from "../src/project.js";
+import {
+  fresh,
+  editInterviewLabel,
+  editInterviewCategory,
+  rewriteInterviewLabelReferences,
+  verifyProject,
+} from "../src/project.js";
 import {
   sharedBook,
   draftGuide,
@@ -240,4 +246,122 @@ test("renaming an older label keeps it outside the approved book and removing th
     verifyProject(structuredClone(p)).datasets[0].coding.meanings,
     [label("Former fare code")],
   );
+});
+
+test("adding, moving and deleting a scoped sibling preserves each branch's existing coding and evidence", () => {
+  const { p, d, view } = fixture();
+  const undo = [[view()]];
+  const save = (change) => editInterviewLabel(p, d, change, undo);
+  save({ oldLabel: "Delay", category: "Online", colour: "#315ea5" });
+  const first = "Online › Delay",
+    second = "Meetings › Delay";
+  d.interviews.draft = {
+    source: "Delay",
+    ids: ["a"],
+    next: 1,
+    total: 1,
+    matches: [{ id: "a", code: "Delay", quote: "lost time" }],
+    manual: [JSON.stringify(["a", "Delay"])],
+  };
+  save({
+    label: "Delay",
+    category: "Meetings",
+    definition: "A delayed meeting.",
+    colour: "#a23456",
+  });
+  assert.deepEqual(
+    d.coding.book.map((x) => x.label),
+    [first, "Cost", second],
+  );
+  assert.deepEqual(d.passages[0].codes, [first]);
+  assert.deepEqual(d.passages[1].codes, [first]);
+  assert.equal(d.passages[0].codingEvidence[0].code, first);
+  assert.deepEqual(d.interviews.draft.manual, [JSON.stringify(["a", first])]);
+  assert.equal(d.interviews.draft.matches[0].code, first);
+  for (const v of [
+    ...p.views,
+    ...p.saved[0].views,
+    p.savedVisuals[0].view,
+    ...undo[0],
+  ]) {
+    assert.equal(v.x, first);
+    assert.deepEqual(v.items, [first, "Cost"]);
+    assert.equal(v.value, "Delay");
+  }
+  assert.equal(
+    d.coding.labelStyles.find((s) => s.label === first).colour,
+    "#315ea5",
+  );
+  assert.equal(
+    d.coding.labelStyles.find((s) => s.label === second).colour,
+    "#a23456",
+  );
+  d.passages[2].codes = [second];
+  const before = structuredClone(p);
+  assert.throws(
+    () => save({ oldLabel: first, category: "meetings" }),
+    /already exists/,
+  );
+  assert.deepEqual(structuredClone(p), before);
+  editInterviewCategory(p, d, "Online", "Online contact", undo);
+  const renamed = "Online contact › Delay";
+  assert.deepEqual(
+    d.passages.map((x) => x.codes),
+    [[renamed], [renamed], [second]],
+  );
+  assert.equal(d.passages[0].codingEvidence[0].code, renamed);
+  assert.deepEqual(
+    d.coding.labelStyles.find((s) => s.label === renamed),
+    { label: renamed, category: "Online contact", colour: "#315ea5" },
+  );
+  assert.deepEqual(
+    verifyProject(JSON.parse(JSON.stringify(p))).datasets[0].coding.book,
+    d.coding.book,
+  );
+  save({ oldLabel: second, category: "Internal discussions" });
+  assert.deepEqual(d.passages[2].codes, ["Internal discussions › Delay"]);
+  save({ oldLabel: renamed, remove: true });
+  assert.deepEqual(d.passages[0].codes, []);
+  assert.deepEqual(d.passages.at(-1).codes, ["Internal discussions › Delay"]);
+  assert.equal(
+    d.coding.book.find((e) => e.sourceLabel === "Delay").category,
+    "Internal discussions",
+  );
+});
+
+test("moving a named category into an occupied ungrouped branch leaves both identities intact", () => {
+  const { p, d } = fixture();
+  editInterviewLabel(p, d, { label: "Delay", category: "Messages" });
+  const before = structuredClone(p);
+  assert.throws(
+    () => editInterviewCategory(p, d, "Messages", ""),
+    /within a category/,
+  );
+  assert.deepEqual(structuredClone(p), before);
+});
+
+test("bulk codebook identity changes are simultaneous when already-used project codes swap", () => {
+  const { p, d } = fixture();
+  d.coding.meanings = [
+    label("Delay", "Old delay meaning"),
+    label("Cost", "Old cost meaning"),
+  ];
+  rewriteInterviewLabelReferences(
+    p,
+    d,
+    new Map([
+      ["Delay", "Cost"],
+      ["Cost", "Delay"],
+    ]),
+  );
+  assert.deepEqual(
+    d.passages.map((x) => x.codes),
+    [["Cost"], ["Cost"], ["Delay", "Cost"]],
+  );
+  assert.equal(d.passages[0].codingEvidence[0].code, "Cost");
+  assert.deepEqual(d.coding.meanings, [
+    label("Cost", "Old delay meaning"),
+    label("Delay", "Old cost meaning"),
+  ]);
+  assert.deepEqual(p.views[0].items, ["Cost", "Delay"]);
 });

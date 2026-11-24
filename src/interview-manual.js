@@ -1,9 +1,4 @@
-import {
-  labelAppearance,
-  availableLabelColour,
-  editCategory,
-  setLabelAppearance,
-} from "./label-appearance.js";
+import { labelAppearance, availableLabelColour } from "./label-appearance.js";
 import { transcriptIndex } from "./transcript-index.js";
 import { esc } from "./chart.js";
 import { uid } from "./import.js";
@@ -239,7 +234,7 @@ export function manageLabels(d, api, refresh, initial = "") {
       (d.coding?.categories || [])
         .map((c) => '<option value="' + esc(c) + '"></option>')
         .join("") +
-      '</datalist><small>Labels start with different colours. Type a category name to group related labels.</small><p id="iv-label-usage"></p>' +
+      '</datalist><small>Choose or type a category to group related labels. You can use the same label name in another category.</small><p id="iv-label-usage"></p>' +
       (d.interviews?.draft ? '<p id="iv-label-draft" role="status"></p>' : "") +
       '<button type="button" class="iv-remove-label" id="iv-label-delete">Remove label</button></div>',
     () => {
@@ -248,13 +243,9 @@ export function manageLabels(d, api, refresh, initial = "") {
         oldLabel: i === "" ? undefined : book[Number(i)].label,
         label: val("iv-label-name").trim(),
         definition: val("iv-label-meaning").trim(),
+        category: val("iv-label-category"),
+        colour: val("iv-label-colour"),
       });
-      setLabelAppearance(
-        d,
-        val("iv-label-name").trim(),
-        val("iv-label-colour"),
-        val("iv-label-category"),
-      );
       refresh();
     },
     "Save label",
@@ -262,7 +253,7 @@ export function manageLabels(d, api, refresh, initial = "") {
   function show() {
     const i = val("iv-label-choice"),
       entry = i === "" ? null : book[Number(i)];
-    get("iv-label-name").value = entry?.label || "";
+    get("iv-label-name").value = entry?.sourceLabel || entry?.label || "";
     get("iv-label-meaning").value = entry?.definition || "";
     const appearance = entry
       ? styles.get(labelKey(entry.label))
@@ -324,7 +315,7 @@ export function manageLabels(d, api, refresh, initial = "") {
   show();
 }
 
-export function manageCategories(d, refresh) {
+export function manageCategories(d, api, refresh) {
   const names = d.coding?.categories || [];
   modal(
     "Manage label categories",
@@ -336,7 +327,7 @@ export function manageCategories(d, refresh) {
     () => {
       if (!val("iv-category-name").trim())
         throw Error("Enter a category name.");
-      editCategory(d, val("iv-category-choice"), val("iv-category-name"));
+      api.changeCategory(val("iv-category-choice"), val("iv-category-name"));
       refresh();
     },
     "Save category",
@@ -347,9 +338,13 @@ export function manageCategories(d, refresh) {
     get("iv-category-remove").hidden = !old;
   };
   get("iv-category-remove").onclick = () => {
-    editCategory(d, val("iv-category-choice"), "");
-    get("dialog").close();
-    refresh();
+    try {
+      api.changeCategory(val("iv-category-choice"), "");
+      get("dialog").close();
+      refresh();
+    } catch (err) {
+      get("formerror").textContent = err.message;
+    }
   };
 }
 

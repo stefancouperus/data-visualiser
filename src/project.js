@@ -8,7 +8,8 @@ export { linkage } from "./participant-links.js";
 import { passageUnits } from "./transcript-index.js";
 import { applyAnswerLabels } from "./survey-labels.js";
 import { interviews, sharedBook, pruneEmptyQuotations } from "./interviews.js";
-import { approvedBook, labelKey } from "./coding.js";
+import { approvedBook, bookEntries, labelKey } from "./coding.js";
+import { editCategory, setLabelAppearance } from "./label-appearance.js";
 
 import { readWorkLog } from "./work-log.js";
 
@@ -161,12 +162,23 @@ export function verifyProject(p) {
           typeof review.name !== "string" ||
           typeof review.sourceText !== "string" ||
           review.sourceText.length > 65000 ||
+          (review.categories !== undefined &&
+            (!Array.isArray(review.categories) ||
+              review.categories.some(
+                (category) => typeof category !== "string",
+              ))) ||
           !Array.isArray(review.entries) ||
           review.entries.some(
             (entry) =>
               typeof entry?.label !== "string" ||
               typeof entry.definition !== "string" ||
-              (entry.category != null && typeof entry.category !== "string"),
+              (entry.category != null && typeof entry.category !== "string") ||
+              (entry.originalLabel != null &&
+                typeof entry.originalLabel !== "string") ||
+              (entry.categoryIndex != null &&
+                (!Number.isInteger(entry.categoryIndex) ||
+                  entry.categoryIndex < 0 ||
+                  entry.categoryIndex >= (review.categories?.length ?? 0))),
           ))
       ) {
         throw Error(
@@ -368,8 +380,26 @@ export function reattach(settings, actual) {
   }
   return { ...settings, settingsOnly: false, datasets };
 }
-export function renameTheme(project, d, old, name, undoViews) {
+export function renameTheme(project, d, old, name, undoViews = []) {
   if (!old || !name) throw Error("Choose an existing code and enter a label.");
+  if (old === name) return;
+  const recognised = sharedBook(d);
+  if (
+    d.interviews &&
+    recognised.find((e) => e.label === old)?.sourceLabel &&
+    !recognised.some(
+      (e) =>
+        labelKey(e.label) === labelKey(name) &&
+        labelKey(e.label) !== labelKey(old),
+    )
+  ) {
+    return editInterviewLabel(
+      project,
+      d,
+      { oldLabel: old, label: name },
+      undoViews,
+    );
+  }
   for (const entries of [d.coding?.book, d.coding?.meanings]) {
     if (!entries) continue;
     const from = entries.find((e) => e.label === old);
@@ -381,25 +411,32 @@ export function renameTheme(project, d, old, name, undoViews) {
       } else from.label = name;
     }
   }
-  rewriteThemeReferences(project, d, old, name, undoViews);
+  rewriteThemeReferences(
+    project,
+    d,
+    new Map([[labelKey(old), name]]),
+    undoViews,
+  );
 }
 
-function rewriteThemeReferences(project, d, old, name, undoViews) {
-  const previous = labelKey(old);
+function rewriteThemeReferences(project, d, changes, undoViews) {
   const matches = (value) =>
-    typeof value === "string" && labelKey(value) === previous;
-  const rename = (value) => (matches(value) ? name : value);
+    typeof value === "string" && changes.has(labelKey(value));
+  const rename = (value) =>
+    matches(value) ? changes.get(labelKey(value)) : value;
   if (d.coding?.labelStyles) {
-    const target = d.coding.labelStyles.find(
-      (row) => row.label === name && !matches(row.label),
+    const unchanged = new Set(
+      d.coding.labelStyles
+        .filter((row) => !matches(row.label))
+        .map((row) => labelKey(row.label)),
     );
-    d.coding.labelStyles = d.coding.labelStyles.flatMap((row) =>
-      matches(row.label)
-        ? name && !target
-          ? [{ ...row, label: name }]
-          : []
-        : [row],
-    );
+    d.coding.labelStyles = d.coding.labelStyles.flatMap((row) => {
+      if (!matches(row.label)) return [row];
+      const label = rename(row.label);
+      return label && !unchanged.has(labelKey(label))
+        ? [{ ...row, label }]
+        : [];
+    });
   }
   for (const p of d.passages) {
     p.codes = [...new Set(p.codes.map(rename).filter(Boolean))];
@@ -424,8 +461,8 @@ function rewriteThemeReferences(project, d, old, name, undoViews) {
     const affectedAxis = matches(v.x) || matches(v.y);
     // Keep an unavailable word-table theme until a student selects a replacement.
     // An empty x explicitly means all passages.
-    if (matches(v.x) && (name || v.task !== "words")) v.x = name;
-    if (matches(v.y)) v.y = name;
+    if (matches(v.x) && (rename(v.x) || v.task !== "words")) v.x = rename(v.x);
+    if (matches(v.y)) v.y = rename(v.y);
     if (v.items) v.items = [...new Set(v.items.map(rename).filter(Boolean))];
     if (affectedAxis && v.task === "two" && (!v.x || !v.y || v.x === v.y)) {
       v.task = "one";
@@ -445,109 +482,288 @@ function rewriteThemeReferences(project, d, old, name, undoViews) {
       !d.sources.includes(v.highlight) &&
       matches(v.highlight)
     ) {
-      if (name) v.highlight = name;
+      if (rename(v.highlight)) v.highlight = rename(v.highlight);
       else delete v.highlight;
     }
   }
 }
 
-// Save one dictionary edit atomically in the interview collection. A distinct
-// collection in the same project can use the same label with its own meaning.
+// Apply all renames together. A new sibling can qualify several existing codes,
+// and a revised codebook can swap two names without swapping their evidence.
+export function rewriteInterviewLabelReferences(
+  project,
+  d,
+  renames,
+  undoViews = [],
+  { clearPending = [], activeLabels = [] } = {},
+) {
+  const changes = new Map(
+    [...renames].map(([old, next]) => [labelKey(old), next]),
+  );
+  const replace = (value) => changes.get(labelKey(value)) ?? value;
+  if (changes.size) {
+    rewriteThemeReferences(project, d, changes, undoViews);
+    if (d.coding?.meanings) {
+      d.coding.meanings = d.coding.meanings.flatMap((entry) => {
+        const name = typeof entry === "string" ? entry : entry.label;
+        if (!changes.has(labelKey(name))) return [entry];
+        const label = replace(name);
+        return label
+          ? [
+              {
+                ...(typeof entry === "string" ? { definition: "" } : entry),
+                label,
+              },
+            ]
+          : [];
+      });
+    }
+  }
+  const current = d.interviews?.draft;
+  if (!current || !(changes.size || clearPending.length || activeLabels.length))
+    return;
+  // Replacing the draft also prevents a late model response to the old guide
+  // from being applied after the student has edited the codebook.
+  const draft = { ...current };
+  const clear = new Set(clearPending.map(labelKey));
+  const pending = (value) => (clear.has(labelKey(value)) ? "" : replace(value));
+  draft.matches = draft.matches.flatMap((match) => {
+    const code = pending(match.code);
+    return code ? [{ ...match, code }] : [];
+  });
+  for (const key of ["manual", "rejected"]) {
+    if (!draft[key]) continue;
+    draft[key] = draft[key].flatMap((choice) => {
+      let pair;
+      try {
+        pair = JSON.parse(choice);
+      } catch {
+        return [];
+      }
+      if (
+        !Array.isArray(pair) ||
+        pair.length !== 2 ||
+        typeof pair[1] !== "string"
+      )
+        return [];
+      const code = pending(pair[1]);
+      return code ? [JSON.stringify([pair[0], code])] : [];
+    });
+  }
+  if (draft.labelEdits) {
+    draft.labelEdits = draft.labelEdits.flatMap((edit) => {
+      const original = pending(edit.original),
+        label = pending(edit.label);
+      return original && label ? [{ ...edit, original, label }] : [];
+    });
+  }
+  const active = new Set(
+    [...renames.values(), ...activeLabels].filter(Boolean).map(labelKey),
+  );
+  const withdrawn = [...(draft.withdrawnLabels || []), ...renames.keys()];
+  draft.withdrawnLabels = [
+    ...new Set(withdrawn.filter((name) => !active.has(labelKey(name)))),
+  ];
+  d.interviews.draft = draft;
+}
+
+function editableLabels(d) {
+  const categories = new Map(
+    (d.coding?.labelStyles || []).map((s) => [labelKey(s.label), s.category]),
+  );
+  return sharedBook(d).map((old) => ({
+    old,
+    label: old.sourceLabel || old.label,
+    definition: old.definition,
+    category: old.category || categories.get(labelKey(old.label)) || "",
+  }));
+}
+
+function prepareLabelPlan(rows, removed) {
+  const next = rows.length
+    ? bookEntries(
+        rows.map((row) => ({
+          ...row,
+          previousLabel:
+            row.old?.sourceLabel === row.label &&
+            row.category === (row.old?.category || "")
+              ? row.old.label
+              : undefined,
+        })),
+      )
+    : [];
+  const edits = new Map();
+  const renames = new Map();
+  if (removed) {
+    edits.set(labelKey(removed.label), null);
+    renames.set(removed.label, "");
+  }
+  rows.forEach(({ old }, i) => {
+    if (!old) return;
+    edits.set(labelKey(old.label), next[i]);
+    if (old.label !== next[i].label) renames.set(old.label, next[i].label);
+  });
+  return { next, edits, renames };
+}
+
+function applyLabelPlan(
+  project,
+  d,
+  plan,
+  undoViews,
+  { edited, target, clearPending } = {},
+) {
+  const { edits, renames } = plan;
+  d.coding ||= {};
+  // Use the old dictionary keys for both lists even where two identities swap.
+  const lists = { book: d.coding.book, meanings: d.coding.meanings };
+  rewriteInterviewLabelReferences(project, d, renames, undoViews, {
+    clearPending,
+    activeLabels: edited ? [edited.label] : [],
+  });
+  for (const [key, entries] of Object.entries(lists)) {
+    if (!entries && key !== target) continue;
+    const revised = (entries || []).flatMap((raw) => {
+      const label = typeof raw === "string" ? raw : raw.label;
+      const entry = edits.get(labelKey(label));
+      if (entry === undefined) return [raw];
+      if (!entry) return [];
+      // Preserve an existing meaning on historical entries if the approved
+      // book and the historical vocabulary happened to differ.
+      const updated = typeof raw === "string" ? {} : { ...raw };
+      delete updated.category;
+      delete updated.sourceLabel;
+      const definition =
+        entry === edited
+          ? entry.definition
+          : (raw.definition ?? entry.definition);
+      return [{ ...updated, ...entry, definition }];
+    });
+    if (
+      edited &&
+      key === target &&
+      !revised.some((e) => labelKey(e.label) === labelKey(edited.label))
+    )
+      revised.push(edited);
+    d.coding[key] = revised;
+  }
+  // A passage-only label may now need sourceLabel and category metadata.
+  const declared = new Set(
+    [...(d.coding.book || []), ...(d.coding.meanings || [])].map((e) =>
+      labelKey(typeof e === "string" ? e : e.label),
+    ),
+  );
+  for (const entry of plan.next) {
+    if (entry.sourceLabel && !declared.has(labelKey(entry.label))) {
+      (d.coding.meanings ||= []).push(entry);
+    }
+  }
+}
+
+function categoryPath(value) {
+  return value
+    .split("›")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(" › ");
+}
+
+export function editInterviewCategory(project, d, old, name, undoViews = []) {
+  const cleaned = categoryPath(name);
+  if (name.trim() && !cleaned) throw Error("Enter a category name.");
+  const rows = editableLabels(d);
+  for (const row of rows)
+    if (old && labelKey(row.category) === labelKey(old)) row.category = cleaned;
+  // Validate the resulting codes before removing a category: two formerly
+  // separate labels could end up in the same uncategorised branch.
+  const plan = prepareLabelPlan(rows);
+  editCategory(d, old, cleaned);
+  if (old) applyLabelPlan(project, d, plan, undoViews);
+}
+
+// Store the leaf the student typed and use the same distinct project codes
+// as an imported codebook when different categories contain that leaf.
 export function editInterviewLabel(
   project,
   d,
-  { oldLabel, label, definition, remove = false },
+  { oldLabel, label, definition, category, colour, remove = false },
   undoViews = [],
 ) {
-  const book = sharedBook(d);
+  const rows = editableLabels(d);
   const same = (a, b) => labelKey(a) === labelKey(b);
-  const old =
-    oldLabel == null ? undefined : book.find((e) => same(e.label, oldLabel));
+  const row =
+    oldLabel == null
+      ? undefined
+      : rows.find((e) => same(e.old.label, oldLabel));
+  const old = row?.old;
   if ((oldLabel != null || remove) && !old)
     throw Error("Choose an existing label to change.");
-  const name = remove ? "" : (label ?? old?.label ?? "").trim();
-  const meaning = (definition ?? old?.definition ?? "").trim();
+  const name = (label ?? row?.label ?? "").trim();
+  const meaning = (definition ?? row?.definition ?? "").trim();
+  const enteredCategory = category ?? row?.category ?? "";
+  let branch = categoryPath(enteredCategory);
+  if (!remove && enteredCategory.trim() && !branch)
+    throw Error("Enter a category name.");
+  branch = (d.coding?.categories || []).find((c) => same(c, branch)) ?? branch;
   if (!remove && !name) throw Error("Enter a name for the label.");
-  if (!remove && book.some((e) => e !== old && same(e.label, name))) {
-    throw Error("A label with that name already exists. Choose another name.");
+  if (
+    !row &&
+    category == null &&
+    rows.some((entry) => entry.old.sourceLabel && same(entry.label, name))
+  ) {
+    throw Error(
+      "Choose the label with its category in the list. To add a label under a different category, use Manage labels.",
+    );
   }
-  if (old && old.label === name && old.definition === meaning && !remove)
-    return false;
+  if (colour != null && !/^#[0-9a-f]{6}$/i.test(colour))
+    throw Error("Choose a label colour.");
+  if (
+    !remove &&
+    rows.some(
+      (e) => e !== row && same(e.label, name) && same(e.category, branch),
+    )
+  )
+    throw Error(
+      "A label with that name already exists in this category. Choose another name or category.",
+    );
+
+  const moved = row && row.category !== branch;
+  const changedMeaning = row && row.definition !== meaning;
+  const sameEntry = row && row.label === name && !moved && !changedMeaning;
+  if (!remove && sameEntry) {
+    if (!colour) return false;
+    setLabelAppearance(d, old.label, colour, branch);
+    return true;
+  }
+  const editedRow = { old, label: name, definition: meaning, category: branch };
+  const plannedRows = remove
+    ? rows.filter((e) => e !== row)
+    : row
+      ? rows.map((e) => (e === row ? editedRow : e))
+      : [...rows, editedRow];
+  const plan = prepareLabelPlan(plannedRows, remove ? old : null);
+  const edited = remove ? undefined : plan.next[plannedRows.indexOf(editedRow)];
   const state = interviews(d);
-  d.coding ||= {};
-  const changedMeaning = old && (old.definition || "") !== meaning;
-  const entry = { label: name, definition: meaning };
-  // Imported labels can exist only on passages. Record their meaning even if
-  // the last use on a passage is subsequently removed.
-  const isApproved =
+  const approved =
     state.established &&
     (!old || approvedBook(d).some((e) => same(e.label, old.label)));
-  const primary = isApproved ? "book" : "meanings";
-  for (const key of ["book", "meanings"]) {
-    if (!d.coding[key] && key !== primary) continue;
-    const entries = (d.coding[key] || []).map((e) =>
-      typeof e === "string" ? { label: e, definition: "" } : e,
+  applyLabelPlan(project, d, plan, undoViews, {
+    edited,
+    target: remove ? undefined : approved ? "book" : "meanings",
+    clearPending: changedMeaning || moved ? [old.label] : [],
+  });
+  if (edited) {
+    const appearance = d.coding.labelStyles?.find((s) =>
+      same(s.label, edited.label),
     );
-    const index = old ? entries.findIndex((e) => same(e.label, old.label)) : -1;
-    if (index >= 0) {
-      d.coding[key] = entries.flatMap((e, i) => {
-        if (i === index && !remove) {
-          const updated = { ...e, ...entry };
-          if (old.label !== name) delete updated.sourceLabel;
-          return [updated];
-        }
-        return same(e.label, old.label) ? [] : [e];
-      });
-    } else if (!remove && key === primary) {
-      d.coding[key] = [...entries, { ...entry }];
-    }
-  }
-  if (old && (remove || old.label !== name)) {
-    rewriteThemeReferences(project, d, old.label, name, undoViews);
-  }
-  if (state.draft) {
-    // An already-sent request uses the former vocabulary. Swapping the draft
-    // lets the job's identity check ignore the late reply and preserves the
-    // checkpoint for resuming with the student's current choices.
-    const draft = { ...state.draft };
-    if (old) {
-      const replacement = remove || changedMeaning ? "" : name;
-      draft.matches = draft.matches.flatMap((m) => {
-        if (!same(m.code, old.label)) return [m];
-        return replacement
-          ? [{ ...m, code: replacement, definition: meaning }]
-          : [];
-      });
-      for (const key of ["manual", "rejected"]) {
-        if (!draft[key]) continue;
-        draft[key] = draft[key].flatMap((choice) => {
-          let pair;
-          try {
-            pair = JSON.parse(choice);
-          } catch {
-            return [];
-          }
-          if (
-            !Array.isArray(pair) ||
-            pair.length !== 2 ||
-            typeof pair[1] !== "string"
-          )
-            return [];
-          if (!same(pair[1], old.label)) return [choice];
-          return replacement ? [JSON.stringify([pair[0], replacement])] : [];
-        });
-      }
-    }
-    const withdrawn = (draft.withdrawnLabels || []).filter(
-      (term) => !name || !same(term, name),
-    );
-    if (old && (remove || !same(old.label, name))) withdrawn.push(old.label);
-    draft.withdrawnLabels = [...new Set(withdrawn)];
-    state.draft = draft;
+    if (colour || appearance)
+      setLabelAppearance(d, edited.label, colour || appearance.colour, branch);
+    else if (branch && !d.coding.categories?.includes(branch))
+      (d.coding.categories ||= []).push(branch);
   }
   if (
     remove &&
-    (book.length === 1 || (state.established && !approvedBook(d).length))
+    (rows.length === 1 || (state.established && !approvedBook(d).length))
   ) {
     state.established = false;
     if (state.method === "book" || state.method === "imported")
@@ -556,7 +772,7 @@ export function editInterviewLabel(
     if (state.draft && !state.draft.sample) delete state.draft;
   }
   if (remove) pruneEmptyQuotations(d);
-  if (!old || remove || changedMeaning) {
+  if (!old || remove || changedMeaning || moved) {
     state.done = [];
     state.finished = false;
   }

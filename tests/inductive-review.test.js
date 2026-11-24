@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sampleLabels, reviewVocabulary } from "../src/inductive-review.js";
-import { approvedBook } from "../src/coding.js";
+import {
+  approvedBook,
+  bookEntries,
+  checkedSuggestions,
+} from "../src/coding.js";
 import { establish } from "../src/interviews.js";
 import { fresh, verifyProject } from "../src/project.js";
 
@@ -27,6 +31,37 @@ const edits = [
     keep: false,
   },
 ];
+
+test("inductive reviews keep repeated sublabels in their approved categories", () => {
+  const book = bookEntries(
+    ["Practice", "Meetings"].map((category) => ({
+      category,
+      label: "Monthly",
+      definition: "",
+    })),
+  );
+  const guide = {
+    mode: "inductive",
+    vocabulary: book,
+    limits: { newPerBatch: 2 },
+  };
+  const passage = { id: "a", text: "We practise monthly.", codes: [] };
+  const proposals = ["Monthly", "Practice › Monthly"].map((code) => ({
+    id: "a",
+    code,
+    quote: "practise monthly",
+  }));
+  assert.deepEqual(
+    checkedSuggestions(proposals, [passage], guide).map((m) => m.code),
+    ["Practice › Monthly"],
+  );
+  const addition = { keep: true, label: "Monthly", definition: "" };
+  assert.throws(() => reviewVocabulary(book, [addition]), /another category/);
+  assert.deepEqual(
+    reviewVocabulary(book, [{ ...addition, label: "Travel" }]).slice(0, 2),
+    book,
+  );
+});
 
 test("inductive drafts keep one editable label across examples and preserve earlier codebook meanings", () => {
   const rows = sampleLabels(seed, book, edits);
