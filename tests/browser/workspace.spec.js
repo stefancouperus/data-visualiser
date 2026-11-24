@@ -116,6 +116,60 @@ test("Word comments and highlights map to the same source passage", async ({
   ).toContainText("Barriers");
 });
 
+test("ordinary overlapping Word comments stay on one original passage through coding, saving and charting", async ({
+  page,
+}) => {
+  const w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  const doc = zipSync({
+    "word/document.xml": strToU8(`<w:document xmlns:w="${w}"><w:body>
+      <w:p><w:r><w:t>[Services] We </w:t></w:r><w:commentRangeStart w:id="0"/>
+      <w:r><w:t>need </w:t></w:r><w:commentRangeStart w:id="1"/><w:r><w:t>access</w:t></w:r>
+      <w:commentRangeEnd w:id="0"/><w:r><w:t> and</w:t></w:r><w:commentRangeEnd w:id="1"/>
+      <w:r><w:t> support.</w:t></w:r></w:p><w:p><w:r><w:t>Access was discussed.</w:t></w:r></w:p>
+      </w:body></w:document>`),
+    "word/comments.xml": strToU8(
+      `<w:comments xmlns:w="${w}"><w:comment w:id="0"><w:p><w:r><w:t>Needs</w:t></w:r></w:p></w:comment><w:comment w:id="1"><w:p><w:r><w:t>Access</w:t></w:r></w:p></w:comment></w:comments>`,
+    ),
+  });
+  await upload(page, /Upload coded interviews/, "overlap.docx", doc);
+  const btn = (name) => page.getByRole("button", { name, exact: true });
+  await page.getByLabel("In the transcript text, next to the passages").check();
+  await btn("Continue").click();
+  await btn("Continue").click();
+  await expect(page.locator(".iv-passage")).toHaveCount(2);
+  const paragraphs = page.locator(".iv-passage [data-iv-text]");
+  await expect(paragraphs.first()).toHaveText("We need access and support.");
+  await expect(
+    paragraphs
+      .first()
+      .locator("mark")
+      .filter({ hasText: /^access$/ }),
+  ).toHaveAttribute("title", /Needs, Access/);
+  const pending = page.waitForEvent("download");
+  await btn("Save coding project").click();
+  const chunks = [];
+  for await (const chunk of await (await pending).createReadStream())
+    chunks.push(chunk);
+  const records = backupContents(Buffer.concat(chunks)).datasets[0].passages;
+  const originals = records.filter((p) => !p.parent);
+  expect(originals).toHaveLength(2);
+  expect(originals[0].codes).toEqual(["Services"]);
+  expect(
+    records
+      .filter((p) => p.parent)
+      .map((p) => [p.parent, p.start, p.text, p.codes]),
+  ).toEqual([
+    [originals[0].id, 3, "need access", ["Needs"]],
+    [originals[0].id, 8, "access and", ["Access"]],
+  ]);
+  await finishInterviews(page);
+  await page.getByLabel("What would you like to find out?").selectOption("two");
+  await page.locator("[data-key=x]").selectOption("Needs");
+  await page.locator("[data-key=y]").selectOption("Access");
+  await expect(page.locator("[data-key=measure]")).toHaveValue("passages");
+  await expect(page.locator("#graphic0 svg")).toContainText(/Both\s*1/);
+});
+
 test("Taguette all-highlights export keeps source and joint labels", async ({
   page,
 }) => {
@@ -757,13 +811,20 @@ test("portable download reopens from the start screen with optional bot memory",
   await btn("Send").click();
   await expect(page.locator(".chatlog")).toContainText("Earlier we discussed");
   await page.reload();
-  await page.locator("#project-drop").evaluate((zone, bytes) => {
-    const dt = new DataTransfer();
-    dt.items.add(new File([new Uint8Array(bytes)], "saved.zip", { type: "application/zip" }));
-    zone.dispatchEvent(
-      new DragEvent("drop", { bubbles: true, dataTransfer: dt }),
-    );
-  }, [...bytes]);
+  await page.locator("#project-drop").evaluate(
+    (zone, bytes) => {
+      const dt = new DataTransfer();
+      dt.items.add(
+        new File([new Uint8Array(bytes)], "saved.zip", {
+          type: "application/zip",
+        }),
+      );
+      zone.dispatchEvent(
+        new DragEvent("drop", { bubbles: true, dataTransfer: dt }),
+      );
+    },
+    [...bytes],
+  );
   await expect(page.locator("#graphic1 svg")).toBeVisible();
 });
 
@@ -1022,7 +1083,9 @@ test("the bot works on the selected panel, drafts a caption and compares both wi
   await page.locator('[data-panel="0"] [data-act=describechart]').click();
   await expand(page, "Chat tools");
   await btn("Explain the pattern").click();
-  await expect(page.locator(".chatlog")).toContainText("Compare counts");
+  await expect(page.locator(".chatlog")).toContainText(
+    "2 of 4 valid responses",
+  );
   expect(calls[0].focus).toBe("left");
   expect(calls[0].views.map((v) => v.selectedQuestions)).toEqual(["Vote"]);
   await btn("Try another chart").click();
@@ -1034,7 +1097,9 @@ test("the bot works on the selected panel, drafts a caption and compares both wi
   ).toHaveAttribute("data-chart", "dots");
   await btn("Draft a caption").click();
   await btn("Add caption to figure").click();
-  await expect(page.locator("#graphic0")).toContainText("Two of four students");
+  await expect(page.locator("#graphic0")).toContainText(
+    "2 of 4 valid responses",
+  );
   await page.locator("#bot-focus").selectOption("both");
   await page
     .locator("#data-bot")
@@ -1063,7 +1128,9 @@ test("the bot works on the selected panel, drafts a caption and compares both wi
     selectedFilter,
   );
   await expect(page.locator("#graphic1")).toContainText("Year");
-  await expect(page.locator("#graphic0")).toContainText("Two of four students");
+  await expect(page.locator("#graphic0")).toContainText(
+    "2 of 4 valid responses",
+  );
 });
 
 test("discussing interview passages uses only the checked text and the student can clear it", async ({
@@ -1572,19 +1639,16 @@ test("a partial Word highlight preserves surrounding text and repeated unmarked 
   await page.getByLabel("colour: yellow").fill("Timing");
   await btn("Continue").click();
   const cells = page.locator("main table tbody tr");
-  await expect(cells).toHaveCount(4);
+  await expect(cells).toHaveCount(2);
   expect(await cells.locator("td:nth-child(2)").allTextContents()).toEqual([
-    "Before",
-    "delayed",
-    "after.",
+    "Before delayed after.",
     "delayed",
   ]);
   expect(await cells.locator("td:nth-child(3)").allTextContents()).toEqual([
-    "",
     "Timing",
     "",
-    "",
   ]);
+  await expect(page.locator(".iv-text mark")).toHaveText("delayed");
   await finishInterviews(page);
   await page
     .getByLabel("What would you like to find out?")
@@ -2127,7 +2191,7 @@ test("a focus statement followed by a plotting request uses the new focus and dr
     .fill("My project is about cycle travel. Please explain the chart.");
   await btn("Send").click();
   await expect(page.locator(".chatlog .msg-assistant").last()).toContainText(
-    "The paired data address commuting",
+    "Across 15 complete pairs, the correlation was 1",
   );
   expect(requests).toHaveLength(1);
   expect(requests[0].question).toBe("Please explain the chart.");

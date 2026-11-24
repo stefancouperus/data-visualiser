@@ -123,6 +123,82 @@ test("a shared coloured Word interview reopens with overlapping comment labels a
   ]);
 });
 
+for (const legacy of [false, true])
+  test(
+    (legacy ? "older" : "new") +
+      " coded Word exchange keeps an ambiguous quotation on its passage and punctuation inside one label",
+    async ({ page }) => {
+      const source = "Fran";
+      const data = {
+        name: "Repeat remarks",
+        kind: "text",
+        sources: [source],
+        passages: [
+          {
+            id: "p1",
+            source,
+            text: "Yes, it works. Yes, it works.",
+            codes: ["Mode; transport", "Available"],
+            codingEvidence: [{ code: "Mode; transport", quote: "it works" }],
+          },
+          {
+            id: "p2",
+            source,
+            text: "Taking the bus.",
+            codes: ["Mode; transport"],
+          },
+        ],
+      };
+      const file = codedInterviewDownload(data, [source]);
+      let bytes = new Uint8Array(await file.blob.arrayBuffer());
+      if (legacy) {
+        const parts = unzipSync(bytes);
+        parts["word/document.xml"] = strToU8(
+          strFromU8(parts["word/document.xml"]).replaceAll(
+            "DVEvidenceNote",
+            "DVLabelNote",
+          ),
+        );
+        bytes = zipSync(parts);
+      }
+      const button = (label) =>
+        page.getByRole("button", { name: label, exact: true });
+      await page.goto("/");
+      const pick = page.waitForEvent("filechooser");
+      await button("Upload coded interviews").click();
+      await (
+        await pick
+      ).setFiles({
+        name: file.name,
+        mimeType: file.blob.type,
+        buffer: Buffer.from(bytes),
+      });
+      await button("Continue").click();
+      await expect(
+        page.getByLabel("comment: CODE: Mode; transport", { exact: true }),
+      ).toHaveValue("Mode; transport");
+      await button("Continue").click();
+      await expect(
+        page
+          .locator(".iv-passage")
+          .first()
+          .getByText("Recorded supporting words"),
+      ).toBeVisible();
+      const save = page.waitForEvent("download");
+      await button("Save coding project").click();
+      const dataset = backupContents(await downloadBytes(await save))
+        .datasets[0];
+      expect(dataset.passages).toHaveLength(2);
+      expect(dataset.passages[0].codingEvidence).toEqual([
+        { code: "Mode; transport", quote: "it works" },
+      ]);
+      expect(dataset.passages[0].codes.sort()).toEqual([
+        "Available",
+        "Mode; transport",
+      ]);
+      expect(dataset.passages[1].codes).toEqual(["Mode; transport"]);
+    },
+  );
 for (const legacy of [false, true]) {
   test(
     (legacy ? "older" : "new") +

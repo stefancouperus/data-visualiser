@@ -8,6 +8,7 @@ import {
   workingDatasets,
 } from "./project-method.js";
 import { includedInterview } from "./coding-passages.js";
+import { activeProjectSlot } from "./active-project.js";
 import { editFigure } from "./figure-editor.js";
 import { filterDisplayValue, modelDisplayTerm } from "./figure-edits.js";
 import {
@@ -78,7 +79,15 @@ import {
   categoricalPattern,
 } from "./tutor-evidence.js";
 import {
+  chartReadingIntent,
+  chartReadingOptions,
+  compareReadingViews,
+  renderChartReading,
+  tutorViewSettings,
+} from "./chart-reading.js";
+import {
   chartFields,
+  selectedBinaryEvent,
   directComparison,
   namedSurveyComparison,
   patternRequest,
@@ -358,7 +367,10 @@ function commitSelection(i) {
   beginSelection(i);
 }
 const getData = () => project.datasets.find((d) => d.id === project.active);
+// A loaded copy has its own lifetime even when it contains the same saved IDs.
+let projectSession = new AbortController();
 const resetTutor = () => {
+  requesting = false;
   botFocus = "left";
   captionDraft = null;
   queuedShortcut = null;
@@ -503,6 +515,43 @@ const lastPosition = new WeakMap();
 const saveTimers = new WeakMap();
 let restoringHistory = false;
 let navigationNumber = 0;
+let sharedProjectId = "",
+  displaced = false;
+const unsavedDepartures = new Map();
+const deviceSlot = activeProjectSlot(yieldToOtherProject);
+function beginProjectSwitch() {
+  const sequence = ++navigationNumber;
+  const originalClaim = deviceSlot.read()?.nonce;
+  return () =>
+    sequence === navigationNumber && deviceSlot.read()?.nonce === originalClaim;
+}
+function claimOpenProject() {
+  sharedProjectId = recoveryId(project);
+  displaced = false;
+  deviceSlot.claim(sharedProjectId);
+}
+function yieldToOtherProject(id = deviceSlot.read()?.id) {
+  if (!sharedProjectId || !id || id === sharedProjectId) return false;
+  // Another tab can explicitly open the same conflict-recovery copy.
+  if (recoveryId(project) === id) {
+    sharedProjectId = id;
+    return false;
+  }
+  const outgoing = project;
+  const journalled = protectOpenProject();
+  const save = checkpointProject(outgoing, true);
+  displaced = true;
+  setProject(fresh());
+  notice(
+    "Another tab opened a different project. You can resume this one from Home.",
+  );
+  save.then((stored) => {
+    if (!stored && !journalled)
+      unsavedDepartures.set(recoveryId(outgoing), outgoing);
+    if (!step) render();
+  });
+  return true;
+}
 function workspacePosition(p) {
   const previous = lastPosition.get(p) || {};
   if (p !== project || step === 0) return previous;
@@ -651,10 +700,12 @@ window.addEventListener("beforeunload", (event) => {
 });
 window.addEventListener("pagehide", protectOpenProject);
 document.addEventListener("visibilitychange", () => {
+  if (yieldToOtherProject()) return;
   if (document.hidden && project.datasets.length) checkpointProject(project);
   if (!document.hidden && step === 0 && get("coding-copies"))
     showRecentProjects(get("coding-copies"));
 });
+window.addEventListener("pageshow", () => yieldToOtherProject());
 async function showRecentProjects(container) {
   const method = currentMethod(project);
   const list = container.querySelector("[data-project-list]");
@@ -760,25 +811,31 @@ async function showRecentProjects(container) {
     }
   }
 }
-async function checkpointBeforeSwitch() {
-  if (!project.datasets.length) return true;
-  if (await checkpointProject(project, true)) return true;
-  return !!(await askForm(
+async function checkpointBeforeSwitch(current) {
+  if (!current()) return false;
+  if (!project.datasets.length || (await checkpointProject(project, true)))
+    return current();
+  if (!current()) return false;
+  const accepted = await askForm(
     "Keep a copy before leaving",
     "<p>This browser could not autosave your latest changes. Download the ZIP and check that it is in your downloads before leaving this project.</p>" +
       b("download", "Download project with data"),
     () => true,
     "I have a saved copy — continue",
-  ));
-}
-function home() {
-  bot = false;
-  setProject(fresh());
+  );
+  return !!accepted && current();
 }
 async function restoreLocation(route) {
-  const sequence = ++navigationNumber;
-  if (!(await checkpointBeforeSwitch()) || sequence !== navigationNumber) {
-    if (sequence === navigationNumber) markLocation(true);
+  if (
+    yieldToOtherProject() ||
+    (displaced && route?.id && route.id !== deviceSlot.read()?.id)
+  ) {
+    markLocation(true);
+    return;
+  }
+  const current = beginProjectSwitch();
+  if (!(await checkpointBeforeSwitch(current))) {
+    if (current()) markLocation(true);
     return;
   }
   let saved;
@@ -788,16 +845,16 @@ async function restoreLocation(route) {
       (!project.datasets.length || route.id !== recoveryId(project))
     )
       saved = await loadRecovery(route.id);
-    if (sequence !== navigationNumber) return;
+    if (!current()) return;
     restoringHistory = true;
-    if (get("dialog").open) get("dialog").close();
-    if (!route?.id) home();
+    if (get("dialog").open) get("closeDialog")?.click();
+    if (!route?.id) setProject(fresh());
     else if (saved) setProject(saved.project, saved, route.step);
     else goto(route.step);
   } catch (err) {
-    notice(err.message);
+    if (current()) notice(err.message);
   } finally {
-    if (sequence === navigationNumber) {
+    if (restoringHistory || current()) {
       restoringHistory = false;
       markLocation(true);
     }
@@ -931,6 +988,16 @@ function render(figureLog) {
     : "";
   const method = currentMethod(project);
   let content = step === 0 ? landing(!method && hasDeviceCopy(), method) : "";
+  if (!step && !method && unsavedDepartures.size) {
+    content +=
+      '<section class="card"><h2>Download unsaved work</h2><p>This browser could not save these projects while switching tabs. Download a ZIP before closing this tab.</p>' +
+      [...unsavedDepartures]
+        .map(([id, p]) =>
+          b("save-departure", esc(p.name), "", 'data-copy="' + esc(id) + '"'),
+        )
+        .join("") +
+      "</section>";
+  }
   if (step !== 0 && d) {
     content = `<div class="hero"><h1>${headers[step]}</h1></div>${datasetSelect(project)}${coverageNote}`;
     if (
@@ -1371,8 +1438,6 @@ async function methodForOpening(p) {
   );
 }
 function setProject(p, saved, target, selectedMethod) {
-  pendingSelections.clear();
-  selectionConfirmed = false;
   const checked = verifyProject(p);
   const methods = projectMethods(checked);
   if (methods.length > 1) {
@@ -1386,6 +1451,23 @@ function setProject(p, saved, target, selectedMethod) {
     saved = undefined;
     target = undefined;
   } else project = checked;
+  projectSession.abort();
+  projectSession = new AbortController();
+  pendingSelections.clear();
+  selectionConfirmed = false;
+  botTasks.clear();
+  bot = unlocking = false;
+  // render() preserves open controls, transcript selection and scroll within
+  // a project. Leave no old view for it to restore across a project boundary.
+  get("app").replaceChildren();
+  get("notice").hidden = true;
+  get("notice").textContent = "";
+  const picker = get("picker");
+  picker.onchange = null;
+  picker.value = "";
+  if (get("dialog").open) get("closeDialog")?.click();
+  get("dialog").replaceChildren();
+  document.querySelector(".course-access[open]")?.close();
   project.mode = readHelpMode();
   project.comparisonStarted ??=
     project.figurePanels === "both" ||
@@ -1404,6 +1486,8 @@ function setProject(p, saved, target, selectedMethod) {
     lastPosition.set(project, saved.workspace);
     resumeRecovery(project, saved.entry, saved.workspace);
   }
+  if (project.datasets.length) claimOpenProject();
+  else sharedProjectId = "";
   goto(
     target ??
       saved?.workspace?.step ??
@@ -1418,9 +1502,12 @@ function setProject(p, saved, target, selectedMethod) {
   );
 }
 async function openProjectFile(file) {
-  const saved = verifyProject(await readProjectFile(file));
+  const current = beginProjectSwitch();
+  const data = await readProjectFile(file);
+  if (!current()) return;
+  const saved = verifyProject(data);
   const method = await methodForOpening(saved);
-  if (method === null) return;
+  if (method === null || !current()) return;
   const restored = saved.settingsOnly
     ? reattach(
         projectMethods(saved).length > 1
@@ -1430,31 +1517,42 @@ async function openProjectFile(file) {
       )
     : saved;
   if (
-    !saved.settingsOnly &&
     project.datasets.length &&
     !(await askForm(
-      "Switch projects?",
-      "<p>Your current project will stay under Projects on this device on Home.</p>",
+      saved.settingsOnly
+        ? "Use these datasets with the saved settings?"
+        : "Switch projects?",
+      (saved.settingsOnly
+        ? "<p>This settings file contains no data. Use the following datasets from your open project with these settings?</p>" +
+          table(
+            ["Dataset"],
+            project.datasets.map((d) => [d.name]),
+          )
+        : "") +
+        "<p>Your current project will stay under Projects on this device on Home.</p>",
       () => true,
-      "Open saved project",
+      saved.settingsOnly ? "Use these datasets" : "Open saved project",
     ))
   )
     return;
-  if (!(await checkpointBeforeSwitch())) return;
+  if (!(await checkpointBeforeSwitch(current))) return;
   setProject(restored, undefined, undefined, method);
   notice("Opened " + project.name + ".");
 }
 function chooseFiles(accept, multiple, handler, folder = false) {
   const p = get("picker");
+  const owner = project,
+    dataset = getData();
+  const current = () => owner === project && dataset === getData();
   p.value = "";
   p.accept = accept;
   p.toggleAttribute("webkitdirectory", folder);
   p.multiple = multiple;
   p.onchange = async () => {
     try {
-      if (p.files.length) await handler([...p.files]);
+      if (p.files.length && current()) await handler([...p.files], current);
     } catch (e) {
-      notice(e.message);
+      if (current()) notice(e.message);
     }
   };
   p.click();
@@ -1600,7 +1698,7 @@ function botContext(question = "") {
         pointsTotal: a.points?.length,
         records: a.records?.slice(0, 120),
         recordsTotal: a.records?.length,
-        settings: project.views[i],
+        settings: tutorViewSettings(project.views[i]),
       };
     } catch (e) {
       return { panel: i ? "right" : "left", message: e.message };
@@ -1609,7 +1707,7 @@ function botContext(question = "") {
   return {
     ...basic,
     focus: step === 3 ? botFocus : step === 2 ? "left" : "both",
-    pendingChart: proposal?.view,
+    pendingChart: proposal ? tutorViewSettings(proposal.view) : undefined,
     views,
     fields: d.fields ? chartFields(d.fields, question) : undefined,
     surveyChartOptions:
@@ -1666,7 +1764,7 @@ function botContext(question = "") {
     })),
   };
 }
-function proposedChart(pick) {
+function proposedChart(pick, question = "") {
   const d = getData(),
     text = d.kind === "text",
     keys = text
@@ -1780,18 +1878,29 @@ function proposedChart(pick) {
       !(
         target.type === "number" ||
         (["category", "ordered"].includes(target.type) &&
-          target.levels.length === 2 &&
-          target.levels.includes(pick.positive))
+          target.levels.length === 2)
       )
     )
       return null;
+    const event =
+      target.type === "number"
+        ? ""
+        : selectedBinaryEvent(target, question, current);
+    if (event === null)
+      throw Error(
+        "Which answer to “" +
+          target.label +
+          "” should the model predict? Ask again with the outcome, predictors and one of these answers: " +
+          target.levels.map((label) => "“" + label + "”").join(" or ") +
+          ".",
+      );
     const view = {
       ...newView(d),
       task: "model",
       chart: "model",
       outcome,
       predictors,
-      positive: pick.positive || "",
+      positive: event,
       interaction: pick.interaction === true,
       filter: current.filter,
       value: current.value,
@@ -1849,7 +1958,7 @@ function proposedChart(pick) {
   if (!available(d, view).includes(view.chart)) return null;
   return candidate(view);
 }
-function applyProposal(explanation) {
+function applyProposal() {
   const candidate = proposal;
   proposal = null;
   if (
@@ -1944,8 +2053,7 @@ function applyProposal(explanation) {
       ". " +
       chart.note +
       linkedMessage +
-      (candidate.groupSuggestion ? "" : groupInsight) +
-      (typeof explanation === "string" ? " " + explanation : ""),
+      (candidate.groupSuggestion ? "" : groupInsight),
   });
   render();
   get("graphic" + candidate.panel)?.scrollIntoView({ block: "nearest" });
@@ -1955,6 +2063,7 @@ async function unlockBot(code, stillCurrent = () => true) {
     throw Error("The workshop tutor service has not been connected.");
   const res = await fetch(botURL + "/session", {
     method: "POST",
+    signal: projectSession.signal,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code }),
   });
@@ -1985,7 +2094,8 @@ async function ensureBotAccess(title) {
   return true;
 }
 
-async function requestTutor(payload) {
+async function requestTutor(payload, signal = projectSession.signal) {
+  signal.throwIfAborted();
   if (payload.skill === "coding")
     payload = { ...payload, context: codingRequestContext(payload.context) };
   const session = botSession();
@@ -1995,6 +2105,7 @@ async function requestTutor(payload) {
     );
   const res = await fetch(botURL + "/ask", {
     method: "POST",
+    signal,
     headers: {
       "Content-Type": "application/json",
       Authorization: "Bearer " + session,
@@ -2002,6 +2113,7 @@ async function requestTutor(payload) {
     body: JSON.stringify(payload),
   });
   const data = await res.json();
+  signal.throwIfAborted();
   if (!res.ok) {
     if (res.status === 401 && botSession() === session)
       sessionStorage.removeItem("dv-session");
@@ -2009,11 +2121,19 @@ async function requestTutor(payload) {
   }
   return data.answer;
 }
-async function extractCodebook(document) {
-  return withBotActivity(
+async function extractCodebook(document, dataset) {
+  if (getData() !== dataset)
+    throw Error("Reopen the codebook in its original project to continue.");
+  const { signal } = projectSession;
+  const result = await withBotActivity(
     "Reading labels and categories from your codebook…",
-    () => extractCodebookEntries(document, requestTutor),
+    () =>
+      extractCodebookEntries(document, (payload) =>
+        requestTutor(payload, signal),
+      ),
   );
+  signal.throwIfAborted();
+  return result;
 }
 async function checkGroupSuggestion() {
   proposal = captionDraft = null;
@@ -2180,6 +2300,8 @@ async function ask(question, skill, intent = "") {
   const dataset = getData();
   const current =
     project.views[step === 3 && botFocus === "both" ? 1 : focusIndex()];
+  if (!intent && skill === "recommend" && dataset && [2, 3].includes(step))
+    intent = chartReadingIntent(question);
   if (dataset && skill === "recommend" && !intent && [2, 3].includes(step)) {
     const requested = filterRequest(dataset, question);
     if (requested) {
@@ -2258,7 +2380,7 @@ async function ask(question, skill, intent = "") {
       (!intent && asksForGroupSuggestion(question)))
   ) {
     lastQuestion = "";
-    requesting = true;
+    const request = (requesting = {});
     history.push({ role: "user", content: question });
     try {
       await withBotActivity(
@@ -2266,8 +2388,10 @@ async function ask(question, skill, intent = "") {
         checkGroupSuggestion,
       );
     } finally {
-      requesting = false;
-      render();
+      if (requesting === request) {
+        requesting = false;
+        render();
+      }
     }
     return;
   }
@@ -2456,6 +2580,15 @@ async function ask(question, skill, intent = "") {
     return;
   }
   if (intent) context.requestedOutput = intent;
+  if (
+    context.views &&
+    ["explain", "compare", "caption", "count"].includes(intent)
+  )
+    context.chartReadings = chartReadingOptions(
+      context.views,
+      intent,
+      question,
+    );
   if (pattern) context.requestedPattern = pattern;
   if (
     skill === "recommend" &&
@@ -2463,21 +2596,7 @@ async function ask(question, skill, intent = "") {
     botFocus === "both" &&
     intent === "compare"
   ) {
-    const [l, r] = project.views;
-    context.comparison = {
-      sameQuestion:
-        l.x === r.x &&
-        l.y === r.y &&
-        l.task === r.task &&
-        l.outcome === r.outcome &&
-        (l.task !== "patterns" ||
-          (l.patternMode === r.patternMode &&
-            l.groupBy === r.groupBy &&
-            (l.themeUnit || "interviews") === (r.themeUnit || "interviews") &&
-            JSON.stringify(l.items) === JSON.stringify(r.items))),
-      sameFilter: l.filter === r.filter && l.value === r.value,
-      sameUnit: context.views[0]?.unit === context.views[1]?.unit,
-    };
+    context.comparison = compareReadingViews(context.views);
   }
   if (skill === "recommend") {
     captionDraft = null;
@@ -2498,7 +2617,7 @@ async function ask(question, skill, intent = "") {
     startEvidence = JSON.stringify([[...chosen], scope]),
     startViews = JSON.stringify(project.views);
   lastQuestion = "";
-  requesting = true;
+  const request = (requesting = {});
   history.push({ role: "user", content: question });
   render();
   try {
@@ -2652,20 +2771,30 @@ async function ask(question, skill, intent = "") {
         return;
       }
       if (
-        (step === 2 || (step === 3 && botFocus !== "both")) &&
-        pick.action === "caption" &&
-        typeof pick.explanation === "string" &&
-        pick.explanation.trim()
+        context.chartReadings ||
+        (pick.action === "caption" && context.views && !intent)
       ) {
-        const panel = focusIndex();
-        captionDraft = {
-          text: pick.explanation.trim(),
-          dataset: project.active,
-          step,
-          panel,
-          baseline: JSON.stringify(project.views[panel]),
-        };
-        history.push({ role: "assistant", content: captionDraft.text });
+        const readings =
+          context.chartReadings || chartReadingOptions(context.views);
+        const text = renderChartReading(
+          readings,
+          pick.readingChoices,
+          context.comparison,
+        );
+        if (
+          (intent === "caption" || (!intent && pick.action === "caption")) &&
+          readings.length === 1
+        ) {
+          const panel = focusIndex();
+          captionDraft = {
+            text,
+            dataset: project.active,
+            step,
+            panel,
+            baseline: JSON.stringify(project.views[panel]),
+          };
+        }
+        history.push({ role: "assistant", content: text });
         return;
       }
       if (pick.action === "suggestGroups" && !intent && [2, 3].includes(step)) {
@@ -2700,7 +2829,7 @@ async function ask(question, skill, intent = "") {
         }
         let candidate;
         try {
-          candidate = proposedChart(pick);
+          candidate = proposedChart(pick, question);
         } catch (error) {
           history.push({ role: "assistant", content: error.message });
           return;
@@ -2760,8 +2889,7 @@ async function ask(question, skill, intent = "") {
           });
         } else {
           proposal = candidate;
-          if (["draw", "restyleChart"].includes(pick.action))
-            applyProposal(pick.explanation);
+          if (["draw", "restyleChart"].includes(pick.action)) applyProposal();
           else
             history.push({
               role: "assistant",
@@ -2794,8 +2922,10 @@ async function ask(question, skill, intent = "") {
       history.push({ role: "assistant", content: answer });
     }
   } finally {
-    requesting = false;
-    render();
+    if (requesting === request) {
+      requesting = false;
+      render();
+    }
   }
 }
 function reportFigure(dataset, view, index, views) {
@@ -3488,7 +3618,7 @@ function evidence(i, match, codingPrompt = "") {
   }
   bindCodingControls(
     d,
-    extractCodebook,
+    (document) => extractCodebook(document, d),
     () => {
       refreshDocumentBook();
       if (project !== owner || getData() !== d) return;
@@ -3596,6 +3726,7 @@ function changeInterviewLabel(d, change) {
 }
 async function handleInterview(act, el, d) {
   const owner = project;
+  const { signal } = projectSession;
   const checkpoint = () => checkpointInterview(owner, d);
   return interviewAction(act, el, d, {
     current: getData,
@@ -3616,9 +3747,12 @@ async function handleInterview(act, el, d) {
       proposal = captionDraft = queuedShortcut = null;
       pendingSelections.clear();
     },
-    extract: extractCodebook,
+    extract: (document) => extractCodebook(document, d),
     ensureAccess: ensureBotAccess,
-    code: (context) => requestInterviewCoding(context, requestTutor),
+    code: (context) =>
+      requestInterviewCoding(context, (payload) =>
+        requestTutor(payload, signal),
+      ),
     finish: () => {
       const s = interviews(d);
       if (
@@ -3660,7 +3794,7 @@ async function handleInterview(act, el, d) {
       chooseFiles(
         ".txt,.docx,.csv,.tsv,.xlsx",
         true,
-        async (files) => {
+        async (files, current) => {
           const folder = route.startsWith("folder-")
             ? await confirmTranscriptFolder(files, false)
             : null;
@@ -3669,6 +3803,7 @@ async function handleInterview(act, el, d) {
           const sets = await importFiles(
             folder?.files || files,
             route.replace(/^folder-/, ""),
+            current,
           );
           if (!sets || getData() !== d) return;
           appendInterviews(d, sets);
@@ -3682,6 +3817,7 @@ async function handleInterview(act, el, d) {
   });
 }
 async function action(act, el) {
+  if (yieldToOtherProject()) return;
   const d = getData(),
     i = Number(el.dataset.i || 0);
   if (act === "makeinterview") {
@@ -3702,6 +3838,11 @@ async function action(act, el) {
     throw Error("Review or discard the current coding draft first.");
   if (reviewActs.includes(act)) return reviewAction(act, d, el);
   switch (act) {
+    case "save-departure": {
+      const old = unsavedDepartures.get(el.dataset.copy);
+      if (old) await downloadProjectBackup(old);
+      return;
+    }
     case "openanswers": {
       const key = val("open-question");
       if (!isOpenQuestion(d.fields.find((f) => f.id === key)))
@@ -3847,9 +3988,11 @@ async function action(act, el) {
       show();
       return;
     }
-    case "home":
-      if (await checkpointBeforeSwitch()) home();
+    case "home": {
+      const current = beginProjectSwitch();
+      if (await checkpointBeforeSwitch(current)) setProject(fresh());
       return;
+    }
     case "nav":
       goto(i);
       return;
@@ -3953,7 +4096,6 @@ async function action(act, el) {
       compact = !compact;
       break;
     case "upload": {
-      const uploadProject = project;
       let route = el.dataset.route;
       const method = currentMethod(project);
       if (!canImport(method, route))
@@ -3966,11 +4108,16 @@ async function action(act, el) {
           ? ".csv,.tsv,.xlsx"
           : ".docx,.txt,.csv,.tsv,.xlsx",
         true,
-        async (files) => {
+        async (files, sameDataset) => {
+          // On Home this import starts a new project. A later open, resume or
+          // second upload takes precedence, even if both reads started empty.
+          const latestStart = d ? undefined : beginProjectSwitch();
+          const current = () =>
+            sameDataset() && (!latestStart || latestStart());
           const folder = folderMode
             ? await confirmTranscriptFolder(files, true)
             : null;
-          if (project !== uploadProject || (folderMode && !folder)) return;
+          if (!current() || (folderMode && !folder)) return;
           if (folder) {
             files = folder.files;
             route = folder.format === "coded" ? "coded" : "interview";
@@ -3982,9 +4129,9 @@ async function action(act, el) {
               : route === "participant-information"
                 ? "table"
                 : route,
+            current,
           );
-          if (!datasets?.length || project !== uploadProject || getData() !== d)
-            return;
+          if (!datasets?.length || !current()) return;
           if (!canImport(currentMethod(project), route))
             throw Error(
               "The open project changed. Choose the files again in the intended project.",
@@ -4020,6 +4167,7 @@ async function action(act, el) {
           } else if (route === "text")
             for (const set of datasets) set.textPurpose = "documents";
           project.datasets.push(...datasets);
+          if (!d) claimOpenProject();
           if (project.name === "Untitled project")
             project.name =
               folder?.name || files[0].name.replace(/\.[^.]+$/, "");
@@ -4031,8 +4179,10 @@ async function action(act, el) {
       return;
     }
     case "surveylabels":
-      chooseFiles(".qsf", false, async ([file]) => {
-        const result = labelledSurvey(d, JSON.parse(await file.text()));
+      chooseFiles(".qsf", false, async ([file], current) => {
+        const content = await file.text();
+        if (!current()) return;
+        const result = labelledSurvey(d, JSON.parse(content));
         const replace = !project.confirmed.includes(d.id) && !d.rules.length;
         modal(
           "Check the questionnaire labels",
@@ -4049,6 +4199,7 @@ async function action(act, el) {
               ? ""
               : "<p>This creates a labelled copy with fresh views. Your existing analysis stays available.</p>"),
           () => {
+            if (!current()) return;
             if (replace)
               project.datasets[project.datasets.indexOf(d)] = result.copy;
             else {
@@ -4263,6 +4414,7 @@ async function action(act, el) {
     }
     case "unlock": {
       if (unlocking) return;
+      const { signal } = projectSession;
       const code = val("course").trim();
       if (!code) {
         get("course-error").textContent = "Enter your workshop course code.";
@@ -4278,6 +4430,7 @@ async function action(act, el) {
           unlockBot(code),
         );
       } catch (error) {
+        if (signal.aborted) return;
         const field = get("course");
         if (field) {
           get("course-error").textContent = error.message;
@@ -4290,8 +4443,9 @@ async function action(act, el) {
         }
         return;
       } finally {
-        unlocking = false;
+        if (!signal.aborted) unlocking = false;
       }
+      if (signal.aborted) return;
       render();
       (get("puzzle-field") || get("question"))?.focus({ preventScroll: true });
       const queued = queuedShortcut;
@@ -4686,7 +4840,7 @@ async function action(act, el) {
       }
       const owner = project;
       const stored = await checkpointProject(owner);
-      if (isDownloaded(owner)) return;
+      if (owner !== project || isDownloaded(owner)) return;
       try {
         if (stored)
           localStorage.setItem("dv-device-project-id", recoveryId(owner));
@@ -4730,9 +4884,11 @@ async function action(act, el) {
       }
       return;
     case "recoverCoding": {
+      const current = beginProjectSwitch();
       const saved = await loadRecovery(el.dataset.copy);
+      if (!current()) return;
       const method = await methodForOpening(saved.project);
-      if (method === null) return;
+      if (method === null || !current()) return;
       if (
         project.datasets.length &&
         !(await askForm(
@@ -4746,11 +4902,12 @@ async function action(act, el) {
         ))
       )
         return;
-      if (!(await checkpointBeforeSwitch())) return;
+      if (!(await checkpointBeforeSwitch(current))) return;
       setProject(saved.project, saved, undefined, method);
       return;
     }
-    case "deviceOpen":
+    case "deviceOpen": {
+      const current = beginProjectSwitch();
       if (
         project.datasets.length &&
         !(await askForm(
@@ -4761,11 +4918,12 @@ async function action(act, el) {
         ))
       )
         return;
-      if (!(await checkpointBeforeSwitch())) return;
+      if (!(await checkpointBeforeSwitch(current))) return;
       {
         const id = localStorage.getItem("dv-device-project-id");
         if (id) {
           const saved = await loadRecovery(id);
+          if (!current()) return;
           const p = saved.project;
           const target = p.confirmed.includes(p.active)
             ? p.figurePanels === "both"
@@ -4773,16 +4931,19 @@ async function action(act, el) {
               : 2
             : 1;
           const method = await methodForOpening(p);
-          if (method !== null) setProject(p, saved, target, method);
+          if (method !== null && current())
+            setProject(p, saved, target, method);
         } else {
           const p = verifyProject(
             JSON.parse(localStorage.getItem("dv-project")),
           );
           const method = await methodForOpening(p);
-          if (method !== null) setProject(p, undefined, undefined, method);
+          if (method !== null && current())
+            setProject(p, undefined, undefined, method);
         }
       }
       return;
+    }
     case "download":
       return downloadProjectBackup(project);
     case "settings":
@@ -4918,10 +5079,11 @@ document.addEventListener("drop", async (event) => {
   event.preventDefault();
   if (event.dataTransfer.files.length !== 1)
     return notice("Drop one saved project at a time.");
+  const owner = project;
   try {
     await openProjectFile(event.dataTransfer.files[0]);
   } catch (error) {
-    notice(error.message);
+    if (owner === project) notice(error.message);
   }
 });
 document.addEventListener("mousedown", (e) => {
@@ -4931,6 +5093,7 @@ document.addEventListener("mousedown", (e) => {
 document.addEventListener("click", async (e) => {
   const text = e.target.closest("[data-iv-text]");
   const el = e.target.closest("[data-act]");
+  const owner = project;
   try {
     if (text && !window.getSelection()?.toString()) {
       const d = getData(),
@@ -5000,7 +5163,7 @@ document.addEventListener("click", async (e) => {
         source: cell.dataset.source,
       });
   } catch (err) {
-    notice(err.message);
+    if (owner === project && err.name !== "AbortError") notice(err.message);
   }
 });
 document.addEventListener("input", (e) => {

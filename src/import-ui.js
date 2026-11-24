@@ -1,3 +1,4 @@
+import { annotatedPassages } from "./annotated-passages.js";
 import {
   readFile,
   makeTable,
@@ -39,7 +40,7 @@ export function taguette(doc) {
   }
   return list;
 }
-async function sheet(doc, route) {
+async function sheet(doc, route, current) {
   const auto = doc.sheets.length === 1 && qualtricsHeaders(doc.sheets[0].grid);
   const choice = auto
     ? makeTable(doc.sheets[0].grid, doc.name)
@@ -57,7 +58,7 @@ async function sheet(doc, route) {
             doc.name,
           ),
       );
-  if (!choice) return null;
+  if (!choice || !current()) return null;
   if (route !== "coded" && route !== "text") return choice;
   const fields = choice.fields.map((f) => [f.id, f.label]),
     guess = (re) => choice.fields.find((f) => re.test(f.label))?.id || "";
@@ -108,13 +109,13 @@ async function sheet(doc, route) {
   }
   bindIndicatorColumns(choice, "codecol");
   const map = await pendingMap;
-  if (!map) return null;
+  if (!map || !current()) return null;
   const { passages, sources } = map;
   const result = corpus(choice.name, passages, sources);
   result.excerptSources = [...sources];
   return result;
 }
-async function documents(docs, route) {
+async function documents(docs, route, current) {
   if (route === "text")
     return corpus(
       docs.length === 1 ? docs[0].name : "Written sources",
@@ -161,31 +162,41 @@ async function documents(docs, route) {
       return m;
     },
   );
-  if (!method) return null;
+  if (!method || !current()) return null;
   const chosen = markers.filter(
     (m) =>
       method.includes("help") ||
       method.includes("other") ||
       method.includes(m.split(":")[0]),
   );
+  // A Data visualiser Word comment represents exactly one saved label. A
+  // semicolon inside that label is part of its name.
+  const exportedMarkers = new Set(
+    docs
+      .filter((doc) => doc.codedWordExport)
+      .flatMap((doc) => doc.marked.flatMap((p) => p.markers)),
+  );
   const mapped = await askForm(
     "Match markings to codes",
-    `<p>Inspect a passage for each marking. Separate codes with a semicolon. Clear a label to ignore a note or decorative highlight.</p>` +
+    `<p>Check the labels for each marking. Enter one label per line. Leave the box empty to ignore a note or highlight.</p>` +
       chosen
         .map((m, i) => {
           const example = docs
             .flatMap((d) => d.marked)
             .find((p) => p.markers.includes(m));
-          return `<div class="check-item"><label>${esc(m)}<input id="marker${i}" value="${
-            m.startsWith("comment: ")
-              ? esc(
-                  m
-                    .slice(9)
-                    .replace(/^CODE:/i, "")
-                    .trim(),
-                )
-              : ""
-          }"></label><small>${esc(example.text.slice(0, 220))}</small></div>`;
+          const raw = m.startsWith("comment: ")
+            ? m
+                .slice(9)
+                .replace(/^CODE:/i, "")
+                .trim()
+            : "";
+          const labels = exportedMarkers.has(m)
+            ? raw
+            : raw
+                .split(";")
+                .map((s) => s.trim())
+                .join("\n");
+          return `<div class="check-item"><label for="marker${i}">${esc(m)}</label><textarea rows="2" id="marker${i}">${esc(labels)}</textarea><small>${esc(example.text.slice(0, 220))}</small></div>`;
         })
         .join("") +
       (method.includes("inline") || method.includes("other")
@@ -202,7 +213,7 @@ async function documents(docs, route) {
         chosen.map((m, i) => [
           m,
           val("marker" + i)
-            .split(";")
+            .split(/\r?\n/)
             .map((x) => x.trim())
             .filter(Boolean),
         ]),
@@ -212,112 +223,7 @@ async function documents(docs, route) {
     }),
   );
   if (!mapped) return null;
-  const passages = [];
-  for (const doc of docs) {
-    const selected = doc.marked
-      .map((p) => ({
-        ...p,
-        codes: [...new Set(p.markers.flatMap((m) => mapped.marks[m] || []))],
-      }))
-      .filter((p) => p.codes.length);
-    const ordered = [...selected].sort(
-      (a, b) => a.start - b.start || a.end - b.end,
-    );
-    for (const p of ordered) p.reviewed = true;
-    if (doc.codedWordExport && !mapped.open) {
-      // Word comments can overlap. Reattach them to the actual transcript
-      // paragraph so importing a shared document counts that passage once.
-      const entries = documentPassages(doc).map((original, i) => {
-        const start = doc.paragraphStarts[i];
-        return { original, start, end: start + original.text.length };
-      });
-      for (const { original, start, end } of entries) {
-        passages.push(original);
-        for (const mark of ordered) {
-          const a = Math.max(start, mark.start),
-            b = Math.min(end, mark.end);
-          if (a >= b) continue;
-          if (a === start && b === end) {
-            original.codes = [...new Set([...original.codes, ...mark.codes])];
-            original.reviewed = true;
-          } else {
-            const [quote] = texts(doc.name, [
-              original.text.slice(a - start, b - start),
-            ]);
-            if (quote)
-              passages.push({
-                ...quote,
-                parent: original.id,
-                start:
-                  a -
-                  start +
-                  original.text.slice(a - start, b - start).indexOf(quote.text),
-                codes: [...mark.codes],
-                reviewed: true,
-              });
-          }
-        }
-      }
-      continue;
-    }
-    const parts = [...ordered];
-    let nextRange = 0;
-    for (const [index, text] of doc.paragraphs.entries()) {
-      const start = doc.paragraphStarts?.[index] ?? index,
-        end = start + text.length;
-      while (nextRange < ordered.length && ordered[nextRange].end <= start)
-        nextRange++;
-      const addText = (value, at, codes = []) => {
-        const [p] = texts(doc.name, [value]);
-        if (p) parts.push({ ...p, start: at, codes, reviewed: !!codes.length });
-      };
-      const inline = [];
-      let edited = text;
-      if (mapped.open && mapped.close) {
-        const split = text.split(mapped.open);
-        edited = split[0];
-        for (const s of split.slice(1)) {
-          const idx = s.indexOf(mapped.close);
-          if (idx >= 0) {
-            inline.push(s.slice(0, idx).trim());
-            edited += s.slice(idx + mapped.close.length);
-          } else edited += mapped.open + s;
-        }
-      }
-      if (inline.length) {
-        const codes = [...new Set(inline.filter(Boolean))];
-        const same = ordered.find((p) => p.start === start && p.end === end);
-        if (same) {
-          same.codes = [...new Set([...same.codes, ...codes])];
-          same.text = edited.trim() || text;
-        } else addText(edited.trim() || text, start, codes);
-        continue;
-      }
-      // Keep every unmarked part once, even when identical words elsewhere were coded.
-      let cursor = start;
-      for (
-        let i = nextRange;
-        i < ordered.length && ordered[i].start < end;
-        i++
-      ) {
-        const marked = ordered[i];
-        if (marked.start > cursor)
-          addText(text.slice(cursor - start, marked.start - start), cursor);
-        cursor = Math.max(cursor, marked.end);
-      }
-      if (cursor < end) addText(text.slice(cursor - start), cursor);
-    }
-    let paragraphIndex = 0;
-    for (const part of parts.sort((a, b) => a.start - b.start)) {
-      if (doc.codedWordExport) {
-        while (doc.paragraphStarts[paragraphIndex + 1] <= part.start)
-          paragraphIndex++;
-        if (doc.paragraphScope[paragraphIndex] !== undefined)
-          part.codingIncluded = doc.paragraphScope[paragraphIndex];
-      }
-      passages.push(part);
-    }
-  }
+  const passages = docs.flatMap((doc) => annotatedPassages(doc, mapped));
   const result = corpus(
     docs.length === 1 ? docs[0].name : "Coded interviews",
     passages,
@@ -334,7 +240,7 @@ function documentPassages(doc) {
     if (included !== undefined) originals[i].codingIncluded = included;
   return originals;
 }
-export async function importFiles(files, route) {
+export async function importFiles(files, route, current = () => true) {
   const datasets = [],
     docs = [];
   if (new Set(files.map((f) => f.name)).size !== files.length)
@@ -343,9 +249,10 @@ export async function importFiles(files, route) {
     );
   for (const f of files) {
     const d = await readFile(f);
+    if (!current()) return null;
     if (d.kind === "grid") {
-      const t = await sheet(d, route);
-      if (!t) return null;
+      const t = await sheet(d, route, current);
+      if (!t || !current()) return null;
       datasets.push(t);
     } else {
       if (!d.paragraphs.some((text) => text.trim()))
@@ -358,8 +265,8 @@ export async function importFiles(files, route) {
     }
   }
   if (docs.length) {
-    const d = await documents(docs, route);
-    if (!d) return null;
+    const d = await documents(docs, route, current);
+    if (!d || !current()) return null;
     datasets.push(d);
   }
   return datasets;

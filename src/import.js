@@ -124,6 +124,7 @@ export function wordDocument(bytes, name) {
     for (const c of els(xml(strFromU8(zip["word/comments.xml"])), "comment"))
       comments.set(attr(c, "id"), txt(c));
   const all = [],
+    marksBySpan = new Map(),
     ranges = new Map(),
     active = new Set(),
     paragraphs = [],
@@ -132,17 +133,21 @@ export function wordDocument(bytes, name) {
   let position = 0;
   const add = (text, start, end, marker) => {
     if (!text.trim()) return;
-    const prior = all.find((p) => p.start === start && p.end === end);
+    const key = start + ":" + end;
+    const prior = marksBySpan.get(key);
     if (prior) {
       prior.markers.push(marker);
       return;
     }
-    all.push({ ...segment(name, text, [marker]), start, end });
+    const marked = { ...segment(name, text, [marker]), start, end };
+    marksBySpan.set(key, marked);
+    all.push(marked);
   };
   const paragraphsInFile = els(body, "p");
   // Our Word export has a printed legend and label notes alongside the transcript.
   // Its paragraph styles keep those notes separate when the file is imported again.
   const transcript = new Map();
+  const evidenceNotes = new Map();
   let precedingPassage;
   for (const p of paragraphsInFile) {
     const style = attr(els(p, "pStyle")[0], "val");
@@ -155,14 +160,32 @@ export function wordDocument(bytes, name) {
         p,
         bookmark ? bookmark.startsWith("DVIncluded_") : undefined,
       );
-    } else if (style === "DVLabelNote") {
+    } else if (
+      precedingPassage &&
+      (style === "DVLabelNote" || style === "DVEvidenceNote")
+    ) {
       // Earlier exports recorded an explicit exclusion only in this printed note.
       if (
-        precedingPassage &&
         transcript.get(precedingPassage) === undefined &&
         txt(p).trim() === "Outside the selected coding passages."
       )
         transcript.set(precedingPassage, false);
+      // Older downloads used DVLabelNote for both evidence and the list of
+      // coloured labels. Only the evidence note records an unlocated quotation.
+      const note = txt(p);
+      if (style === "DVEvidenceNote" || !note.startsWith("■ ")) {
+        const evidence =
+          /^(.+?) · Supporting words without a unique location(?: · “([\s\S]*)”)?$/u.exec(
+            note,
+          );
+        if (evidence) {
+          if (!evidenceNotes.has(precedingPassage))
+            evidenceNotes.set(precedingPassage, []);
+          evidenceNotes
+            .get(precedingPassage)
+            .push({ code: evidence[1], quote: evidence[2] || "" });
+        }
+      }
     } else precedingPassage = undefined;
   }
   for (const p of transcript.size ? transcript.keys() : paragraphsInFile) {
@@ -209,9 +232,15 @@ export function wordDocument(bytes, name) {
     if (raw.trim()) {
       paragraphs.push(raw.trim());
       if (transcript.size) paragraphScope.push(transcript.get(p));
-      paragraphStarts.push(
-        paragraphStart + raw.length - raw.trimStart().length,
-      );
+      const start = paragraphStart + raw.length - raw.trimStart().length;
+      paragraphStarts.push(start);
+      for (const { code, quote } of evidenceNotes.get(p) || [])
+        all.push({
+          ...segment(name, raw.trim(), ["comment: CODE: " + code]),
+          start,
+          end: start + raw.trim().length,
+          evidenceQuote: quote,
+        });
     }
   }
   for (const [k, r] of ranges)

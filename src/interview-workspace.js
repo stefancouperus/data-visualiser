@@ -1,4 +1,8 @@
-import { codingSelection } from "./coding-passages.js";
+import { codingSelection, interviewPassageScope } from "./coding-passages.js";
+import {
+  chooseCodingPassages,
+  showQuestionPreview,
+} from "./interview-passage-selection.js";
 import { transcriptIndex } from "./transcript-index.js";
 import {
   labelAppearance,
@@ -264,7 +268,9 @@ function codingScope(d, state, sample, resuming, request, api, title) {
   const initialSources = new Set(request?.sources ?? [source]);
   const lists = new Map(d.sources.map((name) => [name, []]));
   const ordinals = transcriptOrdinals(d.passages);
-  const included = codingSelection(d.passages.filter((p) => !p.parent));
+  const { included, questions } = interviewPassageScope(
+    d.passages.filter((p) => !p.parent),
+  );
   for (const p of d.passages) {
     const list = lists.get(p.source);
     if (!list) continue;
@@ -351,6 +357,9 @@ function codingScope(d, state, sample, resuming, request, api, title) {
             : '<details><summary>Choose passages for this coding run</summary><div class="iv-pick" id="iv-run-pick"></div></details>') +
           '<small id="iv-sample-count" role="status"></small>'
         : "") +
+      (!resuming && questions.size
+        ? '<div id="iv-question-context" hidden><label class="tick"><input type="checkbox" id="iv-use-questions" checked>Include the preceding interviewer questions as context</label><details><summary>See which questions will accompany the answers</summary><small>Only a selected answer can be coded or quoted. Untick the option above to send answers alone.</small><div data-question-examples></div></details></div>'
+        : "") +
       (!resuming
         ? '<label>What should the bot look for? (optional)<input id="iv-focus" maxlength="600" value="' +
           esc(d.coding?.focus || api.focus()) +
@@ -390,6 +399,7 @@ function codingScope(d, state, sample, resuming, request, api, title) {
       return {
         sources: used,
         ids,
+        includeQuestions: !!get("iv-use-questions")?.checked,
         focus: val("iv-focus").trim(),
       };
     },
@@ -411,6 +421,8 @@ function codingScope(d, state, sample, resuming, request, api, title) {
     const represented = groups.filter((group) =>
       group.querySelector(":checked"),
     ).length;
+    const preview = get("iv-question-context");
+    if (preview) showQuestionPreview(preview, selectedIds(), questions);
     get("iv-sample-count").textContent =
       `${count} passages selected from ${represented} of ${groups.length} interviews${sample ? " (up to " + sampleLimit(currentSources()) + " passages)" : ""}.`;
   }
@@ -519,42 +531,10 @@ export async function interviewAction(act, el, d, api) {
   if (act === "iv-select") s.passage = el.dataset.id;
   if (act === "iv-inclusion") {
     const originals = transcriptIndex(ps).originals;
-    const included = codingSelection(originals);
-    const picks = await askForm(
-      "Choose passages for coding",
-      "<p>Tick the passages you want to code and review in " +
-        esc(s.source) +
-        ". Clearly marked interviewer turns and consent exchanges start unticked. Your selection also applies to future bot runs.</p>" +
-        '<div class="iv-pick">' +
-        originals
-          .map(
-            (p, i) =>
-              '<label class="tick"><input name="iv-include" type="checkbox" value="' +
-              esc(p.id) +
-              '" ' +
-              (included.has(p.id) ? "checked" : "") +
-              ">Passage " +
-              (i + 1) +
-              " · " +
-              esc(p.text) +
-              "</label>",
-          )
-          .join("") +
-        "</div>",
-      () =>
-        new Set(
-          [
-            ...get("modalform").querySelectorAll("[name=iv-include]:checked"),
-          ].map((n) => n.value),
-        ),
-      "Save passage selection",
-    );
-    if (!picks || api.current() !== d) return;
-    if (originals.some((p) => included.has(p.id) !== picks.has(p.id))) {
-      for (const p of originals)
-        if (included.has(p.id) !== picks.has(p.id))
-          p.codingIncluded = picks.has(p.id);
-      if (!picks.has(s.passage)) s.passage = null;
+    const apply = await chooseCodingPassages(originals, s.source);
+    if (!apply || api.current() !== d) return;
+    if (apply()) {
+      if (!codingSelection(originals).has(s.passage)) s.passage = null;
       changed();
       refresh();
     }
@@ -697,6 +677,7 @@ export async function interviewAction(act, el, d, api) {
         sample,
         ...(sample ? { codeExamples: false } : {}),
         originalOnly: true,
+        includeQuestions: selection.includeQuestions,
         ids: selection.ids,
         next: 0,
         matches: [],
@@ -712,6 +693,9 @@ export async function interviewAction(act, el, d, api) {
         draft.originalOnly,
       );
     const scoped = d.passages.filter((p) => sources.includes(p.source));
+    const questions = draft.includeQuestions
+      ? interviewPassageScope(scoped.filter((p) => !p.parent)).questions
+      : new Map();
     const byId = new Map(scoped.map((p) => [p.id, p]));
     const excerpts = new Map();
     for (const p of scoped)
@@ -736,14 +720,17 @@ export async function interviewAction(act, el, d, api) {
         const guide = draftGuide(d, sample, draft.matches);
         const result = await api.code({
           guide,
-          passages: batch.map(({ id, source, text, codes }) => ({
+          passages: batch.map(({ id, passageId, source, text, codes }) => ({
+            ...(questions.has(passageId)
+              ? { precedingQuestion: questions.get(passageId) }
+              : {}),
             id,
             source,
             text,
             codes,
           })),
         });
-        if (s.draft !== draft) break;
+        if (s.draft !== draft || api.current() !== d) break;
         const excluded = (draft.excluded ||= {});
         const validated = reviewedMatches(result, batch, guide, excluded);
         const found = validated.filter(
@@ -758,10 +745,11 @@ export async function interviewAction(act, el, d, api) {
         refresh(false);
       }
     } catch (e) {
-      draft.error = e.message + " Choose Resume coding to retry this batch.";
+      if (api.current() === d)
+        draft.error = e.message + " Choose Resume coding to retry this batch.";
     } finally {
       if (jobs.get(d) === job) jobs.delete(d);
-      await api.checkpoint();
+      if (api.current() === d) await api.checkpoint();
       refresh(false);
     }
     return;
@@ -832,7 +820,27 @@ export async function interviewAction(act, el, d, api) {
       (draft.excluded?.duplicate || 0) + (reviewExcluded.duplicate || 0);
     const otherExcluded =
       (draft.skipped || 0) + draft.matches.length - matches.length - repeats;
+    const reasons = [
+      [
+        "label",
+        "label missing, outside the approved list or missing its category",
+      ],
+      ["quote", "quotation missing from the selected passage"],
+      ["passage", "passage outside this selection"],
+      ["capacity", "code limit reached"],
+    ]
+      .map(([kind, description]) => {
+        const count =
+          (draft.excluded?.[kind] || 0) + (reviewExcluded[kind] || 0);
+        return count ? count + " · " + description : "";
+      })
+      .filter(Boolean);
     const alreadyCoded = targets.filter((p) => p.codes.length).length;
+    const questions = draft.includeQuestions
+      ? interviewPassageScope(
+          [...sourcePassages.values()].flat().filter((p) => !p.parent),
+        ).questions
+      : new Map();
     const groupHtml = new Map(sources.map((source) => [source, []]));
     targets.forEach((p, target) => {
       const items = byPassage.get(p.id) || [];
@@ -853,7 +861,13 @@ export async function interviewAction(act, el, d, api) {
             target +
             '"><summary>Read full passage' +
             (book.length ? " and check for missed labels" : "") +
-            "</summary><blockquote>" +
+            "</summary>" +
+            (questions.has(p.id)
+              ? "<p><small>Interviewer question supplied as context</small><br>" +
+                esc(questions.get(p.id)) +
+                "</p>"
+              : "") +
+            "<blockquote>" +
             esc(p.text) +
             "</blockquote>" +
             (p.codes.length
@@ -874,7 +888,7 @@ export async function interviewAction(act, el, d, api) {
           ? `<p>${repeats} repeated label suggestions were left out because the coding already exists or the same assignment was suggested twice.</p>`
           : "") +
         (otherExcluded > 0
-          ? `<p>${otherExcluded} additional suggestions were left out during checks on quotations, labels and coding limits.</p>`
+          ? `<p>${otherExcluded} additional suggestions were left out during checks on quotations, labels and coding limits.</p>${reasons.length ? "<ul>" + reasons.map((reason) => "<li>" + reason + "</li>").join("") + "</ul>" : ""}`
           : "") +
         (!matches.length && !repeats && !otherExcluded
           ? "<p>The bot returned no new matches. Read the passages below. " +
@@ -936,19 +950,13 @@ export async function interviewAction(act, el, d, api) {
             picked,
             vocabulary ? { ...guide, vocabulary } : guide,
           );
-          const byId = new Map(targets.map((p) => [p.id, p]));
-          for (const { id, code, quote } of picked) {
-            const p = byId.get(id);
-            p.codingEvidence ||= [];
-            p.codingEvidence.push({ code, quote });
-          }
         }
         const appliedIds = new Set(picked.map((m) => m.id));
         let added = 0;
         for (const p of codeExamples() ? targets : []) {
           for (const { label } of book) {
             if (manual.has(key(p.id, label)) && canAdd(p, label)) {
-              p.codes.push(label);
+              p.codes = [...p.codes, label];
               p.reviewed = true;
               appliedIds.add(p.id);
               added++;

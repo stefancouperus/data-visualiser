@@ -1,5 +1,5 @@
 import { structuredAnswer } from "./bot-response.js";
-import { labelKey } from "./coding.js";
+import { approvedLabelLookup, labelKey } from "./coding.js";
 
 export async function requestInterviewCoding(context, requestTutor) {
   const { guide } = context;
@@ -19,6 +19,9 @@ export async function requestInterviewCoding(context, requestTutor) {
   if (discovering) {
     question = `Your task is open label discovery. The student has already requested new labels for new ideas and will decide which proposals to accept after this response. Read each participant’s words against the research focus. A previously unseen, well-supported answer belongs in suggestions: give it a new concise name, definition and exact quotation now. The ${guide.vocabulary.length} existing labels are available for genuinely equivalent meanings. You can create up to ${guide.limits.newPerBatch} NEW labels in this request. If an otherwise relevant passage does not fit an existing label, that is precisely when to create a new label. Return the requested JSON immediately.`;
   }
+  if (context.passages?.some((p) => p.precedingQuestion))
+    question +=
+      " A precedingQuestion belongs to the interviewer. Read it only to identify the topic or category for its answer. The answer itself must support the code and supply the quotation. Never quote or code a precedingQuestion.";
   // Some replies contain valid empty JSON followed by a request for permission
   // to propose the new label the student already requested.
   const asksPermission = (response) =>
@@ -26,9 +29,7 @@ export async function requestInterviewCoding(context, requestTutor) {
       response,
     );
   let correction = "";
-  const allowed = new Set(
-    (guide.vocabulary || []).map((entry) => labelKey(entry.label)),
-  );
+  const allowed = approvedLabelLookup(guide.vocabulary || []);
   for (let attempt = 0; attempt < 2; attempt++) {
     const answer = await requestTutor({
       skill: "coding",
@@ -59,7 +60,7 @@ export async function requestInterviewCoding(context, requestTutor) {
       allowed.size &&
       suggestions.length &&
       suggestions.every(
-        (s) => typeof s?.code === "string" && !allowed.has(labelKey(s.code)),
+        (s) => typeof s?.code === "string" && !allowed.get(labelKey(s.code)),
       )
     ) {
       correction =

@@ -63,6 +63,25 @@ export function allCodes(d) {
   return [...new Set([...approved, ...d.passages.flatMap((p) => p.codes)])];
 }
 
+// The stored passage tag can be a bare leaf or a shorter unique path. Accept
+// the exact full path too. A spelling shared by two entries has no safe match.
+export function approvedLabelLookup(vocabulary) {
+  const names = new Map();
+  for (const entry of vocabulary) {
+    const spellings = [entry.label];
+    if (entry.category)
+      spellings.push(
+        entry.category + " › " + (entry.sourceLabel || entry.label),
+      );
+    for (const spelling of spellings) {
+      const name = key(spelling);
+      if (!names.has(name)) names.set(name, entry);
+      else if (names.get(name) !== entry) names.set(name, null);
+    }
+  }
+  return names;
+}
+
 export function codingGuide(
   d,
   mode = d.interviews?.established
@@ -142,10 +161,9 @@ function validateSuggestions(raw, passages, guide, newLabelLimit, excluded) {
   const known = new Map(
     guide.vocabulary.map((entry) => [key(entry.label), entry]),
   );
-  const scopedNames = new Set(
-    guide.vocabulary
-      .filter((entry) => entry.sourceLabel)
-      .map((entry) => key(entry.sourceLabel)),
+  const approved = approvedLabelLookup(guide.vocabulary);
+  const existingLeaves = new Set(
+    guide.vocabulary.map((entry) => key(entry.sourceLabel || entry.label)),
   );
   const withdrawn = new Set((guide.withdrawnLabels || []).map(key));
   const newLabels = new Map();
@@ -180,9 +198,18 @@ function validateSuggestions(raw, passages, guide, newLabelLimit, excluded) {
       skip("label");
       continue;
     }
-    const id = key(label),
+    const spelling = key(label);
+    const recognised = approved.get(spelling);
+    const id = recognised ? key(recognised.label) : spelling,
       taken = used.get(entry.id);
-    if (withdrawn.has(id)) {
+    const leaf = spelling.split("›").at(-1).trim();
+    if (
+      withdrawn.has(id) ||
+      (!recognised &&
+        (guide.mode === "deductive" ||
+          approved.has(spelling) ||
+          existingLeaves.has(leaf)))
+    ) {
       skip("label");
       continue;
     }
@@ -194,12 +221,8 @@ function validateSuggestions(raw, passages, guide, newLabelLimit, excluded) {
       skip("capacity");
       continue;
     }
-    let canonical = known.get(id) || newLabels.get(id);
+    let canonical = recognised || newLabels.get(id);
     if (!canonical) {
-      if (guide.mode === "deductive" || scopedNames.has(id)) {
-        skip("label");
-        continue;
-      }
       if (
         newLabels.size >= newLabelLimit ||
         known.size + newLabels.size >= codingLimits.inductiveLabels
@@ -409,7 +432,11 @@ export function applyCodingBatch(d, pending, guide = codingGuide(d)) {
     );
   for (const s of valid) {
     const passage = byId.get(s.id);
-    passage.codes.push(s.code);
+    passage.codes = [...passage.codes, s.code];
+    passage.codingEvidence = [
+      ...(passage.codingEvidence || []),
+      { code: s.code, quote: s.quote },
+    ];
     passage.reviewed = true;
     if (guide.mode === "inductive") {
       d.coding ||= {};

@@ -78,11 +78,13 @@ export function modal(title, content, onOK, accept = "Apply") {
   get("modalform").onsubmit = async (e) => {
     e.preventDefault();
     const form = e.currentTarget;
+    if (!d.open || get("modalform") !== form) return;
     try {
       const result = await onOK?.();
       if (result !== false && get("modalform") === form) d.close();
     } catch (err) {
-      get("formerror").textContent = err.message;
+      if (d.open && get("modalform") === form)
+        get("formerror").textContent = err.message;
     }
   };
 }

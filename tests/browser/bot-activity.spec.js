@@ -85,7 +85,7 @@ test("chat activity stays visible when closed, respects reduced motion and clear
     explanation: "One participant answered Yes.",
   });
   await expect(panel.locator(".msg-assistant").last()).toContainText(
-    "One participant answered Yes.",
+    "1 of 2 valid responses",
   );
   await expect(message).toBeHidden();
   await expect(sidebarIcon(page)).toBeHidden();

@@ -25,9 +25,39 @@ const tokens = (text) => [
 ];
 
 function answerWords(field) {
-  if (!["category", "ordered", "multiple"].includes(field.type))
+  if (
+    field.roles?.includes("open") ||
+    !["category", "ordered", "multiple"].includes(field.type)
+  )
     return new Set();
   return new Set(field.levels.filter((s) => s.length <= 80).flatMap(tokens));
+}
+
+// The catalogue never needs to export the possible event values. A model
+// request must name one observed event or reuse the student's active model.
+export function selectedBinaryEvent(field, question, current) {
+  const normalise = (s) =>
+    " " +
+    s
+      .toLowerCase()
+      .normalize("NFKC")
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim() +
+    " ";
+  const requested = normalise(question);
+  const named = field.levels.filter((value) => {
+    const phrase = normalise(value);
+    return phrase.trim() && requested.includes(phrase);
+  });
+  if (named.length === 1) return named[0];
+  if (
+    !named.length &&
+    current?.task === "model" &&
+    current.outcome === field.id &&
+    field.levels.includes(current.positive)
+  )
+    return current.positive;
+  return null;
 }
 
 export function chartFields(fields, question) {
@@ -43,8 +73,8 @@ export function chartFields(fields, question) {
         type: f.type,
         ...(f.levels.length === 2 &&
         ["category", "ordered"].includes(f.type) &&
-        f.levels.every((s) => s.length <= 60)
-          ? { binaryEventChoices: f.levels }
+        !f.roles?.includes("open")
+          ? { binaryOutcome: true }
           : {}),
         ...(matches.length
           ? { requestWordsMatchingAnswerChoices: matches }
@@ -198,9 +228,12 @@ export function namedSurveyComparison(fields, question, chosen) {
     )
   )
     return null;
-  const instruction = question.trim().replace(/[.?!]+$/u, "");
+  const instruction = question
+    .trim()
+    .replace(/[.!?]\s+please draw it[.!?]*$/i, "")
+    .replace(/[.?!]+$/u, "");
   const by = instruction.match(
-    /\b(?:of|showing|comparing|for)\s+(.+?)\s+by\s+([^,]+?)(?:,?\s+(?:showing|using|as)\s+(counts?|numbers?|percentages?|percents?)(?:\s+within\s+each\s+(.+))?)?$/i,
+    /\b(?:of|showing|comparing|for)\s+([^.!?]+?)\s+(?:by|in each)\s+([^,]+?)(?:,?\s+(?:showing|using|as|with)\s+(counts?|numbers?|percentages?|percents?)(?:\s+within\s+each\s+(.+))?)?$/i,
   );
   const roles = instruction.match(
     /\buse\s+([^.!?]+?)\s+(?:for|as)\s+(?:the\s+)?(answers?|outcomes?|groups?)\s+and\s+([^.!?]+?)\s+(?:for|as)\s+(?:the\s+)?(answers?|outcomes?|groups?)(?:[.,;]\s*(?:show|use|showing|using)\s+(counts?|numbers?|percentages?|percents?)(?:\s+within\s+each\s+([^.!?]+))?)?$/i,
@@ -371,7 +404,7 @@ export function namedChartRequest(question) {
     ...question
       .trim()
       .matchAll(
-        /(?:^|[.!?]\s+)(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:draw|create|make|show|plot|build)\s+(?:me\s+)?(?:a |an |the )?(100% stacked bar(?: chart)?s?|stacked bar(?: chart)?s?|bar (?:chart|plot)|dot plot|heat\s?map|scatter\s?plot|histogram|box\s?plot|gap (?:chart|plot)|presence (?:grid|matrix)|line (?:chart|graph)|small multiples|data table)\b/gi,
+        /(?:^|[.!?]\s+)(?:(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:draw|create|make|show|plot|build)(?:\s+me)?|I would like)\s+(?:a |an |the )?(100% stacked bar(?: chart)?s?|stacked bar(?: chart)?s?|bar (?:chart|plot)|dot plot|heat\s?map|scatter\s?plot|histogram|box\s?plot|gap (?:chart|plot)|presence (?:grid|matrix)|line (?:chart|graph)|small multiples|data table)\b/gi,
       ),
   ];
   if (commands.length !== 1) return;

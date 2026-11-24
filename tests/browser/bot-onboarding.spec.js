@@ -12,7 +12,7 @@ async function openSurveyChat(page) {
     name: "workshop.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(
-      "StartDate,EndDate,Q1\nStart Date,End Date,Do you feel heard?\n2026,2026,Yes\n2026,2026,No",
+      "StartDate,EndDate,Q1,Q2\nStart Date,End Date,Do you feel heard?,Optional contact\n2026,2026,Yes,first@example.invalid\n2026,2026,No,second@example.invalid",
     ),
   });
   await page.getByRole("button", { name: "Confirm and explore" }).click();
@@ -41,7 +41,8 @@ test("a new student unlocks the panel before seeing the optional focus prompt an
       json: {
         answer: JSON.stringify({
           action: "answer",
-          explanation: "One out of two respondents answered Yes.",
+          readingChoices: { left: 999 },
+          explanation: "All 700 respondents answered Maybe.",
         }),
       },
     });
@@ -87,15 +88,21 @@ test("a new student unlocks the panel before seeing the optional focus prompt an
     .fill("What do the current responses tell us?");
   await panel.getByRole("button", { name: "Send", exact: true }).click();
   await expect(panel.locator(".msg-assistant").last()).toContainText(
-    "One out of two",
+    "1 of 2 valid responses",
   );
   expect(requests).toHaveLength(1);
+  expect(JSON.stringify(requests[0])).not.toContain("@example.invalid");
+  expect(
+    requests[0].context.fields.find((f) => f.name === "Optional contact")
+      .binaryOutcome,
+  ).toBe(true);
+  await expect(panel.locator(".msg-assistant").last()).not.toContainText("700");
 
   await panel.locator('[data-act="closebot"]').click();
   await page.getByRole("button", { name: "Data bot", exact: true }).click();
   await expect(panel.locator("#question")).toBeVisible();
   await expect(panel.locator(".msg-assistant").last()).toContainText(
-    "One out of two",
+    "1 of 2 valid responses",
   );
   expect(signIns).toBe(2);
 });

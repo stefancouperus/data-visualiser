@@ -512,3 +512,121 @@ test("students can customise label colours and organise labels into named catego
     category: "Travel experiences",
   });
 });
+
+test("a confirmed interviewer tag supplies questions as optional read-only context for identical Dutch answers", async ({
+  page,
+}) => {
+  const first = "KL: Hoe vaak is er contact met verenigingen?";
+  const second = "KL: Hoe vaak spreekt u de gemeenteraad?";
+  const answer = "[PERSON_3] Maandelijks.";
+  const consent = "KL: Mag ik dit interview opnemen?";
+  const saved = project({
+    Case: [consent, "[PERSON_3] Ja.", first, answer, second, answer],
+  });
+  const { bookEntries } = await import("../../src/coding.js");
+  saved.datasets[0].coding.book = bookEntries(
+    ["Clubs", "Councils"].map((category) => ({
+      label: "Monthly",
+      category,
+      definition: "Monthly contact",
+    })),
+  );
+  const calls = [];
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  await page.route("https://tutor.example.test/ask", (route) => {
+    const { context } = route.request().postDataJSON();
+    calls.push(context);
+    const suggestions = context.passages.flatMap((p) =>
+      !p.precedingQuestion
+        ? []
+        : [
+            {
+              id: p.id,
+              code:
+                p.precedingQuestion === first
+                  ? "Clubs › Monthly"
+                  : "Councils › Monthly",
+              quote: "Maandelijks",
+            },
+            { id: p.id, code: "Monthly", quote: "Maandelijks" },
+            { id: p.id, code: "Clubs › Monthly", quote: p.precedingQuestion },
+          ],
+    );
+    return route.fulfill({ json: { answer: JSON.stringify({ suggestions }) } });
+  });
+  await open(page, saved);
+  await button(page, "Choose passages for coding").click();
+  await page.getByLabel("Which speaker is the interviewer?").selectOption("KL");
+  await button(page, "Save passage selection").click();
+  await expect(page.locator(".iv-paper")).toContainText(
+    "2 of 6 passages included for coding",
+  );
+  for (const include of [false, true]) {
+    await button(page, "Code with the bot").click();
+    await page
+      .getByLabel("Include the preceding interviewer questions as context")
+      .setChecked(include);
+    await submit(page);
+    await button(page, "Review suggested coding").click();
+    await expect(page.locator("[name=iv-match]")).toHaveCount(include ? 2 : 0);
+    if (include) {
+      const firstAnswer = page.locator(".iv-review-passage").first();
+      await firstAnswer.locator("details > summary").click();
+      await expect(firstAnswer).toContainText(first);
+      await expect(firstAnswer).not.toContainText(second);
+    }
+    await apply(page);
+  }
+  expect(calls).toHaveLength(2);
+  expect(calls[0].passages.every((p) => !p.precedingQuestion)).toBe(true);
+  expect(calls[1].passages.map((p) => p.precedingQuestion)).toEqual([
+    first,
+    second,
+  ]);
+  expect(
+    calls.every((context) => !JSON.stringify(context).includes(consent)),
+  ).toBe(true);
+  expect(
+    assignments((await save(page)).datasets[0]).map((p) => p.codes),
+  ).toEqual([["Clubs › Monthly"], ["Councils › Monthly"]]);
+});
+
+test("approving an inductive label on part of a long answer saves only that quoted assignment", async ({
+  page,
+}) => {
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  await page.route("https://tutor.example.test/ask", (route) => {
+    const { context } = route.request().postDataJSON();
+    const suggestions = context.passages
+      .filter((p) => p.text.includes("I pay for tickets"))
+      .map((p) => ({
+        id: p.id,
+        code: "Cost",
+        quote: "I pay for tickets",
+        definition: "Paying for travel",
+      }));
+    return route.fulfill({ json: { answer: JSON.stringify({ suggestions }) } });
+  });
+  await open(
+    page,
+    project(
+      { Case: ["I pay for tickets. " + "The room was quiet. ".repeat(133)] },
+      false,
+    ),
+  );
+  await page.locator("[data-act=iv-sample]").click();
+  await submit(page);
+  await button(page, "Review draft labels").click();
+  await page.locator("[name=iv-code-examples]").check();
+  await button(page, "Use these labels").click();
+  const d = (await save(page)).datasets[0];
+  expect(d.passages).toHaveLength(2);
+  expect(
+    assignments(d).map(({ codes, evidence }) => ({ codes, evidence })),
+  ).toEqual([
+    {
+      codes: ["Cost"],
+      evidence: [{ code: "Cost", quote: "I pay for tickets" }],
+    },
+  ]);
+});

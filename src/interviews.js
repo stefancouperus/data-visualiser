@@ -71,6 +71,7 @@ function prepareReadingPassages(d) {
       p.text.length <= 1800 ||
       p.reviewed ||
       p.codes.length ||
+      p.codingEvidence?.length ||
       p.parent ||
       parents.has(p.id)
     )
@@ -92,6 +93,9 @@ function prepareReadingPassages(d) {
       parts.push({
         ...p,
         id: at ? uid() : p.id,
+        turnId: p.id,
+        codes: [],
+        markers: [...(p.markers || [])],
         text: p.text.slice(at, end),
         ...(Number.isFinite(p.start)
           ? { start: p.start + at, end: p.start + end }

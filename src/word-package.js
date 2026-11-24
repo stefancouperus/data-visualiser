@@ -51,6 +51,7 @@ const docStyles = [
   ["LogMeta", "Log metadata", '<w:color w:val="404040"/>', 19, "25"],
   ["DVCodedPassage", "Transcript passage", "", 23, "80"],
   ["DVLabelNote", "Coding note", "", 19, "95"],
+  ["DVEvidenceNote", "Recorded supporting words", "", 19, "95"],
 ]
   .map(
     ([id, name, props, size, after]) =>

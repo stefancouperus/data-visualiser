@@ -192,7 +192,7 @@ function codedDocument(dataset, source, colours) {
               " · Supporting words without a unique location" +
               (e.quote ? " · “" + e.quote + "”" : ""),
           ),
-          "DVLabelNote",
+          "DVEvidenceNote",
         ),
       );
   }
