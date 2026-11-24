@@ -1,6 +1,68 @@
 const percent = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 1 });
 const smallBase = 5;
 
+// Only pool mutually exclusive choices. An intensity word must modify another
+// actual answer label on this question. For example, "not likely" and "likely"
+// never form a pair. The same raw cell counts work in either percentage view.
+function sharedResponse(byQuestion, singleAnswerItems) {
+  let strongest;
+  for (const id of singleAnswerItems || []) {
+    const answers = byQuestion.get(id);
+    if (!answers) continue;
+    const byLabel = new Map();
+    const groupTotals = new Map();
+    for (const [label, rows] of answers) {
+      const name = String(label).trim().toLowerCase();
+      byLabel.set(name, byLabel.has(name) ? null : rows);
+      for (const row of rows) {
+        if (row.n)
+          groupTotals.set(
+            row.groupValue,
+            (groupTotals.get(row.groupValue) || 0) + row.n,
+          );
+      }
+    }
+    if (groupTotals.size < 2) continue;
+    const den = [...groupTotals.values()].reduce((sum, n) => sum + n, 0);
+    for (const [name, stronger] of byLabel) {
+      if (!stronger) continue;
+      const baseName = name.match(
+        /^(?:strongly|very|zeer|sterk|helemaal|sehr|très)\s+(.+)$/u,
+      )?.[1];
+      const base = byLabel.get(baseName);
+      if (!base?.some((r) => r.n) || !stronger.some((r) => r.n)) continue;
+      const counts = new Map();
+      for (const row of [...base, ...stronger]) {
+        counts.set(row.groupValue, (counts.get(row.groupValue) || 0) + row.n);
+      }
+      if (
+        ![...groupTotals].every(
+          ([group, total]) => (counts.get(group) || 0) > total / 2,
+        )
+      )
+        continue;
+      const n = [...counts.values()].reduce((sum, count) => sum + count, 0);
+      if (
+        !strongest ||
+        n / den > strongest.n / strongest.den ||
+        (n / den === strongest.n / strongest.den && den > strongest.den)
+      ) {
+        strongest = {
+          n,
+          den,
+          question: base[0].question,
+          base: base[0].label,
+          stronger: stronger[0].label,
+        };
+      }
+    }
+  }
+  if (strongest) {
+    const { n, den, question, base, stronger } = strongest;
+    return `On “${question}”, ${n} of ${den} valid responses across the displayed groups were “${base}” or “${stronger}”. Together those answers made up a majority in each group with responses.`;
+  }
+}
+
 export function canSpotSurveyPatterns(dataset, view) {
   return !!(
     dataset?.kind === "table" &&
@@ -104,6 +166,8 @@ export function surveyInsights(summary) {
   if (!selected.length && small)
     facts[0] +=
       " Each comparison includes a percentage based on fewer than five answers.";
+  const shared = sharedResponse(byQuestion, summary.singleAnswerItems);
+  if (shared) facts.unshift(shared);
   return {
     facts,
     comparable,

@@ -20,7 +20,15 @@ import {
 } from "./bot-help.js";
 import { structuredAnswer } from "./bot-response.js";
 import {
+  answerOptions,
+  claimsCombinedCount,
+  combinationFields,
+  combinedAnswerRequest,
+  combinedAnswerTotals,
+} from "./combined-answers.js";
+import {
   asksForThemePatterns,
+  asksForWithinInterviewPatterns,
   interviewComparisonPick,
   interviewInsights,
   interviewPatternSuggestion,
@@ -64,7 +72,7 @@ import {
   interviewActivity,
 } from "./interview-workspace.js";
 import { transcriptEndpoint } from "./interview-manual.js";
-import { showThemePassages } from "./theme-passages.js";
+import { showSharedPassages, showThemePassages } from "./theme-passages.js";
 import { passageUnits } from "./transcript-index.js";
 import { writtenAnswerSet, isOpenQuestion } from "./open-answers.js";
 import { wordPassages } from "./word-counts.js";
@@ -496,6 +504,12 @@ function botChat() {
     !context.both &&
     canSpotPatterns(dataset, context.view);
   const reviewReady = draft && draft.next === draft.total && draft.total > 0;
+  const chatPrompt =
+    spotPatterns && dataset.kind === "table"
+      ? "Ask about a pattern or name the answers you want to count together…"
+      : spotPatterns && dataset.sources?.length === 1
+        ? "Ask which themes recur or appear in the same passage…"
+        : "Ask about your project…";
   const messages = history
     .map(
       (t) =>
@@ -507,7 +521,7 @@ function botChat() {
     ${suggestions.length ? b("applycodes", "Apply all suggested labels", "primary") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><small>${esc(s.source)}</small><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
     ${captionDraft ? b("applycaption", "Add caption to figure") : ""}
     ${chosen.size || scope.length ? `<div class="bot-included"><small>Included with your message · ${chosen.size} selected passages · ${scope.length} whole sources</small>${b("clearevidence", "Clear included text", "plain")}</div>` : ""}
-    <textarea id="question" rows="2" aria-label="Ask about your project" maxlength="4000" placeholder="Ask about your project…">${esc(lastQuestion)}</textarea><div class="bar">${b("send", "Send", "primary", requesting ? "disabled" : "")}${spotPatterns ? b("botpatterns", "Spot patterns", "", `data-i="${context.panel}" ${requesting ? "disabled" : ""}`) : ""}</div></section>
+    <textarea id="question" rows="2" aria-label="Ask about your project" maxlength="4000" placeholder="${chatPrompt}">${esc(lastQuestion)}</textarea><div class="bar">${b("send", "Send", "primary", requesting ? "disabled" : "")}${spotPatterns ? b("botpatterns", "Spot patterns", "", `data-i="${context.panel}" ${requesting ? "disabled" : ""}`) : ""}</div></section>
     ${
       reviewReady
         ? '<div class="bot-hint" role="status"><span>' +
@@ -524,7 +538,7 @@ function botChat() {
           : helpSuggestion(project.mode, context)
     }
     <details class="bot-extras" data-chart-options="bot-extras"><summary>Chat tools</summary>${botWorkspaceControls()}
-    <div class="bar">${dataset?.kind === "table" ? b("variables", "Identify question roles") : ""}${project.researchFocus && [2, 3].includes(step) ? b("researchsuggest", "Suggest what to explore") : ""}${b("scope", "What the bot can see")}</div>
+    <div class="bar">${[2, 3].includes(step) && !context.both && combinationFields(dataset, context.view).length ? b("combineanswers", "Combine answers") : ""}${dataset?.kind === "table" ? b("variables", "Identify question roles") : ""}${project.researchFocus && [2, 3].includes(step) ? b("researchsuggest", "Suggest what to explore") : ""}${b("scope", "What the bot can see")}</div>
     ${
       tutorRecord(project).activity.length
         ? `<details><summary>Project activity</summary><ul>${tutorRecord(
@@ -1233,6 +1247,14 @@ function draw(i, logTitle) {
   const a = summary(i),
     v = project.views[i];
   get("graphic" + i).replaceChildren(figure(a, v, { interactive: true }));
+  if (a.withinInterview?.pairs.some((pair) => pair.n))
+    get("graphic" + i)
+      .closest("[data-panel]")
+      .querySelector(".figure-evidence")
+      .insertAdjacentHTML(
+        "afterbegin",
+        b("sharedpassages", "Read shared passages", "", 'data-i="' + i + '"'),
+      );
   if (logTitle) recordFigure(project, getData(), logTitle, v, a);
   if (a.coefficients)
     get("modeldetails" + i).innerHTML =
@@ -2367,7 +2389,9 @@ function suggestCurrentPatterns() {
     : surveyPatternSuggestion;
   const result = suggest(selection, view.chart, available(getData(), view));
   if (result?.chart) {
-    proposal = proposedChart({ action: "restyleChart", chart: result.chart });
+    proposal = proposedChart(
+      result.spec || { action: "restyleChart", chart: result.chart },
+    );
     if (proposal) proposal.patternReading = JSON.stringify(result.evidence);
   }
   history.push({
@@ -2415,6 +2439,60 @@ async function prepareChatCoding(question) {
   }
   await ask(question, "coding");
 }
+async function chooseCombinedAnswers(dataset, view) {
+  const fields = combinationFields(dataset, view);
+  if (!fields.length) return;
+  const controls = fields
+    .map(
+      (f, i) =>
+        `<fieldset class="pick-items"><legend>${esc(f.label)}</legend><div class="item-list">${answerOptions(
+          f,
+        )
+          .map(
+            (option) =>
+              `<label class="tick"><input type="checkbox" data-total-field="${i}" value="${esc(option)}">${esc(option)}</label>`,
+          )
+          .join("")}</div></fieldset>`,
+    )
+    .join("");
+  const grouped =
+    view.task === "patterns" ? view.groupBy : view.task !== "one" && view.y;
+  const result = await askForm(
+    "Combine answers",
+    "<p>Tick two or more answers for each question you want to count. Anyone who chose at least one of those answers counts once for that question.</p>" +
+      controls +
+      (grouped
+        ? '<label class="tick"><input type="checkbox" id="combined-by-group">Show a total for each group</label>'
+        : ""),
+    () => {
+      const selections = fields
+        .map((f, i) => ({
+          field: f.id,
+          answers: [
+            ...get("dialog").querySelectorAll(
+              `[data-total-field="${i}"]:checked`,
+            ),
+          ].map((input) => input.value),
+        }))
+        .filter((p) => p.answers.length);
+      return combinedAnswerTotals(
+        dataset,
+        view,
+        selections,
+        !!get("combined-by-group")?.checked,
+      );
+    },
+    "Calculate totals",
+  );
+  if (!result) return;
+  proposal = captionDraft = null;
+  history.push(
+    { role: "user", content: "Combine selected survey answers." },
+    { role: "assistant", content: result.message },
+  );
+  render();
+}
+
 async function ask(question, skill, intent = "") {
   if (requesting) throw Error("A tutor request is already pending.");
   if (!botURL)
@@ -2454,6 +2532,35 @@ async function ask(question, skill, intent = "") {
   const dataset = getData();
   const current =
     project.views[step === 3 && botFocus === "both" ? 1 : focusIndex()];
+  if (
+    !intent &&
+    skill === "recommend" &&
+    [2, 3].includes(step) &&
+    dataset?.kind === "table"
+  ) {
+    const both = step === 3 && botFocus === "both";
+    const totals = (both ? project.views : [current]).map((view) =>
+      combinedAnswerRequest(dataset, view, question),
+    );
+    if (totals.some(Boolean)) {
+      lastQuestion = "";
+      proposal = captionDraft = null;
+      const message = totals
+        .map(
+          (result, index) =>
+            (both ? (index ? "Right view · " : "Left view · ") : "") +
+            (result?.message ||
+              "Select the response options for this panel in Chat tools."),
+        )
+        .join("\n\n");
+      history.push(
+        { role: "user", content: question },
+        { role: "assistant", content: message },
+      );
+      render();
+      return;
+    }
+  }
   const contribution =
     !intent &&
     skill === "recommend" &&
@@ -2469,7 +2576,9 @@ async function ask(question, skill, intent = "") {
     (intent === "spotPatterns" ||
       (!intent &&
         (isInterview(dataset)
-          ? asksForThemePatterns(question)
+          ? asksForThemePatterns(question) ||
+            (asksForWithinInterviewPatterns(question) &&
+              summary(focusIndex()).withinInterview)
           : asksForSurveyPatterns(question))))
   ) {
     history.push({ role: "user", content: question });
@@ -2938,6 +3047,26 @@ async function ask(question, skill, intent = "") {
             "I could not read the model response. Please try the question again.",
         };
       proposal = null;
+      if (
+        (pick.action === "combineAnswers" ||
+          (pick.action === "answer" &&
+            !context.chartReadings &&
+            claimsCombinedCount(dataset, current, pick.explanation))) &&
+        dataset.kind === "table" &&
+        [2, 3].includes(step)
+      ) {
+        const result =
+          step === 3 && botFocus === "both"
+            ? undefined
+            : combinedAnswerRequest(dataset, current, question, true);
+        history.push({
+          role: "assistant",
+          content:
+            result?.message ||
+            "Select one panel and open Combine answers in Chat tools to choose the exact response options.",
+        });
+        return;
+      }
       if (
         pick.action === "reviewCoding" &&
         dataset.kind === "text" &&
@@ -4117,6 +4246,9 @@ async function action(act, el) {
       evidence(0);
       return;
     }
+    case "combineanswers":
+      await chooseCombinedAnswers(d, project.views[focusIndex()]);
+      return;
     case "variables":
       editRoles(
         d,
@@ -4376,6 +4508,11 @@ async function action(act, el) {
       );
       return;
     }
+    case "sharedpassages":
+      showSharedPassages(d, includedInterview(d), summary(i), (passage) =>
+        openOriginalPassage(d, passage),
+      );
+      return;
     case "describechart":
       if (step === 3) focusBot(i ? "right" : "left");
       openBot();

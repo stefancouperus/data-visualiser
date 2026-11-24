@@ -572,7 +572,7 @@ export function panel(
     : isInterview(d) &&
         (draft || v).task !== "patterns" &&
         patternChoices(d).length
-      ? `<div class="compare-entry">${b("themecompare", icon("grid") + " Compare themes", "", 'data-i="' + i + '"')}<small>Choose themes to compare across individual interviews or groups.</small></div>`
+      ? `<div class="compare-entry">${b("themecompare", icon("grid") + " Compare themes", "", 'data-i="' + i + '"')}<small>${d.sources.length === 1 ? "Choose themes to see which recur or appear together in a passage." : "Choose themes to compare across individual interviews or groups."}</small></div>`
       : "";
   const chartPicker =
     !matrix && options.length > 1

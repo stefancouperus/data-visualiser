@@ -154,3 +154,58 @@ test("only grouped survey distributions intercept requests about patterns in the
   ])
     assert.equal(asksForSurveyPatterns(prompt), false);
 });
+
+test("a shared response combines actual single-answer labels in both percentage directions", () => {
+  const data = makeTable(
+    [
+      ["Depot", "Levering"],
+      ["Noord", "Tevreden"],
+      ["Noord", "Zeer tevreden"],
+      ["Noord", "Ontevreden"],
+      ["Zuid", "Tevreden"],
+      ["Zuid", "Zeer tevreden"],
+      ["Zuid", ""],
+      ["", "Ontevreden"],
+    ],
+    "Vervoer",
+  );
+  for (const percentBase of ["group", "answer"]) {
+    const view = {
+      task: "patterns",
+      patternMode: "separate",
+      items: ["c1"],
+      groupBy: "c0",
+      chart: "grid",
+      percentBase,
+    };
+    const result = surveyPatternSuggestion(analyse(data, view), "grid", [
+      "table",
+    ]);
+    assert.match(
+      result.message,
+      /4 of 5 valid responses.*“Tevreden” or “Zeer tevreden”/,
+    );
+  }
+  const view = {
+    task: "patterns",
+    patternMode: "separate",
+    items: ["c1"],
+    groupBy: "c0",
+    chart: "grid",
+  };
+  data.fields[1].type = "multiple";
+  assert.doesNotMatch(
+    surveyPatternSuggestion(analyse(data, view), "grid", ["table"]).message,
+    /majority in each/,
+  );
+  data.fields[1].type = "category";
+  data.rows
+    .filter((r) => r.c0 === "Zuid")
+    .forEach((r) => {
+      r.c1 = "Ontevreden";
+    });
+  assert.doesNotMatch(
+    surveyPatternSuggestion(analyse(data, view), "grid", ["table"]).message,
+    /majority in each/,
+  );
+});

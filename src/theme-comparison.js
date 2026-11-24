@@ -89,13 +89,29 @@ export function themeComparison(dataset, view, labels, groupValue) {
     );
   const selected = new Set(labels);
   const pooled = new Map();
+  // Source coverage and contributions can both be 100% in a single interview.
+  // Keep the original-passage counts behind those views for the pattern reader.
+  const within =
+    sourceBuckets.size === 1
+      ? {
+          source: sourceBuckets.keys().next().value,
+          pairs: labels.flatMap((left, i) =>
+            labels.slice(i + 1).map((right) => ({ left, right, n: 0 })),
+          ),
+        }
+      : null;
   for (const p of dataset.passages) {
     const bucket = sourceBuckets.get(p.source);
     if (!bucket) continue;
     withPassages.add(p.source);
     bucket.passages++;
     if (p.reviewed) bucket.reviewed++;
-    for (const code of new Set(p.codes)) {
+    const codes = new Set(p.codes);
+    if (within) {
+      for (const pair of within.pairs)
+        if (codes.has(pair.left) && codes.has(pair.right)) pair.n++;
+    }
+    for (const code of codes) {
       if (!selected.has(code)) continue;
       bucket.passageCounts.set(code, (bucket.passageCounts.get(code) || 0) + 1);
       pooled.set(code, (pooled.get(code) || 0) + 1);
@@ -105,6 +121,15 @@ export function themeComparison(dataset, view, labels, groupValue) {
         seen.add(code);
       }
     }
+  }
+  if (within) {
+    within.themes = labels.map((label) => ({
+      label,
+      n: pooled.get(label) || 0,
+    }));
+    within.pairs.sort((a, b) => b.n - a.n);
+    a.withinInterview = within;
+    if (!view.title && !grouped) a.title = "Themes in " + within.source;
   }
   const contrasts = new Map();
   for (const {

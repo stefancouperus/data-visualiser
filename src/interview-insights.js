@@ -1,6 +1,7 @@
 const format = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 1 });
 const pct = (n, den) => format.format((100 * n) / den) + "%";
 const quoted = (s) => "“" + s + "”";
+const list = new Intl.ListFormat("en-GB", { type: "conjunction" });
 
 export function asksForThemePatterns(text) {
   const request = text
@@ -17,6 +18,29 @@ export function asksForThemePatterns(text) {
     );
   return /^(?:(?:what|anything) (?:else )?stands out|(?:what|which) (?:themes|patterns|differences|similarities) stand out|(?:spot|identify|suggest|find|highlight|look for) (?:any |the |some |interesting |main |clearest )*(?:patterns|differences|observations|similarities)|(?:are there|do you (?:see|notice)) (?:any |interesting )*(?:patterns|differences|similarities))$/iu.test(
     request,
+  );
+}
+
+// Use this shortcut only when the active selection contains one interview.
+// A named theme, an extra filter or a requested chart still needs its own reading.
+export function asksForWithinInterviewPatterns(text) {
+  const question = text
+    .trim()
+    .replace(
+      /^(?:in|within) (?:this|the|my) (?:one |single )?interview,?\s+/iu,
+      "",
+    )
+    .replace(
+      /[.?!]\s*give (?:me )?the two highest counts and their denominator[.!]?$/iu,
+      "",
+    )
+    .replace(/[?!.]+$/u, "")
+    .replace(
+      /\s+(?:in|within) (?:this|my|the) (?:one |single )?interview$/iu,
+      "",
+    );
+  return /^(?:which|what) (?:of (?:my|our|the) )?(?:selected )?(?:themes|codes|labels) (?:recur(?: or (?:overlap|appear in the same passage))?|overlap|(?:are|were) coded most often|(?:appear|occur|come up) (?:most often|together(?: in the same passage)?|in the same passage))$/iu.test(
+    question,
   );
 }
 
@@ -92,11 +116,128 @@ export function themeCellReading(row, comparison, other) {
   return `${theme} ${what} ${amount(row, comparison.unit)} in ${level}${next}.`;
 }
 
+function withinInterviewInsights({ withinInterview, themeComparison }) {
+  const { source, themes, pairs } = withinInterview;
+  const { passages, reviewed } = themeComparison;
+  const facts = [],
+    caveats = [];
+  if (!passages || !themes.length) {
+    facts.push(
+      !passages
+        ? "There are no included original passages in this selection."
+        : "Select a theme to see how often it was coded in this interview.",
+    );
+  } else {
+    const frequencies = [
+      ...new Set(themes.map((t) => t.n).filter((n) => n > 0)),
+    ].sort((a, b) => b - a);
+    if (frequencies.length) {
+      const leading = frequencies.slice(0, 2).map((n) => {
+        const labels = themes
+          .filter((t) => t.n === n)
+          .map((t) => quoted(t.label));
+        return (
+          list.format(labels) +
+          (labels.length === 1 ? " was" : " were each") +
+          " coded in " +
+          n +
+          " of " +
+          passages +
+          " included original " +
+          (passages === 1 ? "passage" : "passages")
+        );
+      });
+      facts.push(
+        "Among the selected themes in " +
+          quoted(source) +
+          ", " +
+          leading.join(". ") +
+          ".",
+      );
+      if (frequencies[0] === 1)
+        facts.push("No selected theme recurs in a second passage.");
+      const unused = themes
+        .filter((t) => t.n === 0)
+        .map((t) => quoted(t.label));
+      if (unused.length)
+        facts.push(
+          list.format(unused) +
+            (unused.length === 1 ? " has" : " have") +
+            " no coded passages in this selection.",
+        );
+    } else {
+      facts.push(
+        "None of the selected themes was coded in the " +
+          passages +
+          " included original " +
+          (passages === 1 ? "passage" : "passages") +
+          " of " +
+          quoted(source) +
+          ".",
+      );
+    }
+    if (pairs.length) {
+      const highest = pairs[0].n;
+      if (highest) {
+        const ties = pairs.filter((p) => p.n === highest);
+        const examples = ties
+          .slice(0, 2)
+          .map((p) => quoted(p.left) + " with " + quoted(p.right));
+        const total =
+          highest +
+          " of " +
+          passages +
+          " included original " +
+          (passages === 1 ? "passage" : "passages");
+        if (ties.length === 1)
+          facts.push(
+            "The most frequent overlap was " +
+              examples[0] +
+              ", coded together in " +
+              total +
+              ".",
+          );
+        else
+          facts.push(
+            ties.length +
+              " pairs tied for the most frequent overlap, each coded together in " +
+              total +
+              ". " +
+              (ties.length > 2 ? "Two examples are " : "The pairs are ") +
+              list.format(examples) +
+              ".",
+          );
+      } else {
+        facts.push(
+          "No included original passage was coded with two of the selected themes.",
+        );
+      }
+    } else
+      caveats.push(
+        "Select another theme to check which passages carry both codes.",
+      );
+  }
+  if (passages)
+    caveats.push(
+      "A theme counts once per passage in this interview. Codes on different quotations can share a passage.",
+    );
+  if (reviewed < passages)
+    caveats.push(
+      passages -
+        reviewed +
+        " of " +
+        passages +
+        " included original passages still need a recorded review.",
+    );
+  return { facts, caveats };
+}
+
 // Use the cells behind the figure, including those beyond the chat preview.
 // A group may be on the source list even though it supplied no passages.
 export function interviewInsights(summary) {
   const comparison = summary?.themeComparison;
   if (!comparison || comparison.written) return;
+  if (summary.withinInterview) return withinInterviewInsights(summary);
   const { grouped, unit, passages, reviewed } = comparison;
   const sizes = new Map(summary.groupSizes.map((g) => [g.group, g]));
   const byTheme = new Map();
@@ -215,6 +356,49 @@ export function interviewInsights(summary) {
 export function interviewPatternSuggestion(summary, currentChart, charts) {
   const evidence = interviewInsights(summary);
   if (!evidence) return;
+  if (summary.withinInterview) {
+    const usable =
+      summary.themeComparison.passages > 0 &&
+      summary.withinInterview.themes.some((t) => t.n);
+    const chart =
+      usable &&
+      ["bars", "table"].find((c) => c !== currentChart && charts.includes(c));
+    const grouped = summary.themeComparison.grouped;
+    const measure = grouped
+      ? { themeUnit: "passages" }
+      : { sourceMeasure: "count" };
+    const overlapping = summary.withinInterview.pairs.some((p) => p.n);
+    return {
+      evidence,
+      chart: chart || undefined,
+      spec: chart
+        ? {
+            action: "draw",
+            task: "patterns",
+            patternMode: "sources",
+            ...measure,
+            chart,
+          }
+        : undefined,
+      message: [
+        ...evidence.facts,
+        ...evidence.caveats,
+        chart &&
+          "Use " +
+            (chart === "bars" ? "horizontal bars" : "the data table") +
+            " to compare " +
+            (grouped
+              ? "the percentage of this interview’s passages carrying each theme."
+              : "the number of passages carrying each theme."),
+        usable &&
+          "Select a theme value in the figure to read the coded passages.",
+        overlapping &&
+          "Choose Read shared passages to inspect an overlap in the transcript.",
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    };
+  }
   const options =
     evidence.small || !evidence.comparable
       ? ["table", "grid", "dots", "bars"]

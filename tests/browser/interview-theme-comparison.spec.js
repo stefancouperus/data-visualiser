@@ -82,6 +82,65 @@ const cell = (figure, theme, comparison) =>
     `[data-pattern-row][data-theme="${theme}"][data-comparison="${comparison}"]`,
   );
 
+test("one interview shows recurring themes and opens a jointly coded original passage", async ({
+  page,
+}) => {
+  const p = project(),
+    d = p.datasets[0];
+  d.passages.find((x) => x.id === "a1").codes = ["Wachttijd"];
+  d.passages.find((x) => x.id === "a0").codes.push("Wachttijd");
+  d.passages.find((x) => x.id === "a3").reviewed = false;
+  p.views[0] = {
+    ...p.views[0],
+    task: "patterns",
+    patternMode: "sources",
+    items: ["Kosten", "Wachttijd"],
+    filter: "source",
+    value: "Klei",
+    groupBy: "",
+    sourceMeasure: "themeShare",
+    chart: "stack",
+  };
+  await page.route("**/ask", (r) => r.abort());
+  await page.route("https://tutor.example.test/session", (r) =>
+    r.fulfill({ json: { token: "local-test" } }),
+  );
+  await open(page, p);
+  await button(page, "Spot patterns").click();
+  const bot = page.locator("#data-bot");
+  await bot.locator("#course").fill("test");
+  await button(bot, "Unlock the bot").click();
+  const reply = bot.locator(".msg-assistant").last();
+  await expect(reply).toContainText(
+    "“Kosten” and “Wachttijd” were each coded in 2 of 3 included original passages",
+  );
+  await expect(reply).toContainText("coded together in 1 of 3");
+  await expect(reply).toContainText(
+    "1 of 3 included original passages still need a recorded review",
+  );
+  await expect(
+    page.locator('#graphic0 [data-theme-view="stack"]'),
+  ).toBeVisible();
+  await button(bot, "Make this chart").click();
+  await button(bot, "Close").click();
+  await expect(
+    page.locator('#graphic0 [data-theme-view="bars"]'),
+  ).toBeVisible();
+  await expect(
+    cell(page.locator("#graphic0"), "Kosten", "Klei"),
+  ).toHaveAttribute("aria-description", "2 of 3 passages");
+  await button(page, "Read shared passages").click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Choose two themes")).toHaveValue("0");
+  await expect(dialog.locator("tbody tr")).toHaveCount(1);
+  await expect(dialog).toContainText("De kaart werd duur");
+  await expect(dialog.locator("mark")).toHaveText("duur");
+  await button(dialog, "Open passage 2 in Klei").click();
+  await expect(page.locator(".iv-passage.iv-selected")).toContainText(
+    "De kaart werd duur",
+  );
+});
+
 test("theme figures follow covered interviews and original passages through to the exact transcript and export", async ({
   page,
 }) => {

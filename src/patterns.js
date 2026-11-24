@@ -353,7 +353,17 @@ function groupedSummary(d, v) {
     ...pooled,
     title: v.title || question.replace(/\?$/, "") + " — by " + label,
     groupLabel: label,
-    ...(distribution ? { surveyDistribution: true, percentBase } : {}),
+    ...(distribution
+      ? {
+          surveyDistribution: true,
+          percentBase,
+          singleAnswerItems: (v.items || []).filter((id) =>
+            ["category", "ordered"].includes(
+              d.fields.find((field) => field.id === id)?.type,
+            ),
+          ),
+        }
+      : {}),
     records: [],
     groupSizes: [],
   };

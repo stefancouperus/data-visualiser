@@ -2,13 +2,13 @@ import { esc } from "./chart.js";
 import { quotationRanges } from "./interview-manual.js";
 import { groupValue } from "./patterns.js";
 import { passageUnits, transcriptIndex } from "./transcript-index.js";
-import { get, modal } from "./ui.js";
+import { formselect, get, modal } from "./ui.js";
 
 // Highlight only located assignments for the clicked theme. A whole-passage
 // assignment or an ambiguous quotation remains readable in its original context.
-function evidenceText(original, index, theme) {
+function evidenceText(original, index, themes) {
   const ranges = quotationRanges(index, original).filter((r) =>
-    r.labels.has(theme),
+    themes.some((theme) => r.labels.has(theme)),
   );
   const output = [];
   let cursor = 0;
@@ -48,8 +48,6 @@ export function showThemePassages(
   const matches = passageUnits(
     included.passages.filter((p) => allowed.has(p.source)),
   ).filter((p) => p.codes.includes(theme));
-  const index = transcriptIndex(dataset.passages);
-  const interviews = new Set(matches.map((p) => p.source)).size;
   const unit = analysis.themeComparison.unit;
   const count =
     unit === "themePassageShare"
@@ -62,12 +60,65 @@ export function showThemePassages(
     "Passages behind this pattern",
     title + '<div id="theme-evidence"></div>',
   );
+  renderMatches(
+    transcriptIndex(dataset.passages),
+    matches,
+    [theme],
+    cell.den,
+    openTranscript,
+  );
+}
+
+export function showSharedPassages(dataset, included, summary, openTranscript) {
+  const within = summary.withinInterview;
+  const pairs = within?.pairs.filter((p) => p.n);
+  if (!pairs?.length) return;
+  const originals = passageUnits(
+    included.passages.filter((p) => p.source === within.source),
+  );
+  const index = transcriptIndex(dataset.passages);
+  modal(
+    "Passages with both themes",
+    "<p>" +
+      esc(within.source) +
+      "</p>" +
+      formselect(
+        "shared-pair",
+        "Choose two themes",
+        pairs.map((p, i) => [
+          String(i),
+          p.left + " + " + p.right + " (" + p.n + ")",
+        ]),
+        "0",
+      ) +
+      '<div id="theme-evidence"></div>',
+  );
+  const picker = get("shared-pair");
+  const readPair = () => {
+    const { left, right } = pairs[Number(picker.value)];
+    const matches = originals.filter(
+      (p) => p.codes.includes(left) && p.codes.includes(right),
+    );
+    renderMatches(
+      index,
+      matches,
+      [left, right],
+      originals.length,
+      openTranscript,
+    );
+  };
+  picker.onchange = readPair;
+  readPair();
+}
+
+function renderMatches(index, matches, themes, denominator, openTranscript) {
+  const interviews = new Set(matches.map((p) => p.source)).size;
   const list = get("theme-evidence"),
     pageSize = 25;
   let start = 0;
   function render() {
     if (!matches.length) {
-      list.textContent = cell.den
+      list.textContent = denominator
         ? "No matching coded passages in this selection."
         : "There are no passages behind this cell.";
       return;
@@ -80,7 +131,7 @@ export function showThemePassages(
         .map((p, i) => {
           const original = index.positions.get(p.id).original;
           const number = index.numbers.get(p.id);
-          return `<tr><td>${esc(p.source)}</td><td>${evidenceText(original, index, theme)}</td><td><button type="button" data-open-original="${start + i}" aria-label="Open passage ${number} in ${esc(p.source)}">Passage ${number}</button></td></tr>`;
+          return `<tr><td>${esc(p.source)}</td><td>${evidenceText(original, index, themes)}</td><td><button type="button" data-open-original="${start + i}" aria-label="Open passage ${number} in ${esc(p.source)}">Passage ${number}</button></td></tr>`;
         })
         .join("")}</tbody></table></div>` +
       (total > pageSize

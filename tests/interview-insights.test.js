@@ -9,6 +9,7 @@ import { interviewContributionRequest } from "../src/question-matching.js";
 import { suggestGrouping } from "../src/group-suggestions.js";
 import {
   asksForThemePatterns,
+  asksForWithinInterviewPatterns,
   interviewComparisonPick,
   interviewInsights,
   interviewPatternSuggestion,
@@ -133,7 +134,99 @@ test("a theme with no matches, equal shares or a single remaining source does no
     interviewInsights(
       analyse(d, { ...settings, groupBy: "", filter: "source", value: "Noor" }),
     ).facts[0],
-    /fewer than two interviews/,
+    /None of the selected themes was coded in the 1 included original passage of “Noor”/,
+  );
+});
+
+test("one interview ranks selected themes and counts overlaps once per included original passage", () => {
+  const text = "Gewoon een voorbeeld van tekst";
+  const row = (id, source, codes, other = {}) => ({
+    id,
+    source,
+    text,
+    codes,
+    reviewed: true,
+    ...other,
+  });
+  const d = {
+    kind: "text",
+    sources: ["Tess", "Noor"],
+    metadata: { Tess: { Plek: "Kade" }, Noor: { Plek: "Heide" } },
+    interviews: { established: true },
+    coding: {
+      book: ["Taal", "Rol", "Groep › Rol", "Leeg"].map((label) => ({ label })),
+    },
+    passages: [
+      row("p1", "Tess", ["Taal"]),
+      row("p1:q", "Tess", ["Taal", "Rol"], {
+        parent: "p1",
+        start: 7,
+        text: "een",
+      }),
+      row("p1:q2", "Tess", ["Rol", "Groep › Rol"], {
+        parent: "p1",
+        start: 11,
+        text: "voorbeeld",
+      }),
+      row("p2", "Tess", ["Taal", "Rol"]),
+      row("p3", "Tess", ["Taal"], { reviewed: false }),
+      row("p4", "Tess", ["Groep › Rol", "Taal"], { codingIncluded: false }),
+      row("p5", "Noor", ["Taal", "Groep › Rol"]),
+    ],
+  };
+  const v = {
+    ...view,
+    items: ["Taal", "Rol", "Groep › Rol", "Leeg"],
+    filter: "Plek",
+    value: "Kade",
+    chart: "stack",
+    sourceMeasure: "themeShare",
+  };
+  const a = analyse(d, v);
+  assert.equal(a.title, "Themes in Tess");
+  assert.equal(analyse(d, { ...v, title: "Eigen titel" }).title, "Eigen titel");
+  assert.deepEqual(
+    a.withinInterview.themes.map((t) => t.n),
+    [3, 2, 1, 0],
+  );
+  assert.equal(a.withinInterview.pairs.length, 6);
+  assert.deepEqual(a.withinInterview.pairs.slice(0, 3), [
+    { left: "Taal", right: "Rol", n: 2 },
+    { left: "Taal", right: "Groep › Rol", n: 1 },
+    { left: "Rol", right: "Groep › Rol", n: 1 },
+  ]);
+  const result = interviewPatternSuggestion(a, v.chart, [...options, "stack"]);
+  assert.equal(result.spec.sourceMeasure, "count");
+  assert.equal(result.chart, "bars");
+  assert.match(result.message, /“Taal” was coded in 3 of 3/);
+  assert.match(result.message, /“Rol” was coded in 2 of 3/);
+  assert.match(result.message, /“Taal” with “Rol”, coded together in 2 of 3/);
+  assert.match(result.message, /1 of 3.*review/);
+  assert.doesNotMatch(JSON.stringify(a), /Gewoon een voorbeeld/);
+  assert.deepEqual(
+    interviewInsights(analyse(d, { ...v, ...result.spec })),
+    result.evidence,
+  );
+  const grouped = analyse(d, {
+    ...v,
+    groupBy: "Plek",
+    themeUnit: "interviews",
+    chart: "grid",
+  });
+  assert.deepEqual(grouped.withinInterview, a.withinInterview);
+  assert.equal(
+    interviewPatternSuggestion(grouped, "grid", options).spec.themeUnit,
+    "passages",
+  );
+  const single = analyse(d, { ...v, chart: "grid", value: "Heide" });
+  const msg = interviewPatternSuggestion(single, "grid", options).message;
+  assert.match(msg, /“Taal” and “Groep › Rol” were each coded in 1 of 1/);
+  assert.match(msg, /No selected theme recurs/);
+  assert.match(
+    interviewInsights(
+      analyse(d, { ...v, value: "Heide", items: ["Rol", "Leeg"] }),
+    ).facts.join(" "),
+    /No included original passage was coded with two/,
   );
 });
 
@@ -176,6 +269,19 @@ test("a theme's contribution bars describe who supplied its passages, omitting i
 });
 
 test("plain-language shortcuts keep named subgroups and explicit qualifications for contextual resolution", () => {
+  for (const s of [
+    "Which themes recur?",
+    "Which themes recur or appear in the same passage in this interview?",
+    "Which selected themes overlap?",
+    "In this one interview, which of my selected themes were coded most often? Give the two highest counts and their denominator.",
+  ])
+    assert.equal(asksForWithinInterviewPatterns(s), true);
+  for (const s of [
+    "Which themes overlap with Toegang?",
+    "Which themes recur among night workers?",
+    "Draw a chart of which themes recur",
+  ])
+    assert.equal(asksForWithinInterviewPatterns(s), false);
   for (const s of [
     "What stands out?",
     "Could you identify interesting patterns across these interviews?",
