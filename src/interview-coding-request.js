@@ -1,8 +1,22 @@
 import { structuredAnswer } from "./bot-response.js";
 import { approvedLabelLookup, labelKey } from "./coding.js";
+import { verifyMissedSuggestions } from "./verify-missed-labels.js";
 
-export async function requestInterviewCoding(context, requestTutor) {
+export async function requestInterviewCoding(
+  context,
+  requestTutor,
+  verificationState,
+) {
   const { guide } = context;
+  const secondLook =
+    guide.mode === "deductive" && guide.reviewPass === "missed";
+  if (secondLook && verificationState?.pending)
+    return verifyMissedSuggestions(
+      context,
+      verificationState.pending,
+      requestTutor,
+      verificationState.checkpoint,
+    );
   const discovering =
     guide.mode === "inductive" && guide.limits.newPerBatch > 0;
   let question =
@@ -22,6 +36,9 @@ export async function requestInterviewCoding(context, requestTutor) {
   if (context.passages?.some((p) => p.precedingQuestion))
     question +=
       " A precedingQuestion belongs to the interviewer. Read it only to identify the topic or category for its answer. The answer itself must support the code and supply the quotation. Never quote or code a precedingQuestion.";
+  if (secondLook)
+    question +=
+      ' This is a second reading for missed approved labels. Read each answer, including answers that already have codes. First identify the distinct things the speaker actually says. Then reconsider each relevant codebook category and its criteria. An existing code may explain one part of the answer while another explicitly supported meaning remains uncovered. The codes and declinedCodes on each passage are already settled; omit them. Return only additional assignments, with a verbatim quotation and a reason explaining which distinct meaning and criteria it supports. The limit is two additional codes per passage for this check, irrespective of existing codes. There is no expected number of matches. Negation, a hypothetical example, the question alone or a shared keyword does not establish a code unless its definition specifically allows that interpretation. Abstain when the topic, category, or fit is uncertain. If nothing has been missed, return {"suggestions":[]}.';
   // Some replies contain valid empty JSON followed by a request for permission
   // to propose the new label the student already requested.
   const asksPermission = (response) =>
@@ -67,6 +84,13 @@ export async function requestInterviewCoding(context, requestTutor) {
         " The proposed names are outside the approved codebook. Recheck the evidence and copy the exact label from guide.vocabulary wherever it fits. Omit unsupported assignments.";
       continue;
     }
+    if (secondLook)
+      return verifyMissedSuggestions(
+        context,
+        suggestions,
+        requestTutor,
+        verificationState?.checkpoint,
+      );
     if (!discovering || suggestions.length || !asksPermission(answer))
       return suggestions;
     correction =

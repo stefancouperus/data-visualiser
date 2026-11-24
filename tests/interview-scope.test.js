@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { interviewScopeRequest } from "../src/interview-scope.js";
+import {
+  interviewScopeRequest,
+  requestsMissedLabels,
+} from "../src/interview-scope.js";
 import { requestsCoding } from "../src/coding.js";
 
 const sources = [
@@ -9,6 +12,24 @@ const sources = [
   "Transcrição – João.txt",
 ];
 const scope = (q, files = sources) => interviewScopeRequest(q, files, files[0]);
+
+test("checking for omissions is distinct from discovering new labels", () => {
+  for (const request of [
+    "Check for missed labels, including passages already coded.",
+    "Were any approved codes overlooked in both interviews?",
+    "Did we miss any applicable labels?",
+    "Do any other approved codes also fit?",
+    "Could you do a second pass on the coding?",
+    "Controleer op gemiste labels in alle interviews.",
+  ])
+    assert.ok(requestsMissedLabels(request), request);
+  for (const request of [
+    "Propose new labels for this interview",
+    "How do I remove the label ‘Missed appointment’?",
+    "Create a table with theme counts.",
+  ])
+    assert.equal(requestsMissedLabels(request), false, request);
+});
 
 test("interview requests resolve two named sources from the current project before a later all-interview instruction", () => {
   assert.deepEqual(

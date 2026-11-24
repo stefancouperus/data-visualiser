@@ -630,3 +630,125 @@ test("approving an inductive label on part of a long answer saves only that quot
     },
   ]);
 });
+
+test("a missed-label check includes coded and uncoded passages, remembers refusals and accepts an empty second reading", async ({
+  page,
+}) => {
+  const setup = project({ North: [fare, waits, quiet], South: [waits] });
+  const d = setup.datasets[0];
+  const original = d.passages[0];
+  original.codes = ["Delays"];
+  const calls = [];
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  await page.route("https://tutor.example.test/ask", async (route) => {
+    const { skill, context } = route.request().postDataJSON();
+    if (skill === "verifyCoding")
+      return route.fulfill({
+        json: {
+          answer: JSON.stringify({ keep: context.candidates.map((c) => c.id) }),
+        },
+      });
+    calls.push(context);
+    const rows = context.passages.flatMap((p) => {
+      if (p.text === quiet) return [];
+      return [
+        {
+          id: p.id,
+          code: p.text === fare ? "Fares" : "Delays",
+          quote: p.text,
+          reason: "Test match.",
+        },
+      ];
+    });
+    await route.fulfill({
+      json: { answer: JSON.stringify({ suggestions: rows }) },
+    });
+  });
+  await open(page, setup);
+  await choose(page, "iv-second-look", "current");
+  await button(page, "Check selected passages").click();
+  await button(page, "Review suggested coding").click();
+  expect(calls[0].guide.reviewPass).toBe("missed");
+  expect(calls[0].passages.map((p) => [p.text, p.codes])).toEqual([
+    [fare, ["Delays"]],
+    [waits, []],
+    [quiet, []],
+  ]);
+  await expect(page.locator("input[name=iv-match]:checked")).toHaveCount(0);
+  await page.locator("input[name=iv-match]").first().check();
+  await page.locator("#closeDialog").click();
+  const draft = await save(page);
+  expect(draft.datasets[0].passages[0].codes).toEqual(["Delays"]);
+  await open(page, draft);
+  await button(page, "Review suggested coding").click();
+  await expect(page.locator("input[name=iv-match]:checked")).toHaveCount(1);
+  await button(page, "Finish review").click();
+  const copy = await save(page);
+  expect(copy.datasets[0].passages.map((p) => p.codes)).toEqual([
+    ["Delays", "Fares"],
+    [],
+    [],
+    [],
+  ]);
+  await open(page, copy);
+  await button(page, "Mark this interview as checked").click();
+  await button(page, "Mark as checked").click();
+  await choose(page, "iv-second-look", "selected", ["North"]);
+  await button(page, "Check selected passages").click();
+  await button(page, "Review suggested coding").click();
+  expect(calls[1].passages.find((p) => p.text === waits).declinedCodes).toEqual(
+    ["Delays"],
+  );
+  await expect(page.locator("input[name=iv-match]")).toHaveCount(0);
+  await button(page, "Finish review").click();
+  expect((await save(page)).datasets[0].interviews.done).toContain("North");
+});
+
+test("a failed evidence check resumes its saved candidates without repeating discovery, and can return none", async ({
+  page,
+}) => {
+  const setup = project({ North: [fare] });
+  const skills = [];
+  let firstCandidates;
+  await page.addInitScript(() => sessionStorage.setItem("dv-session", "test"));
+  await page.route("https://tutor.example.test/ask", async (route) => {
+    const { skill, context } = route.request().postDataJSON();
+    skills.push(skill);
+    if (skill === "coding")
+      return route.fulfill({
+        json: {
+          answer: JSON.stringify({
+            suggestions: context.passages.flatMap(match),
+          }),
+        },
+      });
+    if (!firstCandidates) {
+      firstCandidates = context;
+      return route.fulfill({ status: 503, json: { error: "Service busy" } });
+    }
+    expect(context).toEqual(firstCandidates);
+    return route.fulfill({ json: { answer: '{"keep":[]}' } });
+  });
+  await open(page, setup);
+  await button(page, "Check for missed labels").click();
+  await button(page, "Check selected passages").click();
+  await expect(button(page, "Resume coding")).toBeVisible();
+  const recovery = await save(page);
+  const d = recovery.datasets[0];
+  expect(d.interviews.draft.verifying.suggestions.map((s) => s.code)).toEqual([
+    "Fares",
+  ]);
+  expect(d.interviews.draft.next).toBe(0);
+  expect(d.passages[0].codes).toEqual([]);
+  await open(page, recovery);
+  await button(page, "Resume coding").click();
+  await button(page, "Check selected passages").click();
+  await button(page, "Review suggested coding").click();
+  await expect(
+    page.getByText(/second reading could not establish/),
+  ).toBeVisible();
+  await expect(page.locator("input[name=iv-match]")).toHaveCount(0);
+  await button(page, "Finish review").click();
+  expect((await save(page)).datasets[0].passages[0].codes).toEqual([]);
+  expect(skills).toEqual(["coding", "verifyCoding", "verifyCoding"]);
+});

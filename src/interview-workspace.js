@@ -20,6 +20,8 @@ import {
 import {
   applyCodingBatch,
   approvedBook,
+  secondLookPassages,
+  rememberDeclinedLabels,
   labelKey,
   checkedCollectedSuggestions,
   codingLimits,
@@ -64,7 +66,13 @@ export function interviewActivity(d) {
   const { draft } = job;
   if (draft.next >= draft.total) return "Saving your coding draft…";
   if (job.stop) return "Finishing this batch before pausing…";
-  const action = draft.sample ? "Suggesting labels" : "Applying your labels";
+  const action = draft.verifying
+    ? "Checking the evidence"
+    : draft.sample
+      ? "Suggesting labels"
+      : draft.reviewPass === "missed"
+        ? "Checking for missed labels"
+        : "Applying your labels";
   return action + " · batch " + (draft.next + 1) + " of " + draft.total;
 }
 
@@ -232,7 +240,7 @@ export function interviewScreen(d, storageStatus = "") {
       : [];
     const preview = rows.filter((row) => row.keep);
     reviewPanel = `<section class="iv-review" aria-live="polite">
-      <h3>${draft.sample ? (ready ? "Draft labels to review" : "Developing labels from passages") : "Bot coding draft"}</h3>
+      <h3>${draft.sample ? (ready ? "Draft labels to review" : "Developing labels from passages") : draft.reviewPass === "missed" ? "Second look for missed labels" : "Bot coding draft"}</h3>
       ${activity ? busyIndicator(activity, false) : ""}
       <p>${draft.next} of ${draft.total} batches processed · ${draft.matches.length} new suggested matches</p>
       <small>Interviews in this draft: ${draftSources.map(esc).join(", ")}</small>
@@ -244,7 +252,7 @@ export function interviewScreen(d, storageStatus = "") {
   const applyStage = `<section class="iv-stage"><h2 id="iv-application" tabindex="-1">2. Apply your labels</h2>
   <p>${shared ? "Choose a passage to code yourself, or ask the bot to look for your approved labels in one or more interviews." : "Approve your codebook in step 1 to use its labels here."}</p>
   ${shared && d.coding?.bookDraft ? "<p><strong>Your approved labels are in use.</strong> Review your draft in step 1 to use the revised labels.</p>" : ""}
-  <div class="iv-stage-actions">${b("iv-apply-manual", "Code manually", "", disabled)}${b("iv-auto", "Code with the bot", "", shared && !locked ? "" : "disabled")}</div>
+  <div class="iv-stage-actions">${b("iv-apply-manual", "Code manually", "", disabled)}${b("iv-auto", "Code with the bot", "", shared && !locked ? "" : "disabled")}${shared ? b("iv-second-look", "Check for missed labels", "plain", locked ? "disabled" : "") : ""}</div>
   ${draft && !draft.sample ? reviewPanel : ""}
   </section>`;
   const canFinish = !remaining && d.sources.length && !locked;
@@ -258,7 +266,16 @@ export function interviewScreen(d, storageStatus = "") {
 </div>`;
 }
 // Every new batch operation previews its scope before any text is sent.
-function codingScope(d, state, sample, resuming, request, api, title) {
+function codingScope(
+  d,
+  state,
+  sample,
+  resuming,
+  request,
+  api,
+  title,
+  secondLook,
+) {
   const draft = resuming ? state.draft : null;
   const source = state.source;
   const scope =
@@ -318,7 +335,10 @@ function codingScope(d, state, sample, resuming, request, api, title) {
   const pickerId = sample ? "iv-sample-pick" : "iv-run-pick";
   const choice = askForm(
     title,
-    `<p>The university Data bot will receive ${sample ? "the passages you select and your existing labels" : "the included passages you select and your shared codebook"}. You will review its suggestions before any coding is applied.</p>` +
+    (secondLook
+      ? "<p>The bot rereads passages with and without labels. It checks each possible addition against the answer and the codebook before showing it to you. A check may find none. Your existing coding stays in place.</p>"
+      : "") +
+      `<p>The university Data bot will receive ${sample ? "the passages you select and your existing labels" : "the included passages you select and your shared codebook"}. You will review its suggestions before any coding is applied.</p>` +
       (sample
         ? `<p>${labelAllowance ? "The bot can suggest up to " + labelAllowance + " new labels in this sample." : "Your codebook has reached the bot’s limit for discovering new labels. It can still suggest matches for existing labels."} One label can fit several passages.</p>` +
           (state.established
@@ -403,7 +423,11 @@ function codingScope(d, state, sample, resuming, request, api, title) {
         focus: val("iv-focus").trim(),
       };
     },
-    sample ? "Send selected passages" : "Send to bot for coding",
+    sample
+      ? "Send selected passages"
+      : secondLook
+        ? "Check selected passages"
+        : "Send to bot for coding",
     async () => {
       if (botSession()) return true;
       // A session may expire while the student chooses passages. Restore
@@ -632,7 +656,7 @@ export async function interviewAction(act, el, d, api) {
     delete s.draft;
     pruneEmptyQuotations(d);
   }
-  if (act === "iv-sample" || act === "iv-auto" || act === "iv-resume") {
+  if (["iv-sample", "iv-auto", "iv-second-look", "iv-resume"].includes(act)) {
     if (jobs.has(d)) return;
     const source = s.source;
     const sample = act === "iv-resume" ? s.draft.sample : act === "iv-sample";
@@ -640,9 +664,14 @@ export async function interviewAction(act, el, d, api) {
       throw Error("Confirm the shared labels before coding a whole interview.");
     const resuming = act === "iv-resume";
     const initialDraft = s.draft;
-    const title = sample
-      ? "Suggest labels from selected passages"
-      : applyCodebookTitle(d);
+    const secondLook = resuming
+      ? initialDraft.reviewPass === "missed"
+      : act === "iv-second-look";
+    const title = secondLook
+      ? "Check for missed labels"
+      : sample
+        ? "Suggest labels from selected passages"
+        : applyCodebookTitle(d);
     if (
       !(await api.ensureAccess(title)) ||
       api.current() !== d ||
@@ -659,6 +688,7 @@ export async function interviewAction(act, el, d, api) {
       el.scopeRequest,
       api,
       title,
+      secondLook,
     );
     if (
       !selection ||
@@ -675,6 +705,7 @@ export async function interviewAction(act, el, d, api) {
         source: s.source,
         sources: selection.sources,
         sample,
+        ...(secondLook ? { reviewPass: "missed" } : {}),
         ...(sample ? { codeExamples: false } : {}),
         originalOnly: true,
         includeQuestions: selection.includeQuestions,
@@ -691,6 +722,7 @@ export async function interviewAction(act, el, d, api) {
         draft.sources || draft.source,
         draft.ids,
         draft.originalOnly,
+        secondLook,
       );
     const scoped = d.passages.filter((p) => sources.includes(p.source));
     const questions = draft.includeQuestions
@@ -718,20 +750,53 @@ export async function interviewAction(act, el, d, api) {
       ) {
         const batch = batches[draft.next];
         const guide = draftGuide(d, sample, draft.matches);
-        const result = await api.code({
-          guide,
-          passages: batch.map(({ id, passageId, source, text, codes }) => ({
-            ...(questions.has(passageId)
-              ? { precedingQuestion: questions.get(passageId) }
-              : {}),
-            id,
-            source,
-            text,
-            codes,
-          })),
-        });
+        const verificationState = secondLook
+          ? {
+              pending: draft.verifying?.suggestions,
+              checkpoint: async (suggestions, rejected) => {
+                if (s.draft !== draft || api.current() !== d)
+                  throw Error("The active coding draft changed.");
+                const excluded = { ...draft.verifying?.excluded };
+                for (const [kind, count] of Object.entries(rejected))
+                  excluded[kind] = (excluded[kind] || 0) + count;
+                draft.verifying = { suggestions, excluded };
+                await api.checkpoint();
+                if (s.draft !== draft || api.current() !== d)
+                  throw Error("The active coding draft changed.");
+                refresh(false);
+              },
+            }
+          : undefined;
+        const result = await api.code(
+          {
+            guide,
+            passages: batch.map(
+              ({ id, passageId, source, text, codes, declinedCodes }) => ({
+                ...(declinedCodes?.length ? { declinedCodes } : {}),
+                ...(questions.has(passageId)
+                  ? { precedingQuestion: questions.get(passageId) }
+                  : {}),
+                id,
+                source,
+                text,
+                codes,
+              }),
+            ),
+          },
+          verificationState,
+        );
         if (s.draft !== draft || api.current() !== d) break;
         const excluded = (draft.excluded ||= {});
+        if (draft.verifying) {
+          const dropped = draft.verifying.suggestions.length - result.length;
+          const counts = { ...draft.verifying.excluded, evidence: dropped };
+          for (const [kind, count] of Object.entries(counts)) {
+            if (!count) continue;
+            excluded[kind] = (excluded[kind] || 0) + count;
+            draft.skipped = (draft.skipped || 0) + count;
+          }
+          delete draft.verifying;
+        }
         const validated = reviewedMatches(result, batch, guide, excluded);
         const found = validated.filter(
           (m) => !coveredByQuotation(m, byId.get(m.id), excerpts.get(m.id)),
@@ -761,6 +826,16 @@ export async function interviewAction(act, el, d, api) {
     const sourcePassages = new Map(sources.map((source) => [source, []]));
     for (const p of d.passages) sourcePassages.get(p.source)?.push(p);
     const positions = transcriptOrdinals(d.passages);
+    const secondLook = draft.reviewPass === "missed";
+    const current = secondLook
+      ? new Map(
+          secondLookPassages(
+            [...sourcePassages.values()].flat(),
+            guide.vocabulary,
+          ).map((p) => [p.id, p]),
+        )
+      : null;
+    const effective = (p) => current?.get(p.id) || p;
     const targets = [];
     const selectedIds = draft.ids && new Set(draft.ids);
     for (const list of sourcePassages.values()) {
@@ -782,7 +857,7 @@ export async function interviewAction(act, el, d, api) {
     }
     const matches = checkedCollectedSuggestions(
       draft.matches,
-      targets,
+      targets.map(effective),
       guide,
       reviewExcluded,
     ).filter((m) => {
@@ -802,6 +877,13 @@ export async function interviewAction(act, el, d, api) {
     });
     const key = (id, code) => JSON.stringify([id, code]);
     const rejected = new Set(draft.rejected || []);
+    if (secondLook) {
+      const accepted = new Set(draft.accepted || []);
+      for (const m of matches) {
+        const id = key(m.id, m.code);
+        if (!accepted.has(id)) rejected.add(id);
+      }
+    }
     const manual = new Set(draft.manual || []);
     const book =
       s.established || !draft.sample ? approvedBook(d) : sharedBook(d);
@@ -813,7 +895,7 @@ export async function interviewAction(act, el, d, api) {
       !draft.sample ||
       (draft.codeExamples ?? ("rejected" in draft || "manual" in draft));
     const canAdd = (p, label) =>
-      !p.codes.includes(label) &&
+      !effective(p).codes.includes(label) &&
       !(byPassage.get(p.id) || []).some(({ m }) => m.code === label);
     const emptySample = draft.sample && !rows.length && !book.length;
     const repeats =
@@ -828,6 +910,11 @@ export async function interviewAction(act, el, d, api) {
       ["quote", "quotation missing from the selected passage"],
       ["passage", "passage outside this selection"],
       ["capacity", "code limit reached"],
+      ["declined", "assignment previously declined"],
+      [
+        "evidence",
+        "second reading could not establish the full meaning of the label",
+      ],
     ]
       .map(([kind, description]) => {
         const count =
@@ -835,7 +922,9 @@ export async function interviewAction(act, el, d, api) {
         return count ? count + " · " + description : "";
       })
       .filter(Boolean);
-    const alreadyCoded = targets.filter((p) => p.codes.length).length;
+    const alreadyCoded = targets.filter(
+      (p) => effective(p).codes.length,
+    ).length;
     const questions = draft.includeQuestions
       ? interviewPassageScope(
           [...sourcePassages.values()].flat().filter((p) => !p.parent),
@@ -844,46 +933,52 @@ export async function interviewAction(act, el, d, api) {
     const groupHtml = new Map(sources.map((source) => [source, []]));
     targets.forEach((p, target) => {
       const items = byPassage.get(p.id) || [];
-      groupHtml
-        .get(p.source)
-        .push(
-          '<section class="iv-review-passage"><strong>Passage ' +
-            positions.get(p.id) +
-            "</strong>" +
-            items
-              .map(
-                ({ m, index }) =>
-                  `<label class="iv-match"><input type="checkbox" name="iv-match" value="${index}" ${rejected.has(key(m.id, m.code)) ? "" : "checked"}><span><small>Passage ${positions.get(m.id)}</small>${draft.sample ? "<span data-preview-code>" + chip(m.code, styles) + "</span><small data-preview-meaning>" + esc(m.definition) + "</small>" : chip(m.code, styles)}<q>${esc(m.quote)}</q><small>${esc(m.reason)}</small></span></label>`,
-              )
-              .join("") +
-            (items.length ? "" : "<p>No suggested label.</p>") +
-            '<details data-review-passage="' +
-            target +
-            '"><summary>Read full passage' +
-            (book.length ? " and check for missed labels" : "") +
-            "</summary>" +
-            (questions.has(p.id)
-              ? "<p><small>Interviewer question supplied as context</small><br>" +
-                esc(questions.get(p.id)) +
-                "</p>"
-              : "") +
-            "<blockquote>" +
-            esc(p.text) +
-            "</blockquote>" +
-            (p.codes.length
-              ? "<p>Already applied: " +
-                p.codes.map((label) => chip(label, styles)).join(" ") +
-                "</p>"
-              : "") +
-            "<div data-missed-labels></div></details></section>",
-        );
+      groupHtml.get(p.source).push(
+        '<section class="iv-review-passage"><strong>Passage ' +
+          positions.get(p.id) +
+          "</strong>" +
+          items
+            .map(
+              ({ m, index }) =>
+                `<label class="iv-match"><input type="checkbox" name="iv-match" value="${index}" ${rejected.has(key(m.id, m.code)) ? "" : "checked"}><span><small>Passage ${positions.get(m.id)}</small>${draft.sample ? "<span data-preview-code>" + chip(m.code, styles) + "</span><small data-preview-meaning>" + esc(m.definition) + "</small>" : chip(m.code, styles)}<q>${esc(m.quote)}</q><small>${esc(m.reason)}</small></span></label>`,
+            )
+            .join("") +
+          (items.length ? "" : "<p>No suggested label.</p>") +
+          '<details data-review-passage="' +
+          target +
+          '"><summary>Read full passage' +
+          (book.length ? " and check for missed labels" : "") +
+          "</summary>" +
+          (questions.has(p.id)
+            ? "<p><small>Interviewer question supplied as context</small><br>" +
+              esc(questions.get(p.id)) +
+              "</p>"
+            : "") +
+          "<blockquote>" +
+          esc(p.text) +
+          "</blockquote>" +
+          (effective(p).codes.length
+            ? "<p>Already applied: " +
+              effective(p)
+                .codes.map((label) => chip(label, styles))
+                .join(" ") +
+              "</p>"
+            : "") +
+          "<div data-missed-labels></div></details></section>",
+      );
     });
     modal(
-      draft.sample ? "Review draft labels" : "Review the suggested coding",
+      draft.sample
+        ? "Review draft labels"
+        : secondLook
+          ? "Review possible missed labels"
+          : "Review the suggested coding",
       `<p>${matches.length} proposed assignments across ${byPassage.size} of ${targets.length} passages in ${sources.length === 1 ? "<strong>" + esc(sources[0]) + "</strong>" : sources.length + " interviews"}.</p>` +
         (draft.sample
           ? sampleLabelEditor(rows, codeExamples(), styles)
-          : "<p>Read the full passage to check the meaning. Untick unsuitable suggestions and check for missed labels.</p>") +
+          : secondLook
+            ? "<p>Tick only additions whose meaning is supported by the quotation. You can finish with none selected. Finishing applies the ticked labels and records the other suggestions as declined for these passages. Closing this window leaves the draft open.</p>"
+            : "<p>Read the full passage to check the meaning. Untick unsuitable suggestions and check for missed labels.</p>") +
         (repeats
           ? `<p>${repeats} repeated label suggestions were left out because the coding already exists or the same assignment was suggested twice.</p>`
           : "") +
@@ -951,6 +1046,18 @@ export async function interviewAction(act, el, d, api) {
             vocabulary ? { ...guide, vocabulary } : guide,
           );
         }
+        if (!draft.sample && rejected.size) {
+          const entries = new Map(book.map((entry) => [entry.label, entry]));
+          for (const match of matches) {
+            if (
+              rejected.has(key(match.id, match.code)) &&
+              entries.has(match.code)
+            )
+              rememberDeclinedLabels(parentById.get(match.id), [
+                entries.get(match.code),
+              ]);
+          }
+        }
         const appliedIds = new Set(picked.map((m) => m.id));
         let added = 0;
         for (const p of codeExamples() ? targets : []) {
@@ -977,6 +1084,15 @@ export async function interviewAction(act, el, d, api) {
               targets.filter((p) => appliedIds.has(p.id)).map((p) => p.source),
             ),
           ]);
+        if (secondLook)
+          api.recordWork("Checked for missed interview labels", [
+            `Checked ${targets.length} ${targets.length === 1 ? "passage" : "passages"} across ${sources.length} ${sources.length === 1 ? "interview" : "interviews"}. Accepted ${picked.length} of ${matches.length} proposed assignments.`,
+            ...(added
+              ? [
+                  `The reviewer also applied ${added} manual ${added === 1 ? "label" : "labels"}.`,
+                ]
+              : []),
+          ]);
         await api.checkpoint();
         refresh(false);
         if (draft.sample) get("iv-application")?.focus();
@@ -990,12 +1106,14 @@ export async function interviewAction(act, el, d, api) {
                   ? picked.length + added + " sample assignments saved. "
                   : "") +
                 "Choose how to apply the codebook in step 2."
-            : picked.length +
+            : secondLook && !appliedIds.size
+              ? "Second look complete. No additional labels were applied."
+              : picked.length +
                 added +
                 " label assignments applied. Check each interview before marking it as checked.",
         );
       },
-      emptySample
+      emptySample || secondLook
         ? "Finish review"
         : draft.sample
           ? "Use these labels"
@@ -1043,6 +1161,10 @@ export async function interviewAction(act, el, d, api) {
         if (input.checked) rejected.delete(id);
         else rejected.add(id);
         draft.rejected = [...rejected];
+        if (secondLook)
+          draft.accepted = matches
+            .map((item) => key(item.id, item.code))
+            .filter((id) => !rejected.has(id));
       } else if (input.name === "iv-missed") {
         const p =
           targets[Number(input.closest("details").dataset.reviewPassage)];

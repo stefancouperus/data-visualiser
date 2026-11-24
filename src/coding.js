@@ -1,3 +1,5 @@
+import { passageUnits } from "./transcript-index.js";
+
 // Limits apply to bot proposals. Students keep control of their own vocabulary.
 export const codingLimits = {
   perPassage: 2,
@@ -35,6 +37,43 @@ export function labelVocabulary(entries = []) {
 }
 
 export const approvedBook = (d) => labelVocabulary(d.coding?.book);
+
+// A declined assignment applies to this passage and this meaning of the code.
+// Editing its definition allows the revised code to be considered afresh.
+export function rememberDeclinedLabels(passage, entries) {
+  if (!entries.length) return;
+  const previous = Array.isArray(passage.declinedCoding)
+    ? passage.declinedCoding
+    : [];
+  const updated = new Map(
+    previous
+      .filter((e) => typeof e?.label === "string")
+      .map((e) => [key(e.label), e]),
+  );
+  for (const { label, category = "", definition = "" } of entries)
+    updated.set(key(label), { label, category, definition });
+  passage.declinedCoding = [...updated.values()];
+}
+
+export function secondLookPassages(passages, vocabulary) {
+  const active = new Map(vocabulary.map((entry) => [key(entry.label), entry]));
+  return passageUnits(passages).map((p) => {
+    const declinedCodes = [];
+    for (const saved of Array.isArray(p.declinedCoding)
+      ? p.declinedCoding
+      : []) {
+      const entry =
+        typeof saved?.label === "string" && active.get(key(saved.label));
+      if (
+        entry &&
+        (entry.category || "") === saved.category &&
+        entry.definition === saved.definition
+      )
+        declinedCodes.push(entry.label);
+    }
+    return { ...p, declinedCodes };
+  });
+}
 
 // Older annotations are retained on the transcript. Only active codes should
 // influence a new deductive pass, including the two-code limit.
@@ -178,6 +217,14 @@ function validateSuggestions(raw, passages, guide, newLabelLimit, excluded) {
     ]),
   );
   const sources = new Map(passages.map((p) => [p.id, p.text]));
+  const secondLook =
+    guide.mode === "deductive" && guide.reviewPass === "missed";
+  const added = new Map();
+  const declined = new Map(
+    secondLook
+      ? passages.map((p) => [p.id, new Set((p.declinedCodes || []).map(key))])
+      : [],
+  );
   const result = [];
   const skip = (reason) => {
     if (excluded) excluded[reason] = (excluded[reason] || 0) + 1;
@@ -217,7 +264,14 @@ function validateSuggestions(raw, passages, guide, newLabelLimit, excluded) {
       skip("duplicate");
       continue;
     }
-    if (taken.size >= codingLimits.perPassage) {
+    if (declined.get(entry.id)?.has(id)) {
+      skip("declined");
+      continue;
+    }
+    if (
+      (secondLook ? added.get(entry.id) || 0 : taken.size) >=
+      codingLimits.perPassage
+    ) {
       skip("capacity");
       continue;
     }
@@ -238,6 +292,7 @@ function validateSuggestions(raw, passages, guide, newLabelLimit, excluded) {
       newLabels.set(id, canonical);
     }
     taken.add(id);
+    if (secondLook) added.set(entry.id, (added.get(entry.id) || 0) + 1);
     result.push({
       id: entry.id,
       code: canonical.label,
@@ -412,11 +467,18 @@ export function requestsLabelDiscovery(message, established = false) {
 
 export function applyCodingBatch(d, pending, guide = codingGuide(d)) {
   const byId = new Map(d.passages.map((p) => [p.id, p]));
-  const targetIds = [...new Set(pending.map((s) => s.id))];
-  const targets = targetIds.map((id) => byId.get(id)).filter(Boolean);
+  const targetIds = new Set(pending.map((s) => s.id));
   // Protect the commit if a book has been replaced since this review opened.
   const activeGuide =
     guide.mode === "deductive" ? codingGuide(d, "deductive") : guide;
+  const secondLook =
+    guide.mode === "deductive" && guide.reviewPass === "missed";
+  if (secondLook) activeGuide.reviewPass = "missed";
+  const targets = secondLook
+    ? secondLookPassages(d.passages, activeGuide.vocabulary).filter((p) =>
+        targetIds.has(p.id),
+      )
+    : [...targetIds].map((id) => byId.get(id)).filter(Boolean);
   const valid = checkedCollectedSuggestions(pending, targets, activeGuide);
   const oldMeanings =
     guide.mode === "deductive" &&
@@ -449,7 +511,7 @@ export function applyCodingBatch(d, pending, guide = codingGuide(d)) {
   }
   return {
     assignments: valid.length,
-    passages: targetIds.length,
+    passages: targetIds.size,
     labels: [...new Set(valid.map((s) => s.code))],
   };
 }

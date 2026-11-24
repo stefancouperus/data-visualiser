@@ -21,7 +21,10 @@ import {
 import { structuredAnswer } from "./bot-response.js";
 import { extractCodebookEntries } from "./codebook-extraction.js";
 import { botSession, confirmTaskAccess } from "./bot-access.js";
-import { interviewScopeRequest } from "./interview-scope.js";
+import {
+  interviewScopeRequest,
+  requestsMissedLabels,
+} from "./interview-scope.js";
 import { requestInterviewCoding } from "./interview-coding-request.js";
 import {
   isInterview,
@@ -3733,6 +3736,7 @@ async function handleInterview(act, el, d) {
   return interviewAction(act, el, d, {
     current: getData,
     checkpoint,
+    recordWork: (title, details) => recordWork(owner, d, title, details),
     remapPreviousLabels: (changes) =>
       rewriteInterviewLabelReferences(owner, d, changes, undoViews),
     status: () => codingSaveStatus.get(owner)?.message || "",
@@ -3751,9 +3755,11 @@ async function handleInterview(act, el, d) {
     },
     extract: (document) => extractCodebook(document, d),
     ensureAccess: ensureBotAccess,
-    code: (context) =>
-      requestInterviewCoding(context, (payload) =>
-        requestTutor(payload, signal),
+    code: (context, verificationState) =>
+      requestInterviewCoding(
+        context,
+        (payload) => requestTutor(payload, signal),
+        verificationState,
       ),
     finish: () => {
       const s = interviews(d);
@@ -4487,10 +4493,12 @@ async function action(act, el) {
         q = declaration.request;
         lastQuestion = q;
       }
+      const missed = isInterview(d) && requestsMissedLabels(q);
       if (
         isInterview(d) &&
-        (step === 1 || /\b(?:transcripts?|interviews?)\b/i.test(q)) &&
-        (requestsCoding(q) ||
+        (missed || step === 1 || /\b(?:transcripts?|interviews?)\b/i.test(q)) &&
+        (missed ||
+          requestsCoding(q) ||
           (d.interviews?.draft &&
             /\b(?:review|edit|approve|rename|reopen)\b.{0,45}\b(?:draft|labels?|codes?|suggestions|them)\b/i.test(
               q,
@@ -4502,10 +4510,11 @@ async function action(act, el) {
         lastQuestion = "";
         const selection = interviewScopeRequest(q, d.sources, s.source);
         const useBook =
+          missed ||
           /\b(?:deductiv\w*|code\s?book|pre[- ]?defined|approved|existing)\b|\b(?:apply|use|assign)\b.{0,30}\b(?:codes?|labels?|them)\b/i.test(
             q,
           );
-        const discover = requestsLabelDiscovery(q, s.established);
+        const discover = !missed && requestsLabelDiscovery(q, s.established);
         let command, reply;
         if (s.draft) {
           const ready = s.draft.total > 0 && s.draft.next === s.draft.total;
@@ -4526,6 +4535,10 @@ async function action(act, el) {
           command = "iv-reviewbook";
           reply =
             "Review the draft labels in your codebook first. Once you approve them, choose Code manually or Code with the bot.";
+        } else if (s.established && missed) {
+          command = "iv-second-look";
+          reply =
+            "Choose the interviews and passages to check for missed labels. I’ll look for additional evidence for your approved labels, including in already-coded passages. A passage can receive no suggestion.";
         } else if (s.established && discover) {
           command = "iv-sample";
           reply =
@@ -4551,9 +4564,10 @@ async function action(act, el) {
             return;
           }
           await handleInterview("iv-establish", el, d);
-          command = "iv-auto";
-          reply =
-            "Choose which interviews I should check for the labels you confirmed.";
+          command = missed ? "iv-second-look" : "iv-auto";
+          reply = missed
+            ? "Choose which interviews to check for missed applications of the labels you confirmed."
+            : "Choose which interviews I should check for the labels you confirmed.";
         } else if (!discover && (s.method === "book" || useBook)) {
           s.method = "book";
           command = /\b(?:upload|file|extract|document)\b/i.test(q)
@@ -4569,7 +4583,7 @@ async function action(act, el) {
             "Choose the interviews and passages I should read to suggest labels. You can review the labels and their supporting quotations together.";
         }
         if (
-          ["iv-auto", "iv-sample"].includes(command) &&
+          ["iv-auto", "iv-sample", "iv-second-look"].includes(command) &&
           selection.minimum > d.sources.length
         ) {
           reply =

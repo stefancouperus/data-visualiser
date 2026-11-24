@@ -7,6 +7,7 @@ import {
   checkedSuggestions,
   discoveryLimit,
   labelVocabulary,
+  secondLookPassages,
   labelKey as normal,
 } from "./coding.js";
 
@@ -286,16 +287,17 @@ export function interviewBatches(
   sourceOrSources,
   sampleIds,
   originalOnly = false,
+  secondLook = false,
 ) {
   const sources = new Set(
     Array.isArray(sourceOrSources) ? sourceOrSources : [sourceOrSources],
   );
   const chosen = sampleIds && new Set(sampleIds);
-  let passages = d.passages.filter(
-    (p) =>
-      sources.has(p.source) &&
-      (!originalOnly || !p.parent) &&
-      (!chosen || chosen.has(p.id)),
+  const scoped = d.passages.filter((p) => sources.has(p.source));
+  let passages = (
+    secondLook ? secondLookPassages(scoped, approvedBook(d)) : scoped
+  ).filter(
+    (p) => (!originalOnly || !p.parent) && (!chosen || chosen.has(p.id)),
   );
   if (chosen && Array.isArray(sourceOrSources)) {
     const byId = new Map(passages.map((p) => [p.id, p]));
@@ -324,6 +326,7 @@ export function interviewBatches(
         source: p.source,
         text,
         codes: p.codes,
+        ...(p.declinedCodes?.length ? { declinedCodes: p.declinedCodes } : {}),
       });
       size += text.length;
       start = end;
@@ -363,7 +366,12 @@ export function draftGuide(
   priorMatches = [],
   withdrawnLabels = d.interviews?.draft?.withdrawnLabels || [],
 ) {
-  if (!sample) return codingGuide(d, "deductive");
+  if (!sample) {
+    const guide = codingGuide(d, "deductive");
+    if (d.interviews?.draft?.reviewPass === "missed")
+      guide.reviewPass = "missed";
+    return guide;
+  }
   const base = codingGuide(d, "inductive");
   const vocabulary = d.interviews?.established
     ? approvedBook(d)

@@ -203,6 +203,38 @@ export function verifyProject(p) {
                 (!Array.isArray(draft.ids) ||
                   draft.ids.some((id) => !safeID(id)))) ||
               !Array.isArray(draft.matches) ||
+              (draft.reviewPass !== undefined &&
+                (draft.reviewPass !== "missed" ||
+                  draft.sample ||
+                  !draft.originalOnly)) ||
+              (draft.verifying !== undefined &&
+                (draft.reviewPass !== "missed" ||
+                  draft.next >= draft.total ||
+                  !Array.isArray(draft.verifying?.suggestions) ||
+                  draft.verifying.suggestions.length > 12 ||
+                  draft.verifying.suggestions.some(
+                    (s) =>
+                      !s ||
+                      !/^p[1-6]$/.test(s.id) ||
+                      typeof s.code !== "string" ||
+                      typeof s.quote !== "string",
+                  ) ||
+                  !draft.verifying.excluded ||
+                  Array.isArray(draft.verifying.excluded) ||
+                  typeof draft.verifying.excluded !== "object" ||
+                  Object.entries(draft.verifying.excluded).some(
+                    ([kind, n]) =>
+                      ![
+                        "passage",
+                        "quote",
+                        "label",
+                        "capacity",
+                        "duplicate",
+                        "declined",
+                      ].includes(kind) ||
+                      !Number.isSafeInteger(n) ||
+                      n < 0,
+                  ))) ||
               (draft.codeExamples !== undefined &&
                 typeof draft.codeExamples !== "boolean") ||
               (draft.labelEdits !== undefined &&
@@ -214,7 +246,12 @@ export function verifyProject(p) {
                       typeof row.definition !== "string" ||
                       typeof row.keep !== "boolean",
                   ))) ||
-              [draft.rejected, draft.manual, draft.withdrawnLabels].some(
+              [
+                draft.rejected,
+                draft.accepted,
+                draft.manual,
+                draft.withdrawnLabels,
+              ].some(
                 (choices) =>
                   choices !== undefined &&
                   (!Array.isArray(choices) ||
@@ -440,6 +477,12 @@ function rewriteThemeReferences(project, d, changes, undoViews) {
   }
   for (const p of d.passages) {
     p.codes = [...new Set(p.codes.map(rename).filter(Boolean))];
+    if (Array.isArray(p.declinedCoding))
+      p.declinedCoding = p.declinedCoding.flatMap((entry) => {
+        if (typeof entry?.label !== "string") return [];
+        const label = rename(entry.label);
+        return label ? [{ ...entry, label }] : [];
+      });
     if (p.codingEvidence) {
       p.codingEvidence = p.codingEvidence.filter((entry) => {
         entry.code = rename(entry.code);
@@ -525,13 +568,14 @@ export function rewriteInterviewLabelReferences(
   // Replacing the draft also prevents a late model response to the old guide
   // from being applied after the student has edited the codebook.
   const draft = { ...current };
+  delete draft.verifying;
   const clear = new Set(clearPending.map(labelKey));
   const pending = (value) => (clear.has(labelKey(value)) ? "" : replace(value));
   draft.matches = draft.matches.flatMap((match) => {
     const code = pending(match.code);
     return code ? [{ ...match, code }] : [];
   });
-  for (const key of ["manual", "rejected"]) {
+  for (const key of ["manual", "rejected", "accepted"]) {
     if (!draft[key]) continue;
     draft[key] = draft[key].flatMap((choice) => {
       let pair;

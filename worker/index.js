@@ -2,6 +2,7 @@ import tutor from "./data-bot.md";
 import charts from "./skills/charts.md";
 import codebook from "./skills/codebook.md";
 import coding from "./skills/coding.md";
+import verifyCoding from "./skills/verify-coding.md";
 import imports from "./skills/import.md";
 import regression from "./skills/regression.md";
 import recommend from "./skills/recommend.md";
@@ -12,6 +13,7 @@ const skills = {
   research,
   charts,
   coding,
+  verifyCoding,
   codebook,
   imports,
   regression,
@@ -19,6 +21,24 @@ const skills = {
 };
 const gateway = "https://llm.k8s.rug.nl/v1/chat/completions";
 const models = ["gemma-26B-MoE", "Qwen3.6-35B-A3B-AWQ-4bit"];
+
+function verificationFormat(ids) {
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "verified_interview_assignments",
+      strict: true,
+      schema: {
+        type: "object",
+        properties: {
+          keep: { type: "array", items: { type: "string", enum: ids } },
+        },
+        required: ["keep"],
+        additionalProperties: false,
+      },
+    },
+  };
+}
 
 function codebookFormat(context) {
   const text = { type: "string" };
@@ -144,6 +164,20 @@ export default {
         data.question.length > 4000
       )
         return reply(400, { error: "Choose a task and a shorter question." });
+      let verification;
+      if (data.skill === "verifyCoding") {
+        const candidates = data.context?.candidates;
+        if (
+          !Array.isArray(candidates) ||
+          !candidates.length ||
+          candidates.length > 12 ||
+          candidates.some((c, i) => c?.id !== "v" + (i + 1))
+        )
+          return reply(400, {
+            error: "Select a valid batch of coding suggestions.",
+          });
+        verification = verificationFormat(candidates.map((c) => c.id));
+      }
       const messages = [
         {
           role: "system",
@@ -181,7 +215,8 @@ export default {
             body: JSON.stringify({
               model,
               messages,
-              temperature: data.skill === "codebook" ? 0 : 0.3,
+              temperature: data.skill === "codebook" || verification ? 0 : 0.3,
+              ...(verification && { response_format: verification }),
               ...(data.skill === "codebook" && {
                 response_format: codebookFormat(data.context),
               }),
@@ -203,6 +238,11 @@ export default {
             error: "The university gateway could not process this request.",
           });
         const choice = (await upstream.json()).choices?.[0];
+        if (verification && choice?.finish_reason === "length")
+          return reply(422, {
+            error:
+              "The evidence check returned an incomplete verdict. Retry this batch.",
+          });
         if (data.skill === "codebook" && choice?.finish_reason === "length")
           return reply(422, {
             error:

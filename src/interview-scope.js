@@ -13,6 +13,30 @@ const generic = new Set(
 );
 const commonName = (token) => generic.has(token) || /^\d+$/u.test(token);
 
+// A gap check uses the shared codebook even if the student calls the results
+// "suggestions". It is a different request from discovering new labels.
+export function requestsMissedLabels(message) {
+  const text = message.toLowerCase().replace(/’/g, "'");
+  const naming =
+    /\b(?:codes?|labels?|themes?|coderingen|thema's|coding)\b/u.test(text);
+  if (!naming) return false;
+  return (
+    /\b(?:miss(?:ed|ing)?|overlook(?:ed)?|omitted|forgotten|overgeslagen|gemist\w*|ontbreken\w*)\s+(?:(?:any|other|some|existing|approved|applicable)\s+){0,3}(?:codes?|labels?|themes?|coderingen)\b/i.test(
+      text,
+    ) ||
+    /\b(?:codes?|labels?|themes?|coderingen)\b(?:\s+(?:that|which|did|have|were|we|i|you|the bot|been|may|might|had|zijn|we hebben)){0,6}\s+(?:miss(?:ed)?|overlook(?:ed)?|omit(?:ted)?|gemist|overgeslagen)\b/i.test(
+      text,
+    ) ||
+    /\b(?:second (?:look|pass)|look again|double[- ]check|check again|recheck)\b/i.test(
+      text,
+    ) ||
+    (/\b(?:additional|other|another|second)\b/i.test(text) &&
+      /\b(?:already coded|already labelled|already labeled|also appl(?:y|ies)|also fit)\b/i.test(
+        text,
+      ))
+  );
+}
+
 function mentionedSources(message, sources) {
   const aliases = new Map();
   let longest = 0;
@@ -74,11 +98,11 @@ export function interviewScopeRequest(message, sources, current) {
       firstStep,
     );
   const all =
-    /\b(?:all|each|every)(?:\s+(?:of|my|our|the|these|those|loaded|uploaded|other|\d+|three|two))*\s+(?:interviews?|transcripts?)\b|\b(?:whole|entire) collection\b/i.test(
+    /\b(?:all|each|every)(?:\s+(?:of|my|our|the|these|those|loaded|uploaded|other|\d+|three|two))*\s+(?:interviews?|transcripts?)\b|\balle (?:interviews|transcripten)\b|\b(?:whole|entire) collection\b/i.test(
       firstStep,
     );
   const constrained =
-    /\b(?:except|excluding|apart from|other than|all (?:the )?other|but not|leave out|don't include|do not include|not all)\b/i.test(
+    /\b(?:except|excluding|apart from|other than|all (?:the )?other|but not|leave out|don't include|do not include|not all|behalve|uitgezonderd|niet alle)\b/i.test(
       firstStep,
     );
   if (constrained)

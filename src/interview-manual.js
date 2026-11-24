@@ -2,7 +2,7 @@ import { labelAppearance, availableLabelColour } from "./label-appearance.js";
 import { transcriptIndex } from "./transcript-index.js";
 import { esc } from "./chart.js";
 import { uid } from "./import.js";
-import { approvedBook, labelKey } from "./coding.js";
+import { approvedBook, labelKey, rememberDeclinedLabels } from "./coding.js";
 import {
   sharedBook,
   pruneEmptyQuotations,
@@ -430,6 +430,10 @@ export function editPassageLabels(d, s, ps, api, refresh, explicit) {
             removed.push(JSON.stringify([target.p.id, label]));
         }
         if (target.whole) {
+          rememberDeclinedLabels(
+            original,
+            book.filter((entry) => deleted.includes(entry.label)),
+          );
           original.codes = [...next];
           original.reviewed = true;
           if (original.codingEvidence)

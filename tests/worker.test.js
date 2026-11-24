@@ -163,3 +163,59 @@ test("codebook requests pass grouped entries through intact and reject a truncat
   assert.equal(partial.status, 422);
   assert.equal((await partial.json()).answer, undefined);
 });
+
+test("evidence checks use a strict subset of candidate IDs, preserve an empty verdict and reject truncation", async (t) => {
+  const { token } = await (
+    await worker.fetch(req("/session", { code: env.COURSE_CODE }), env)
+  ).json();
+  const context = {
+    passages: [{ id: "p1", text: "I write little." }],
+    candidates: [
+      {
+        id: "v1",
+        passageId: "p1",
+        code: "Writing",
+        quote: "write",
+        definition: "Writing",
+      },
+    ],
+  };
+  let truncated = false;
+  t.mock.method(globalThis, "fetch", async (_url, { body }) => {
+    const upstream = JSON.parse(body);
+    assert.deepEqual(JSON.parse(upstream.messages[1].content).context, context);
+    const { schema, strict } = upstream.response_format.json_schema;
+    assert.equal(strict, true);
+    assert.equal(schema.additionalProperties, false);
+    assert.deepEqual(schema.required, ["keep"]);
+    assert.deepEqual(schema.properties.keep.items.enum, ["v1"]);
+    assert.equal(upstream.temperature, 0);
+    assert.match(upstream.messages[0].content, /absence of evidence/);
+    return Response.json({
+      choices: [
+        {
+          finish_reason: truncated ? "length" : "stop",
+          message: { content: '{"keep":[]}' },
+        },
+      ],
+    });
+  });
+  const ask = (data) =>
+    worker.fetch(
+      req(
+        "/ask",
+        { question: "Check evidence", skill: "verifyCoding", context: data },
+        token,
+      ),
+      env,
+    );
+  assert.equal(
+    (await ask({ ...context, candidates: [{ id: "unknown" }] })).status,
+    400,
+  );
+  assert.deepEqual(JSON.parse((await (await ask(context)).json()).answer), {
+    keep: [],
+  });
+  truncated = true;
+  assert.equal((await ask(context)).status, 422);
+});
