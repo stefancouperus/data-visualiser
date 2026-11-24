@@ -447,6 +447,7 @@ for (const action of ["draw", "restyleChart"]) {
       await expect(group).toHaveValue("Halte");
       await expect(unit).toHaveValue("themeShare");
       await expect(dots.locator("[data-pattern-row]")).toHaveCount(4);
+      await button(bot, "Close").click();
       await cell(figure, "Kosten", "Pier").click();
       await expect(page.getByRole("dialog")).toContainText(
         "2 of the 2 original passages coded with this theme across the displayed groups",
