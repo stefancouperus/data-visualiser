@@ -19,6 +19,12 @@ import {
   saveHelpMode,
 } from "./bot-help.js";
 import { structuredAnswer } from "./bot-response.js";
+import {
+  asksForSurveyPatterns,
+  canSpotSurveyPatterns,
+  surveyInsights,
+  surveyPatternSuggestion,
+} from "./survey-insights.js";
 import { extractCodebookEntries } from "./codebook-extraction.js";
 import { botSession, confirmTaskAccess } from "./bot-access.js";
 import {
@@ -343,6 +349,7 @@ const selectionKeys = [
   "items",
   "patternMode",
   "groupBy",
+  "percentBase",
   "themeUnit",
 ];
 function beginSelection(i) {
@@ -454,6 +461,10 @@ function botChat() {
     both: step === 3 && botFocus === "both",
   };
   const draft = step === 1 && dataset?.interviews?.draft;
+  const spotPatterns =
+    [2, 3].includes(step) &&
+    !context.both &&
+    canSpotSurveyPatterns(dataset, context.view);
   const reviewReady = draft && draft.next === draft.total && draft.total > 0;
   const messages = history
     .map(
@@ -466,7 +477,7 @@ function botChat() {
     ${suggestions.length ? b("applycodes", "Apply all suggested labels", "primary") : ""}${suggestions.map((s, i) => `<div class="card"><b>${esc(s.code)}</b><small>${esc(s.source)}</small><p>“${esc(s.quote)}”</p><small>${esc(s.reason)}</small><div>${b("acceptcode", "Review label", "", 'data-i="' + i + '"')} ${b("dismisscode", "Dismiss", "plain", 'data-i="' + i + '"')}</div></div>`).join("")}
     ${captionDraft ? b("applycaption", "Add caption to figure") : ""}
     ${chosen.size || scope.length ? `<div class="bot-included"><small>Included with your message · ${chosen.size} selected passages · ${scope.length} whole sources</small>${b("clearevidence", "Clear included text", "plain")}</div>` : ""}
-    <textarea id="question" rows="2" aria-label="Ask about your project" maxlength="4000" placeholder="Ask about your project…">${esc(lastQuestion)}</textarea><div class="bar">${b("send", "Send", "primary", requesting ? "disabled" : "")}</div></section>
+    <textarea id="question" rows="2" aria-label="Ask about your project" maxlength="4000" placeholder="Ask about your project…">${esc(lastQuestion)}</textarea><div class="bar">${b("send", "Send", "primary", requesting ? "disabled" : "")}${spotPatterns ? b("botpatterns", "Spot patterns", "", `data-i="${context.panel}" ${requesting ? "disabled" : ""}`) : ""}</div></section>
     ${
       reviewReady
         ? '<div class="bot-hint" role="status"><span>' +
@@ -1311,6 +1322,17 @@ function tidy(v, key) {
     v.title = v.annotation = "";
     return;
   }
+  if (
+    d.kind === "table" &&
+    v.task === "patterns" &&
+    ["groupBy", "patternMode", "percentBase"].includes(key)
+  ) {
+    v.title = v.annotation = "";
+    delete v.highlight;
+    if (key !== "percentBase") v.chart = available(d, v)[0];
+    else adaptChart(d, v);
+    return;
+  }
   if (key === "task" && v.task === "patterns") {
     const choices = patternChoices(d).map(([id]) => id);
     v.items = Array.isArray(v.items)
@@ -1681,6 +1703,7 @@ function botContext(question = "") {
             }
           : null,
         availableCharts: available(d, project.views[i]),
+        surveyInsights: surveyInsights(a),
         chartListScope:
           "These options apply to restyling the current selection. For a new comparison, use the project chart options and choose the requested questions.",
         categoricalPattern:
@@ -1854,10 +1877,13 @@ function proposedChart(pick, question = "") {
     }
     const themeUnit = pick.themeUnit ?? current.themeUnit ?? "interviews";
     if (!["interviews", "passages"].includes(themeUnit)) return null;
+    const percentBase = pick.percentBase ?? current.percentBase ?? "group";
+    if (!text && !["group", "answer"].includes(percentBase)) return null;
     const view = {
       ...current,
       groupBy,
       themeUnit,
+      ...(!text && { percentBase }),
       task: "patterns",
       items,
       patternMode,
@@ -1974,6 +2000,15 @@ function applyProposal() {
     throw Error("The view has changed. Ask for a fresh chart suggestion.");
   const chart = summary(candidate.panel, candidate.view);
   if (
+    candidate.patternReading &&
+    candidate.patternReading !== JSON.stringify(surveyInsights(chart))
+  ) {
+    render();
+    throw Error(
+      "The answers behind this suggestion changed. Choose Spot patterns again.",
+    );
+  }
+  if (
     candidate.groupSuggestion?.some(
       (evidence) =>
         !chart.records.some(
@@ -2057,7 +2092,9 @@ function applyProposal() {
       ". " +
       chart.note +
       linkedMessage +
-      (candidate.groupSuggestion ? "" : groupInsight),
+      (candidate.groupSuggestion || candidate.patternReading
+        ? ""
+        : groupInsight),
   });
   render();
   get("graphic" + candidate.panel)?.scrollIntoView({ block: "nearest" });
@@ -2229,6 +2266,27 @@ async function checkGroupSuggestion() {
     worker.terminate();
   }
 }
+function suggestCurrentSurveyPatterns() {
+  proposal = captionDraft = null;
+  const index = focusIndex(),
+    view = project.views[index],
+    selection = summary(index);
+  const result = surveyPatternSuggestion(
+    selection,
+    view.chart,
+    available(getData(), view),
+  );
+  if (result?.chart) {
+    proposal = proposedChart({ action: "restyleChart", chart: result.chart });
+    if (proposal) proposal.patternReading = JSON.stringify(result.evidence);
+  }
+  history.push({
+    role: "assistant",
+    content:
+      result?.message ||
+      "Choose the survey questions to compare, then choose a question to split the answers into groups.",
+  });
+}
 function finishCodingBatch(question) {
   const current = new Set(selectedPassages().map((p) => p.id));
   if (suggestions.some((s) => !current.has(s.id)))
@@ -2304,6 +2362,19 @@ async function ask(question, skill, intent = "") {
   const dataset = getData();
   const current =
     project.views[step === 3 && botFocus === "both" ? 1 : focusIndex()];
+  if (
+    skill === "recommend" &&
+    [2, 3].includes(step) &&
+    !(step === 3 && botFocus === "both") &&
+    canSpotSurveyPatterns(dataset, current) &&
+    (intent === "spotPatterns" || (!intent && asksForSurveyPatterns(question)))
+  ) {
+    history.push({ role: "user", content: question });
+    lastQuestion = "";
+    suggestCurrentSurveyPatterns();
+    render();
+    return;
+  }
   if (!intent && skill === "recommend" && dataset && [2, 3].includes(step))
     intent = chartReadingIntent(question);
   if (dataset && skill === "recommend" && !intent && [2, 3].includes(step)) {
@@ -2516,9 +2587,12 @@ async function ask(question, skill, intent = "") {
   if (pattern?.items && pattern.items.length <= selectionLimit) {
     const chart =
       namedChartRequest(question) ||
-      (dataset.kind === "text" &&
-      pattern.patternMode === "sources" &&
-      !(pattern.groupBy || current?.groupBy)
+      ((dataset.kind === "text" &&
+        pattern.patternMode === "sources" &&
+        !(pattern.groupBy || current?.groupBy)) ||
+      (dataset.kind === "table" &&
+        pattern.patternMode === "separate" &&
+        (pattern.groupBy || current?.groupBy))
         ? "grid"
         : "bars");
     const spec = { action: "draw", task: "patterns", chart, ...pattern };
@@ -2802,6 +2876,16 @@ async function ask(question, skill, intent = "") {
         history.push({ role: "assistant", content: text });
         return;
       }
+      if (
+        pick.action === "spotPatterns" &&
+        !intent &&
+        [2, 3].includes(step) &&
+        !(step === 3 && botFocus === "both") &&
+        canSpotSurveyPatterns(dataset, current)
+      ) {
+        suggestCurrentSurveyPatterns();
+        return;
+      }
       if (pick.action === "suggestGroups" && !intent && [2, 3].includes(step)) {
         await withBotActivity(
           "Checking possible groups in your selection…",
@@ -2823,7 +2907,11 @@ async function ask(question, skill, intent = "") {
       ) {
         if (grouping && (pick.action === "draw" || pick.action === "suggest")) {
           pick = { ...pick, task: "patterns", groupBy: grouping.groupBy };
-          if (pick.chart === "grid" && !namedChartRequest(question))
+          if (
+            pick.chart === "grid" &&
+            !namedChartRequest(question) &&
+            !(dataset.kind === "table" && pick.patternMode === "separate")
+          )
             pick.chart = "bars";
         }
         const requestedChart = namedChartRequest(question);
@@ -3226,6 +3314,8 @@ function patternEvidence(i, index) {
   if (!cell) return;
   if (d.kind === "table") {
     const fields = v.items.map((id) => d.fields.find((f) => f.id === id));
+    const groupField = d.fields.find((f) => f.id === v.groupBy);
+    const visibleFields = groupField ? [groupField, ...fields] : fields;
     const rows = filteredRows(d, v).filter((r) => {
       if (v.groupBy && groupValue(d, v.groupBy, r) !== cell.groupValue)
         return false;
@@ -3241,14 +3331,20 @@ function patternEvidence(i, index) {
             JSON.stringify(cell.keyParts[j]),
       );
     });
+    const question = fields.find((f) => f.id === cell.fieldId);
+    const cellDescription =
+      groupField && question
+        ? `<p><strong>${esc(question.label)}</strong> · ${esc(cell.label)}<br>${esc(groupField.label)} · ${esc(cell.groupValue)}</p>`
+        : "";
     modal(
       "Responses behind this pattern",
-      `<p>Showing ${Math.min(200, rows.length)} of ${rows.length} matching records.</p>` +
+      cellDescription +
+        `<p>Showing ${Math.min(200, rows.length)} of ${rows.length} matching records.</p>` +
         table(
-          fields.map((f) => f.label),
+          visibleFields.map((f) => f.label),
           rows
             .slice(0, 200)
-            .map((r) => fields.map((f) => displayedAnswer(r, f))),
+            .map((r) => visibleFields.map((f) => displayedAnswer(r, f))),
         ),
     );
     return;
@@ -3889,6 +3985,65 @@ async function action(act, el) {
         ensureBotAccess,
       );
       return;
+    case "surveycompare": {
+      const draft = pendingSelections.get(i);
+      const view = draft ? draft.view : project.views[i];
+      const choices = new Set(patternChoices(d).map(([id]) => id));
+      const markedOutcome = d.fields.find(
+        (f) => f.roles?.includes("outcome") && choices.has(f.id),
+      );
+      const current = d.fields.find(
+        (f) =>
+          f.id === (view.task === "model" ? view.outcome : view.x) &&
+          choices.has(f.id),
+      );
+      let outcome =
+        current?.id || markedOutcome?.id || choices.values().next().value;
+      if (
+        view.task === "one" &&
+        markedOutcome &&
+        !current?.roles?.includes("outcome")
+      )
+        outcome = markedOutcome.id;
+      if (!outcome) return;
+      const groups = new Set(groupChoices(d, [outcome]).map(([id]) => id));
+      const markedGroups = d.fields.filter(
+        (f) => groups.has(f.id) && f.roles?.includes("grouping"),
+      );
+      const groupBy =
+        ["group", "two"].includes(view.task) && groups.has(view.y)
+          ? view.y
+          : markedGroups.length === 1
+            ? markedGroups[0].id
+            : "";
+      if (!draft) snapshotViews();
+      if (step === 3) focusBot(i ? "right" : "left");
+      proposal = captionDraft = queuedShortcut = null;
+      selectionConfirmed = false;
+      Object.assign(view, {
+        task: "patterns",
+        items: [outcome],
+        groupBy,
+        patternMode: "separate",
+        percentBase: "group",
+        chart: groupBy ? "grid" : "bars",
+        title: "",
+        annotation: "",
+      });
+      delete view.highlight;
+      render(
+        draft
+          ? undefined
+          : { panel: i, title: "Compared survey answers by group" },
+      );
+      const editor = document.querySelector(
+        `[data-panel="${i}"] .selection-editor`,
+      );
+      editor
+        ?.querySelector("[data-item]:checked")
+        ?.focus({ preventScroll: true });
+      return;
+    }
     case "editselection":
       selectionConfirmed = false;
       beginSelection(i);
@@ -4091,7 +4246,9 @@ async function action(act, el) {
       view.chart = el.dataset.chart;
       render({ panel: i, title: "Changed the chart type" });
       document
-        .querySelector(`[data-panel="${i}"] .chart-picker summary`)
+        .querySelector(
+          `[data-panel="${i}"] .chart-picker summary, [data-panel="${i}"] .survey-chart-tools [aria-pressed="true"]`,
+        )
         ?.focus({ preventScroll: true });
       return;
     }
@@ -4329,15 +4486,20 @@ async function action(act, el) {
     case "choose":
     case "researchsuggest":
     case "suggestgroups":
+    case "botpatterns":
     case "botvariant":
     case "botcaption":
     case "askview":
     case "askboth": {
       if (requesting)
         return notice("The Data bot is working on your previous request.");
-      if (step === 3 && (act === "askview" || act === "askboth"))
+      if (step === 3 && ["askview", "askboth", "botpatterns"].includes(act))
         focusBot(act === "askboth" ? "both" : i ? "right" : "left");
       const [intent, prompt] = {
+        botpatterns: [
+          "spotPatterns",
+          "What stands out in these answers across the selected groups, and which chart would help me see it?",
+        ],
         discusspass: [
           "excerpts",
           "Explain what the selected passages have in common or how they differ. Ground each point in a short exact quotation and name the source. Limit your claims to these passages.",
@@ -5314,7 +5476,22 @@ document.addEventListener("change", (e) => {
       (el) => el.dataset.predictor,
     );
   } else if (t.hasAttribute("data-interaction")) v.interaction = t.checked;
-  else if (t.dataset.key) {
+  else if (t.dataset.key === "surveyReading") {
+    const mode = t.value === "together" ? "together" : "separate";
+    const key = v.patternMode === mode ? "percentBase" : "patternMode";
+    v.patternMode = mode;
+    if (mode === "separate") v.percentBase = t.value;
+    tidy(v, key);
+  } else if (t.dataset.key) {
+    if (
+      t.dataset.key === "groupBy" &&
+      getData().kind === "table" &&
+      !v.groupBy &&
+      t.value
+    ) {
+      v.patternMode = "separate";
+      v.percentBase = "group";
+    }
     v[t.dataset.key] = t.value;
     tidy(v, t.dataset.key);
     if (
@@ -5336,7 +5513,9 @@ document.addEventListener("change", (e) => {
       ? undefined
       : { panel: i, title: "Explored a visual" },
   );
-  if (["task", "patternMode"].includes(t.dataset.key))
+  if (
+    ["task", "patternMode", "surveyReading", "groupBy"].includes(t.dataset.key)
+  )
     document
       .querySelector(`[data-panel="${i}"] select[data-key="${t.dataset.key}"]`)
       ?.focus({ preventScroll: true });

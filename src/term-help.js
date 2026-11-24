@@ -1,4 +1,5 @@
 import { esc } from "./chart.js";
+import { numberBands } from "./survey-grouping.js";
 
 export const terms = {
   group: "What is a group?",
@@ -10,8 +11,19 @@ export const terms = {
 export function termMeaning(term, d, view = {}) {
   if (term === "filter")
     return "A filter chooses which records go into this view. Comparing groups keeps several sets of records in the chart so you can see their results side by side. Filtering to one value shows just the records with that value. Your original data stay in the project.";
-  if (term === "percent")
+  if (term === "percent") {
+    if (
+      d?.kind === "table" &&
+      view.task === "patterns" &&
+      view.patternMode === "separate" &&
+      view.groupBy
+    ) {
+      return view.percentBase === "answer"
+        ? "Start with everyone who gave this answer and has a recorded group. The percentage tells you what share of those people came from each group. A larger group may supply more of the answers simply because it has more people."
+        : "Start with a group and count how many of its members answered this question. The percentage tells you what share of them chose each answer. If people could tick several answers, the shares can add up to more than 100%.";
+    }
     return "A percentage tells you how many out of every 100. For example, 3 out of 10 is 30%. When you compare groups, each percentage uses the total that counts for that group and question. Check what the chart counts and how many observations the percentage is based on.";
+  }
   if (term === "theme" && d?.openAnswers)
     return "A code is a short label for an idea in a written answer. One respondent can mention several themes. Select a whole answer or highlight a passage to code it.";
   if (term === "theme")
@@ -33,6 +45,9 @@ export function termMeaning(term, d, view = {}) {
         : "";
   if (!key) return meaning;
   const field = d?.fields?.find((f) => f.id === key);
+  const bands = view.task === "patterns" && numberBands(field);
+  if (bands)
+    return `This view groups the numbers recorded for “${field.label}” into ranges. Each respondent belongs to the range containing their answer. The same ranges apply to every question you selected.`;
   const values = text ? d.sources : field?.levels || [];
   const examples = [];
   for (const value of values) {

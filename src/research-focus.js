@@ -159,7 +159,12 @@ export function researchChart(pick, c) {
     groupBy: group,
     patternMode: mode,
     themeUnit: "interviews",
-    chart: text && !group && mode === "sources" ? "grid" : "bars",
+    chart:
+      (!text && group && mode === "separate") ||
+      (text && !group && mode === "sources")
+        ? "grid"
+        : "bars",
+    ...(!text && group && mode === "separate" ? { percentBase: "group" } : {}),
   };
 }
 

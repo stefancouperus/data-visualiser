@@ -9,6 +9,7 @@ import * as d3 from "d3";
 import { drawWordTable } from "./word-table.js";
 import { drawGap } from "./survey-gap.js";
 import { drawBoxPlot } from "./box-plot.js";
+import { drawSurveyDistribution } from "./survey-distribution.js";
 export const esc = (s) =>
   String(s ?? "").replace(
     /[&<>"']/g,
@@ -285,7 +286,30 @@ export function figure(a, v, { width = 700, interactive = false } = {}) {
       pos += theme.row;
     }
   }
-  if (v.task === "patterns" && v.chart !== "grid") {
+  if (
+    a.surveyDistribution &&
+    ["grid", "table", "dots", "stack"].includes(v.chart)
+  ) {
+    pos = drawSurveyDistribution({
+      root,
+      records,
+      analysis: a,
+      chart: v.chart,
+      width: w,
+      margin,
+      pos,
+      theme,
+      style,
+      paper,
+      scheme,
+      highlighted,
+      named,
+      wrap,
+      interactive: inspectable,
+      pointMark,
+      readableText,
+    });
+  } else if (v.task === "patterns" && v.chart !== "grid") {
     const ranked = a.distinctPatterns != null;
     const namedQuestions = v.patternMode === "together";
     if (namedQuestions)

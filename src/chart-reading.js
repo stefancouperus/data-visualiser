@@ -16,6 +16,9 @@ export function tutorViewSettings(v) {
       ...settings,
       items: v.items,
       patternMode: v.patternMode,
+      ...(v.groupBy && v.patternMode === "separate"
+        ? { percentBase: v.percentBase === "answer" ? "answer" : "group" }
+        : {}),
       groupBy: v.groupBy,
       themeUnit: v.themeUnit,
     };
@@ -58,6 +61,7 @@ const label = (value) => "“" + value + "”";
 // Each option can stand on its own. The model may choose a relevant verified
 // sentence, but neither its prose nor an unknown option enters a figure.
 function observations(v) {
+  if (v.surveyInsights?.facts?.length) return v.surveyInsights.facts;
   const facts = [];
   const pattern = v.categoricalPattern;
   if (pattern?.largestObservedShareDifference) {
@@ -184,6 +188,32 @@ function countReadings(view, question) {
             .join(" "),
         ]
       : [];
+  }
+  if (view.surveyDistribution) {
+    if (view.recordsTotal > view.records.length) return [];
+    const selected = view.records.filter((r) => named(r.label));
+    const questions = selected.filter((r) => named(r.question));
+    const answers = questions.length ? questions : selected;
+    const groups = answers.filter(
+      (r) => named(r.groupValue) && r.groupValue !== r.label,
+    );
+    const rows = groups.length ? groups : answers;
+    if (!rows.length || rows.length > 12) return [];
+    return [
+      rows
+        .map((r) => {
+          const questionAnswer = label(r.label) + " for " + label(r.question);
+          if (view.percentBase === "answer") {
+            return r.den
+              ? `Of the ${r.den} people with a recorded group who chose ${questionAnswer}, ${r.n} belonged to ${label(r.groupValue)} (${number.format(r.value)}%).`
+              : `No one with a recorded group chose ${questionAnswer}.`;
+          }
+          return r.den
+            ? `In group ${label(r.groupValue)}, ${r.n} of ${r.den} people who answered chose ${questionAnswer} (${number.format(r.value)}%).`
+            : `No one in group ${label(r.groupValue)} answered ${label(r.question)}.`;
+        })
+        .join(" "),
+    ];
   }
   if (!view.categoricalPattern) return [];
   const rows = (view.records || []).filter((r) => r.den > 0 && named(r.label));

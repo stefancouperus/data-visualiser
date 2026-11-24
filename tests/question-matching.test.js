@@ -235,6 +235,53 @@ test("requested cross-tab uses the named grouping and distinguishes counts from 
   );
 });
 
+test("a named list of outcomes uses one shared grouping and respects compound question names", async () => {
+  const { namedSurveyComparison } = await import("../src/question-matching.js");
+  const fields = [
+    "Road safety",
+    "Cycle access",
+    "Journey time",
+    "District",
+    "Arts and culture",
+  ].map((label, i) => ({
+    id: "c" + i,
+    label,
+    type: "category",
+    levels: ["A", "B"],
+  }));
+  const request = (message) => namedSurveyComparison(fields, message);
+  const expected = {
+    action: "draw",
+    task: "patterns",
+    items: ["c0", "c1", "c2"],
+    groupBy: "c3",
+    patternMode: "separate",
+    percentBase: "group",
+    chart: "grid",
+  };
+  assert.deepEqual(
+    request(
+      "Compare road safety, cycle access and journey time across district",
+    ),
+    expected,
+  );
+  assert.deepEqual(
+    request(
+      "Draw a dot plot of road safety, cycle access and journey time by district",
+    ),
+    { ...expected, chart: "dots" },
+  );
+  assert.equal(request("Compare arts and culture by district")?.x, "c4");
+  assert.notEqual(
+    request("Compare road safety and last bus by district")?.task,
+    "patterns",
+  );
+  assert.notEqual(
+    request("Compare road safety and district by district")?.task,
+    "patterns",
+  );
+});
+
 test("a conversational heatmap command can set both roles and its denominator after the request", async () => {
   const { namedSurveyComparison, namedChartRequest } =
     await import("../src/question-matching.js");

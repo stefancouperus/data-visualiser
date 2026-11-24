@@ -1,4 +1,5 @@
 import { filteredRows } from "./import.js";
+import { surveyGroupReader } from "./survey-grouping.js";
 import {
   groupChoices,
   groupValue,
@@ -65,19 +66,25 @@ export function suggestGrouping(d, view) {
     : filteredRows(d, view);
   const candidates = [];
   for (const [key, label] of groupingFields) {
+    const readGroup = text
+      ? (entry) => groupValue(d, key, entry)
+      : surveyGroupReader(d.fields.find((field) => field.id === key));
     const counts = new Map();
     let recorded = 0;
     // A copy of a selected answer would manufacture a contrast.
     const copies = new Set(text ? [] : items);
     for (const entry of entries) {
-      const value = groupValue(d, key, entry);
+      const value = readGroup(entry);
       if (!value) continue;
       recorded++;
       for (const item of copies)
         if (
           String(entry[item] ?? "")
             .trim()
-            .toLowerCase() !== value.toLowerCase()
+            .toLowerCase() !==
+          String(entry[key] ?? "")
+            .trim()
+            .toLowerCase()
         )
           copies.delete(item);
       counts.set(value, (counts.get(value) || 0) + 1);
@@ -105,7 +112,9 @@ export function suggestGrouping(d, view) {
       patternMode: mode,
       groupBy: c.key,
       themeUnit: view.themeUnit || "interviews",
-      chart: "bars",
+      ...(!text && mode === "separate"
+        ? { chart: "grid", percentBase: "group" }
+        : { chart: "bars" }),
     };
     let a;
     try {

@@ -12,6 +12,11 @@ export function figureScope(v) {
       v.patternMode,
       v.outcome,
       v.predictors,
+      ...(v.groupBy &&
+      v.patternMode === "separate" &&
+      v.percentBase === "answer"
+        ? ["answer"]
+        : []),
     ].map((value) => value || null),
   );
 }
@@ -63,9 +68,13 @@ export function figureParts(a, v) {
     );
   } else if (v.chart !== "hist") {
     if (a.groupLabel) {
+      if (a.surveyDistribution)
+        add("questions", "Question headings", a.selectedLabels || [], false);
       add(
         "groups",
-        "Row headings",
+        a.surveyDistribution
+          ? "Answer rows (question · answer)"
+          : "Row headings",
         rows.map((r) => r.group),
       );
       add(

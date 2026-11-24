@@ -4,6 +4,11 @@ import { hasAnswer, choicesIn, optionLevels } from "./survey-answers.js";
 import { allCodes } from "./coding.js";
 import { passageUnits } from "./transcript-index.js";
 import { filteredRows } from "./import.js";
+import {
+  numberBands,
+  orderedGroups,
+  surveyGroupReader,
+} from "./survey-grouping.js";
 
 export const selectionLimit = 6;
 export function patternChoices(d) {
@@ -11,6 +16,7 @@ export function patternChoices(d) {
   return d.fields
     .filter(
       (f) =>
+        !f.roles?.includes("open") &&
         f.levels.length &&
         (["category", "ordered", "multiple"].includes(f.type) ||
           (f.type === "number" && f.levels.length <= 20)),
@@ -52,14 +58,19 @@ export function groupChoices(d, items = []) {
     .filter(
       (f) =>
         !items.includes(f.id) &&
+        !f.roles?.includes("open") &&
         ["category", "ordered", "number"].includes(f.type) &&
         f.levels.length &&
-        f.levels.length <= 30,
+        (f.levels.length <= 30 || f.type === "number"),
     )
     .map((f) => [f.id, f.label]);
 }
 export function groupValue(d, key, record) {
-  const values = d.kind === "text" ? d.metadata?.[record] : record;
+  if (d.kind === "table") {
+    const field = d.fields.find((f) => f.id === key);
+    return field ? surveyGroupReader(field)(record) : "";
+  }
+  const values = d.metadata?.[record];
   return values && Object.hasOwn(values, key)
     ? String(values[key] ?? "").trim()
     : "";
@@ -203,7 +214,14 @@ function summarise(d, v, rankLimit = 12, choices = new Map(patternChoices(d))) {
         if (hasAnswer(row, f)) den++;
         for (const pick of picks) tally.set(pick, (tally.get(pick) || 0) + 1);
       }
-      const labels = [...new Set([...optionLevels(f), ...tally.keys()])];
+      const labels = [
+        ...new Set([
+          ...(f.answerLabels || []).map(([, name]) => name),
+          ...optionLevels(f),
+          ...tally.keys(),
+        ]),
+      ];
+      if (f.type === "number") labels.sort((a, b) => Number(a) - Number(b));
       for (const label of labels) {
         const n = tally.get(label) || 0;
         a.records.push({
@@ -263,8 +281,12 @@ function groupedSummary(d, v) {
     : filteredRows(d, v);
   const buckets = new Map(),
     included = [];
+  const groupField = !text && d.fields.find((f) => f.id === key);
+  const readGroup = text
+    ? (s) => groupValue(d, key, s)
+    : surveyGroupReader(groupField);
   for (const entry of entries) {
-    const group = groupValue(d, key, entry);
+    const group = readGroup(entry);
     if (!group) continue;
     if (!buckets.has(group)) buckets.set(group, []);
     buckets.get(group).push(entry);
@@ -290,17 +312,33 @@ function groupedSummary(d, v) {
   const pooled = summarise(subset(included, allPassages), view, 12, choices);
   const themes = text && mode === "sources",
     byPassage = themes && v.themeUnit === "passages";
+  const distribution = !text && mode === "separate";
+  const percentBase =
+    distribution && v.percentBase === "answer" ? "answer" : "group";
+  if (
+    distribution &&
+    v.chart === "stack" &&
+    percentBase === "group" &&
+    d.fields.some((f) => v.items?.includes(f.id) && f.type === "multiple")
+  ) {
+    throw Error(
+      "A 100% answer mix within groups needs one answer per person. Choose the heatmap or table, or switch to the group mix for each answer.",
+    );
+  }
   const question = themes
     ? byPassage
       ? "Which themes occur in each group’s passages?"
       : d.openAnswers
         ? "Which themes do respondents in each group mention?"
         : "Which themes occur in each group’s interviews?"
-    : pooled.title;
+    : distribution
+      ? "Survey answers"
+      : pooled.title;
   const a = {
     ...pooled,
     title: v.title || question.replace(/\?$/, "") + " — by " + label,
     groupLabel: label,
+    ...(distribution ? { surveyDistribution: true, percentBase } : {}),
     records: [],
     groupSizes: [],
   };
@@ -313,7 +351,18 @@ function groupedSummary(d, v) {
   const rowKey = (r) =>
     JSON.stringify(r.keyParts ?? [r.fieldId || "", r.label]);
   const sets = [];
-  for (const [group, entries] of buckets) {
+  const groupOrder = text
+    ? [...buckets.keys()]
+    : orderedGroups(groupField, new Set(buckets.keys()));
+  const groupPositions = distribution
+    ? new Map(
+        [...new Set([...orderedGroups(groupField), ...groupOrder])].map(
+          (group, i) => [group, i],
+        ),
+      )
+    : null;
+  for (const group of groupOrder) {
+    const entries = buckets.get(group);
     const ps = passageBuckets.get(group) || [];
     const data = subset(entries, ps),
       part = summarise(data, view, Infinity, choices);
@@ -339,6 +388,7 @@ function groupedSummary(d, v) {
     a.groupSizes.push({
       group,
       selected: entries.length,
+      ...(distribution ? { colourIndex: groupPositions.get(group) } : {}),
       ...(text
         ? { passages: ps.length, reviewed: ps.filter((p) => p.reviewed).length }
         : mode === "together"
@@ -354,7 +404,9 @@ function groupedSummary(d, v) {
         ? "% of respondents who wrote an answer within each group"
         : "% of interviews within each group"
     : mode === "separate"
-      ? "% answering each question within each group"
+      ? percentBase === "answer"
+        ? "% of people who chose this answer, by group"
+        : "% answering each question within each group"
       : mode === "passages"
         ? "% of passages within each group"
         : mode === "interviews"
@@ -373,7 +425,19 @@ function groupedSummary(d, v) {
             : "interview.") +
         " "
       : "") +
-    pooled.note +
+    (distribution
+      ? (percentBase === "answer"
+          ? "When anyone chose an answer, its percentages add to 100% across groups."
+          : "Each percentage uses the people in that group who answered that question.") +
+        (v.items.some(
+          (id) => d.fields.find((f) => f.id === id)?.type === "multiple",
+        )
+          ? " People could choose several options in a multiple-answer question."
+          : "")
+      : pooled.note) +
+    (!text && numberBands(groupField)
+      ? " Numerical groups use ranges based on the full data."
+      : "") +
     " " +
     omitted +
     (text
@@ -395,11 +459,17 @@ function groupedSummary(d, v) {
     const comparable = [];
     for (const { group, cells, den, fieldDen } of sets) {
       const n = cells.get(themes ? row.label : rowKey(row)) || 0;
-      const base = row.fieldId ? fieldDen.get(row.fieldId) || 0 : den;
+      const base =
+        percentBase === "answer"
+          ? row.n
+          : row.fieldId
+            ? fieldDen.get(row.fieldId) || 0
+            : den;
       const value = base ? (100 * n) / base : 0;
       const cell = {
         ...row,
         group: series,
+        ...(distribution ? { question: row.group } : {}),
         groupValue: group,
         n,
         den: base,
@@ -409,7 +479,7 @@ function groupedSummary(d, v) {
       a.records.push(cell);
       if (base) comparable.push({ group, n, den: base, percent: value });
     }
-    if (comparable.length >= 2) {
+    if (percentBase !== "answer" && comparable.length >= 2) {
       comparable.sort((x, y) => x.percent - y.percent);
       const low = comparable[0],
         high = comparable.at(-1),

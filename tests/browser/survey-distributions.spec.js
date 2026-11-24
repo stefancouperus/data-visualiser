@@ -118,3 +118,48 @@ test("a named bot request draws a box plot and can switch to the gap plot", asyn
     "gap of 50 percentage points",
   );
 });
+
+test("confirmed roles prefill the outcome and group and a staged reading applies to the saved selection", async ({
+  page,
+}) => {
+  await uploadSurvey(page);
+  await page.getByText("Chart settings", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Choose question roles", exact: true })
+    .click();
+  for (const [label, role] of [
+    ["Recommends the route", "Outcome"],
+    ["Campus", "Grouping"],
+  ]) {
+    await page.locator(".role-list summary").filter({ hasText: label }).click();
+    await page
+      .getByRole("group", { name: label, exact: true })
+      .getByLabel(role)
+      .check();
+  }
+  await page.getByRole("button", { name: "Confirm question roles" }).click();
+  await page
+    .getByRole("button", { name: "Compare questions by group" })
+    .click();
+  await expect(
+    page.getByRole("checkbox", { name: "Recommends the route · Outcome" }),
+  ).toBeChecked();
+  await expect(
+    page.getByLabel("Compare by group").locator("option:checked"),
+  ).toHaveText("Campus · Grouping");
+  const panels = page.locator(
+    '#graphic0 [data-survey-view="grid"] [data-survey-question]',
+  );
+  await expect(panels).toHaveCount(1);
+  await page.getByLabel("Update the visual as I select").uncheck();
+  await page
+    .getByRole("checkbox", { name: "Commute minutes", exact: true })
+    .check();
+  await page.getByLabel("What would you like to see?").selectOption("answer");
+  await expect(panels).toHaveCount(1);
+  await page.getByRole("button", { name: "Apply selection to visual" }).click();
+  await expect(panels).toHaveCount(2);
+  const zero = panels.locator('[data-group="North"][data-answer="0"]');
+  await expect(zero).toContainText("100%");
+  await expect(zero).toHaveAccessibleName(/1 of 1/);
+});

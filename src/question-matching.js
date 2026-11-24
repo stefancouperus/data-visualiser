@@ -229,7 +229,7 @@ export function namedSurveyComparison(fields, question, chosen) {
   const plainComparison = question
     .trim()
     .match(
-      /^(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:show|plot|compare)\s+(?:me\s+)?(.+?)\s+by\s+([^,.;?!]+)[.?!]?$/i,
+      /^(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:show|plot|compare)\s+(?:me\s+)?(.+?)\s+(?:by|across)\s+([^,.;?!]+)[.?!]?$/i,
     );
   const chart = namedChart || (plainComparison && "bars");
   if (
@@ -298,6 +298,38 @@ export function namedSurveyComparison(fields, question, chosen) {
       !f.roles?.includes("open"),
   );
   const requestedGroups = axisChoices(options, axes[1]);
+  // Preserve a single question named, for example, "Arts and culture".
+  // Treat a list as separate outcomes only when every term resolves uniquely.
+  if (
+    !chosen &&
+    !unit &&
+    !within &&
+    requestedGroups.length === 1 &&
+    isSingleAnswerField(requestedGroups[0]) &&
+    ["bars", "dots", "grid", "table", "stack"].includes(chart) &&
+    !axisChoices(options, axes[0]).length
+  ) {
+    const terms = axes[0].split(/\s*,\s*(?:and\s+)?|\s+and\s+/i);
+    if (terms.length > 1) {
+      const matches = terms.map((term) => axisChoices(options, term));
+      if (matches.every((list) => list.length === 1)) {
+        const items = matches.map(([field]) => field.id);
+        if (
+          new Set(items).size === items.length &&
+          !items.includes(requestedGroups[0].id)
+        )
+          return {
+            action: "draw",
+            task: "patterns",
+            items,
+            groupBy: requestedGroups[0].id,
+            patternMode: "separate",
+            percentBase: "group",
+            chart: namedChart || "grid",
+          };
+      }
+    }
+  }
   if (
     requestedGroups.length &&
     requestedGroups.every((f) => f.type === "multiple")

@@ -100,6 +100,14 @@ export function check(d) {
 export function available(d, v) {
   if (d.kind === "text" && v.task === "words") return ["table"];
   if (d.openAnswers && v.task === "themes") return ["bars", "dots", "table"];
+  if (answerMatrix(d, v)) {
+    const chosen = new Set(v.items);
+    const stackable =
+      chosen.size > 0 &&
+      (v.percentBase === "answer" ||
+        !d.fields.some((f) => chosen.has(f.id) && f.type === "multiple"));
+    return ["grid", "table", "dots", ...(stackable ? ["stack"] : []), "bars"];
+  }
   if (v.task === "patterns")
     return d.kind === "text" && v.patternMode === "sources" && !v.groupBy
       ? ["grid", "bars", "table"]
@@ -124,6 +132,14 @@ export function available(d, v) {
   if (y?.type === "number" && ["number", "date"].includes(x.type))
     c.push("scatter", "line");
   return c;
+}
+function answerMatrix(d, v) {
+  return (
+    d.kind === "table" &&
+    v.task === "patterns" &&
+    v.groupBy &&
+    v.patternMode === "separate"
+  );
 }
 export function adaptChart(d, view, options = available(d, view)) {
   if (options.includes(view.chart)) return "";
@@ -172,21 +188,45 @@ function patternPicker(d, v, i, staged) {
           v.themeUnit || "interviews",
         )
       : "";
-  return `<div class="pattern-setup"><fieldset class="pick-items"><legend>Tick the ${noun} you want to see together</legend>
-    <small>${items.length} of ${selectionLimit} selected. ${items.length === 1 ? "Tick another to see a pattern across them." : staged ? "Apply your selection when ready." : "The figure updates as you tick."}</small>
+  const itemPicker = `<fieldset class="pick-items"><legend>${text ? "Tick the themes you want to see together" : "Which questions do you want to compare?"}</legend>
+    <small>${items.length} of ${selectionLimit} selected. ${text && items.length === 1 ? "Tick another to see a pattern across them." : staged ? "Apply your selection when ready." : "The figure updates as you tick."}</small>
     ${choices.length > 8 ? `<input type="search" aria-label="Find ${noun}" data-find-items="${i}" placeholder="Find ${noun}…">` : ""}
     <div class="item-list">${choices.map(([id, label]) => `<label class="tick"><input type="checkbox" data-item="${esc(id)}" ${items.includes(id) ? "checked" : items.length >= selectionLimit || (!text && id === v.groupBy) ? "disabled" : ""}>${esc(label)}</label>`).join("")}</div>
-    </fieldset>${select(
-      "patternMode",
-      "What would you like the figure to show?",
-      patternModes(text, !!d.openAnswers).map(([mode, label]) => [
-        mode,
-        text && v.groupBy && mode === "sources"
-          ? "How common is each theme in each group?"
-          : label,
-      ]),
-      v.patternMode,
-    )}${grouping}<small>${d.openAnswers ? "Respondents who share the selected survey answer form a group." : text ? "Interviews that share the same recorded detail form a group." : "Each answer in the column you choose forms a group."} Choose “Everyone together” to skip this split.</small>${termHelp("group", d, v)}${text ? b("addgroups", d.openAnswers ? "Edit respondent groups" : "Add interview groups", "plain", 'data-i="' + i + '"') : ""}${units}</div>`;
+    </fieldset>`;
+  if (!text) {
+    const reading = v.groupBy
+      ? select(
+          "surveyReading",
+          "What would you like to see?",
+          [
+            ["group", "How answers differ between groups"],
+            ["answer", "Which groups gave each answer"],
+            ["together", "Which answers people gave together"],
+          ],
+          v.patternMode === "together" ? "together" : v.percentBase || "group",
+        )
+      : select(
+          "patternMode",
+          "What would you like to see?",
+          [
+            ["separate", "How people answered each question"],
+            ["together", "Which answers people gave together"],
+          ],
+          v.patternMode,
+        );
+    return `<div class="pattern-setup survey-setup">${itemPicker}${grouping}${termHelp("group", d, v)}${reading}</div>`;
+  }
+  return `<div class="pattern-setup">${itemPicker}${select(
+    "patternMode",
+    "What would you like the figure to show?",
+    patternModes(true, !!d.openAnswers).map(([mode, label]) => [
+      mode,
+      v.groupBy && mode === "sources"
+        ? "How common is each theme in each group?"
+        : label,
+    ]),
+    v.patternMode,
+  )}${grouping}<small>${d.openAnswers ? "Respondents who share the selected survey answer form a group." : "Interviews that share the same recorded detail form a group."} Choose “Everyone together” to skip this split.</small>${termHelp("group", d, v)}${b("addgroups", d.openAnswers ? "Edit respondent groups" : "Add interview groups", "plain", 'data-i="' + i + '"')}${units}</div>`;
 }
 const chartLabels = {
   box: "Box plot",
@@ -203,6 +243,37 @@ const chartLabels = {
   presence: "Presence",
   excerpts: "Passages",
 };
+const surveyChartLabels = {
+  grid: "Heatmap",
+  table: "Data table",
+  dots: "Dot plot",
+  stack: "Answer mix",
+  bars: "Bar chart",
+};
+const surveyChartHints = {
+  grid: "Scan the colour and percentages across the groups.",
+  table: "Read the count and total behind each percentage.",
+  dots: "Compare the percentages on the same scale.",
+  stack: "See how all the answers add up within each group.",
+  bars: "Read each answer as a horizontal bar.",
+};
+function surveyChartTools(options, view, i) {
+  return `<div class="survey-chart-tools" role="group" aria-label="Change visualisation">${options
+    .map((key) => {
+      const groupMix = key === "stack" && view.percentBase === "answer";
+      const label = groupMix ? "Group mix" : surveyChartLabels[key];
+      const hint = groupMix
+        ? "See which groups make up the people who chose each answer."
+        : surveyChartHints[key];
+      return b(
+        "charttype",
+        icon(key) + " " + label,
+        "",
+        `data-i="${i}" data-chart="${key}" title="${esc(hint)}" aria-pressed="${view.chart === key}"`,
+      );
+    })
+    .join("")}</div>`;
+}
 function chartTools(options, current, i) {
   return `<div class="chart-tools" role="group" aria-label="Change visualisation">${options.map((key) => b("charttype", icon(key) + "<span>" + esc(chartLabels[key]) + "</span>", "", `data-i="${i}" data-chart="${key}" aria-label="${esc(kinds[key])}" title="${esc(kinds[key])}" aria-pressed="${current === key}"`)).join("")}</div>`;
 }
@@ -421,11 +492,26 @@ export function panel(
     readingHint =
       "Try Box plot under Chart type to see the middle answer and how widely the answers vary.";
   if (changedChart) readingHint = changedChart;
+  const matrix = answerMatrix(d, v);
+  const questions =
+    !text && (draft || v).task !== "patterns" ? patternChoices(d) : [];
+  const canCompare =
+    questions.length > 0 &&
+    groupChoices(d).some(
+      ([id]) => questions.length > 1 || questions[0][0] !== id,
+    );
+  const compareEntry = canCompare
+    ? `<div class="survey-compare-entry">${b("surveycompare", icon("grid") + " Compare questions by group", "", 'data-i="' + i + '"')}<small>Choose one or more questions and see how each group answered.</small></div>`
+    : "";
+  const chartPicker =
+    !matrix && options.length > 1
+      ? `<details class="chart-picker"><summary aria-label="Chart type · ${esc(kinds[v.chart])}">${icon(v.chart)} Chart type · ${esc(chartLabels[v.chart])}</summary>${chartTools(options, v.chart, i)}</details>`
+      : "";
   return `<section class="plotcard ${comparing ? "comparison-card" : "explore-card"}" data-panel="${i}">${comparing ? `<div class="view-heading"><h2>${side} view</h2><span>${esc(kinds[v.chart])}</span></div><details data-chart-options="edit-${i}"><summary>Change ${side.toLowerCase()} view</summary>` : ""}
-  ${confirmedName ? `<div class="topline"><p><strong>Confirmed selection</strong><br>${esc(confirmedName)}</p>${b("editselection", "Change selection", "", "data-i=" + i)}</div>` : `<div class="selection-editor">${selectionControls(d, draft || v, i, !!draft)}</div>`}
+  <div class="selection-editor">${compareEntry}${confirmedName ? `<div class="topline"><p><strong>Confirmed selection</strong><br>${esc(confirmedName)}</p>${b("editselection", "Change selection", "", "data-i=" + i)}</div>` : selectionControls(d, draft || v, i, !!draft)}</div>
   ${comparing ? "</details>" : ""}
-  <div class="live-figure"><div class="figure-toolbar"><strong tabindex="-1" id="figure-heading${i}">Current visual</strong><div class="figure-actions">${options.length > 1 ? `<details class="chart-picker"><summary aria-label="Chart type · ${esc(kinds[v.chart])}">${icon(v.chart)} Chart type · ${esc(chartLabels[v.chart])}</summary>${chartTools(options, v.chart, i)}</details>` : ""}${b("editfigure", icon("edit") + " Edit visual", "", 'data-i="' + i + '"')}${b("savevisual", icon("save") + " Save visual", "", 'data-i="' + i + '"')}</div>
-  </div><div class="figure-stage"><div class="graphic" id="graphic${i}"></div></div>${readingHint ? "<small>" + readingHint + "</small>" : ""}<div id="modeldetails${i}"></div><div class="figure-evidence action-row">${b("describechart", icon("bot") + " Ask about this visual", "", 'data-i="' + i + '"')}${text ? b("passages", d.openAnswers ? "Read and code written answers" : "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></div>
+  <div class="live-figure"><div class="figure-toolbar"><strong tabindex="-1" id="figure-heading${i}">Current visual</strong><div class="figure-actions">${chartPicker}${b("editfigure", icon("edit") + " Edit visual", "", 'data-i="' + i + '"')}${b("savevisual", icon("save") + " Save visual", "", 'data-i="' + i + '"')}</div>
+  </div>${matrix ? surveyChartTools(options, v, i) : ""}<div class="figure-stage"><div class="graphic" id="graphic${i}"></div></div>${readingHint ? "<small>" + readingHint + "</small>" : ""}<div id="modeldetails${i}"></div><div class="figure-evidence action-row">${matrix && v.items?.length ? b("botpatterns", icon("bot") + " Spot patterns", "", 'data-i="' + i + '"') : ""}${b("describechart", icon("bot") + " Ask about this visual", "", 'data-i="' + i + '"')}${text ? b("passages", d.openAnswers ? "Read and code written answers" : "Read and code passages", "", 'data-i="' + i + '"') : b("answers", "Read underlying responses", "", 'data-i="' + i + '"')}</div></div>
   <details data-chart-options="${i}"><summary>Chart settings</summary><div class="selection-mode"><label class="tick"><input type="checkbox" data-stage-selection="${i}" ${draft ? "" : "checked"}>Update the visual as I select</label></div>${b("figurestyle", "Figure style · " + figureStyles[styleFor(v.style)].label, "", 'data-i="' + i + '"')}${!text ? b("variables", d.fields.some((f) => f.roles?.length) ? "Review question roles" : "Choose question roles") : ""}${termHelp("percent", d, v)}<div class="formgrid">
  ${
    v.task !== "patterns" &&

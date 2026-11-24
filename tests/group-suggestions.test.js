@@ -42,6 +42,31 @@ test("equal shares and one-person contrasts do not prompt a chart", () => {
   assert.equal(r.spec, undefined);
   assert.match(r.message, /same shares/);
 });
+
+test("recommending another grouping uses within-group rates even after viewing group composition", () => {
+  const data = makeTable(
+    [
+      ["Satisfaction", "Route"],
+      ["Good", "East"],
+      ["Good", "East"],
+      ["Good", "East"],
+      ["Good", "East"],
+      ["Good", "East"],
+      ["Good", "West"],
+      ["Poor", "West"],
+    ],
+    "Survey",
+  );
+  const result = suggestGrouping(data, {
+    ...view,
+    patternMode: "separate",
+    percentBase: "answer",
+  });
+  assert.equal(result.spec.percentBase, "group");
+  assert.equal(result.spec.chart, "grid");
+  assert.match(result.message, /50 percentage-point difference/);
+  assert.deepEqual(result.evidence.map((r) => r.den).sort(), [2, 5]);
+});
 test("interview recommendations count distinct interviews or passages under their selected unit", () => {
   const d = {
     kind: "text",
